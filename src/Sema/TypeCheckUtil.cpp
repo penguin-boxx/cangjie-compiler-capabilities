@@ -10,8 +10,10 @@
  * This file implements the utility functions for TypeCheck.
  */
 
-#include "TypeCheckUtil.h"
+#include <unordered_set>
+
 #include "Promotion.h"
+#include "TypeCheckUtil.h"
 
 #include <map>
 #include <set>
@@ -263,6 +265,56 @@ std::vector<Ptr<Ty>> GetFuncBodyParamTys(const FuncBody& fb)
     return ret;
 }
 
+namespace {
+/**
+ * Expands one capability list entry (proposal 6.1): a tuple of exceptions — spelled directly or
+ * reached through type aliases — is a capability list, so its elements are spliced into the list.
+ * Expansion is recursive, since an alias tuple may contain further aliases; the visited set
+ * guards against a cyclic alias, which the type checker reports separately.
+ */
+void ExpandCapabilityEntry(Ptr<Ty> ty, std::vector<Ptr<Ty>>& out, std::unordered_set<Ptr<const Ty>>& visiting)
+{
+    if (!Ty::IsTyCorrect(ty)) {
+        out.emplace_back(TypeManager::GetInvalidTy());
+        return;
+    }
+    if (auto tuple = DynamicCast<TupleTy*>(ty)) {
+        if (!visiting.emplace(ty).second) {
+            return; // Cyclic alias: stop expanding, the cycle is diagnosed elsewhere.
+        }
+        for (auto element : tuple->typeArgs) {
+            ExpandCapabilityEntry(element, out, visiting);
+        }
+        visiting.erase(ty);
+        return;
+    }
+    // An entry may still be the alias itself rather than its target, depending on how far
+    // elaboration has progressed at the call site; resolve it and expand the target.
+    if (auto alias = DynamicCast<TypeAliasTy*>(ty); alias && alias->declPtr && alias->declPtr->type) {
+        if (!visiting.emplace(ty).second) {
+            return;
+        }
+        ExpandCapabilityEntry(alias->declPtr->type->GetTy(), out, visiting);
+        visiting.erase(ty);
+        return;
+    }
+    out.emplace_back(ty);
+}
+
+} // namespace
+
+std::vector<Ptr<Ty>> ExpandCapabilityList(const std::vector<OwnedPtr<Type>>& capTypes)
+{
+    std::vector<Ptr<Ty>> ret;
+    std::unordered_set<Ptr<const Ty>> visiting;
+    for (auto& capType : capTypes) {
+        CJC_NULLPTR_CHECK(capType);
+        auto ty = capType->GetTy();
+        ExpandCapabilityEntry(Ty::IsInitialTy(ty) ? TypeManager::GetInvalidTy() : ty, ret, visiting);
+    }
+    return ret;
+}
+
 std::vector<Ptr<Ty>> GetFuncBodyCapTys(const FuncBody& fb)
 {
     // Checked exceptions: the declaration's 'throws' clause types (elaborated during PreCheck's
@@ -272,12 +324,7 @@ std::vector<Ptr<Ty>> GetFuncBodyCapTys(const FuncBody& fb)
     if (!fb.throwsClause || isCLike) {
         return {};
     }
-    std::vector<Ptr<Ty>> ret;
-    for (auto& capType : fb.throwsClause->capTypes) {
-        CJC_NULLPTR_CHECK(capType);
-        ret.emplace_back(Ty::IsInitialTy(capType->GetTy()) ? TypeManager::GetInvalidTy() : capType->GetTy());
-    }
-    return ret;
+    return ExpandCapabilityList(fb.throwsClause->capTypes);
 }
 
 std::vector<Ptr<Ty>> GetDeclCapturesCapTys(const Decl& decl)
@@ -289,11 +336,13 @@ std::vector<Ptr<Ty>> GetDeclCapturesCapTys(const Decl& decl)
     if (!inheritable || !inheritable->capturesClause) {
         return {};
     }
+    // Capability list aliases apply here as well (proposal 6.1); entries whose types failed
+    // elaboration are dropped, their errors having been reported at the clause.
+    auto expanded = ExpandCapabilityList(inheritable->capturesClause->capTypes);
     std::vector<Ptr<Ty>> ret;
-    for (auto& capType : inheritable->capturesClause->capTypes) {
-        CJC_NULLPTR_CHECK(capType);
-        if (Ty::IsTyCorrect(capType->GetTy())) {
-            ret.emplace_back(capType->GetTy());
+    for (auto ty : expanded) {
+        if (Ty::IsTyCorrect(ty)) {
+            ret.emplace_back(ty);
         }
     }
     return ret;

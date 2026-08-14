@@ -610,8 +610,10 @@ Ptr<Ty> TypeChecker::TypeCheckerImpl::GetTyFromASTType(ASTContext& ctx, FuncType
         for (auto& capType : funcType.throwsClause->capTypes) {
             CJC_NULLPTR_CHECK(capType);
             capType->SetTy(GetTyFromASTType(ctx, capType.get()));
-            capTys.push_back(capType->GetTy());
         }
+        // A tuple entry — written directly or reached through a type alias — is itself a
+        // capability list and is spliced into this one (proposal 6.1).
+        capTys = TypeCheckUtil::ExpandCapabilityList(funcType.throwsClause->capTypes);
     }
     funcType.SetTy(typeManager.GetFunctionTy(paramTys, funcType.retType->GetTy(), {funcType.isC}, capTys));
     return funcType.GetTy();
