@@ -30,14 +30,13 @@
 #include "cangjie/Modules/ModulesUtils.h"
 #include "cangjie/Sema/TestManager.h"
 #include "cangjie/Sema/TypeManager.h"
-#include "NativeFFI/Java/AfterTypeCheck/Utils.h"
 
+#include "CJMP/MPTypeCheckerImpl.h"
 #include "Diags.h"
-#include "TypeCheckUtil.h"
-#include "TypeCheckerImpl.h"
 #include "NativeFFI/Java/TypeCheck/InheritanceChecker.h"
 #include "NativeFFI/ObjC/Utils/OCStructInheritanceCheckerImpl.h"
-#include "CJMP/MPTypeCheckerImpl.h"
+#include "TypeCheckUtil.h"
+#include "TypeCheckerImpl.h"
 
 using namespace Cangjie;
 using namespace AST;
@@ -1354,6 +1353,29 @@ bool StructInheritanceChecker::CheckReturnOverrideByGeneric(const FuncTy& parent
     return false;
 }
 
+void StructInheritanceChecker::CheckThrowsClauseCompatible(const AST::FuncDecl& parentFunc,
+    const AST::FuncDecl& childFunc, const FuncTy& parentTy, const FuncTy& childTy) const
+{
+    // Checked exceptions (proposal 3.8): the override's (redefinition's) capability list must be
+    // pointwise subsumed by the original's -- every exception type in the override's 'throws' list
+    // must be a subtype of some exception type in the original's list. Constructors are exempt
+    // (they are new declarations, never overridden).
+    if (parentFunc.TestAttr(Attribute::CONSTRUCTOR) || childFunc.TestAttr(Attribute::CONSTRUCTOR)) {
+        return;
+    }
+    for (auto capTy : childTy.capTys) {
+        if (typeManager.IsCapTysSubsumed({capTy}, parentTy.capTys)) {
+            continue;
+        }
+        auto builder = diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_override_missing_capability,
+            MakeRangeForDeclIdentifier(childFunc), Ty::ToString(capTy), childFunc.identifier.Val());
+        builder.AddMainHintArguments(Ty::ToString(capTy));
+        builder.AddNote(MakeRangeForDeclIdentifier(parentFunc),
+            parentTy.capTys.empty() ? "the overridden or implemented declaration has no 'throws' clause"
+                                    : "the overridden or implemented declaration is declared here");
+    }
+}
+
 bool StructInheritanceChecker::CheckImplementationRelation(
     const MemberSignature& parent, const MemberSignature& child) const
 {
@@ -1388,6 +1410,7 @@ bool StructInheritanceChecker::CheckImplementationRelation(
             const Decl& diagNode = childFunc->outerDecl == checkingDecls.front() ? *childFunc : *checkingDecls.front();
             CheckAccessVisibility(*parentFunc, *childFunc, diagNode);
             CheckGenericTypeArgInfo(parent, child);
+            CheckThrowsClauseCompatible(*parentFunc, *childFunc, *parentFuncTy, *childFuncTy);
         } else if (inheritedByExtension || !CheckReturnOverrideByGeneric(*parentFuncTy, *childFuncTy)) {
             // A type that does not meet the type variance relationship cannot be used as the basis for subtypes when
             // override occurs.

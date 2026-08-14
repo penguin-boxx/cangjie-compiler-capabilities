@@ -179,6 +179,11 @@ bool HaveCyclicSubstitution(TypeManager& tyMgr, const TypeSubst& typeMapping);
 std::vector<Ptr<AST::Ty>> GetParamTys(const AST::FuncDecl& fd);
 std::vector<Ptr<AST::Ty>> GetFuncBodyParamTys(const AST::FuncBody& fb);
 /**
+ * Checked exceptions: get the exception capability tys of @p fb 's elaborated 'throws' clause.
+ * Empty when there is no clause or the function is foreign/C.
+ */
+std::vector<Ptr<AST::Ty>> GetFuncBodyCapTys(const AST::FuncBody& fb);
+/**
  * Check whether src is an override or implementation of target.
  */
 bool IsOverrideOrShadow(TypeManager& typeManager, const AST::FuncDecl& src, const AST::FuncDecl& target,

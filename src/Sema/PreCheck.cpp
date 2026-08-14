@@ -28,8 +28,8 @@
 #include "cangjie/Basic/DiagnosticEngine.h"
 #include "cangjie/Frontend/CompilerInstance.h"
 #include "cangjie/Utils/CheckUtils.h"
-#include "cangjie/Utils/Utils.h"
 #include "cangjie/Utils/ProfileRecorder.h"
+#include "cangjie/Utils/Utils.h"
 
 using namespace Cangjie;
 using namespace TypeCheckUtil;
@@ -603,7 +603,17 @@ Ptr<Ty> TypeChecker::TypeCheckerImpl::GetTyFromASTType(ASTContext& ctx, FuncType
     if (!funcType.retType->GetTy()) {
         return TypeManager::GetInvalidTy();
     }
-    funcType.SetTy(typeManager.GetFunctionTy(paramTys, funcType.retType->GetTy(), {funcType.isC}));
+    // Checked exceptions: elaborate the 'throws' clause types into the functional type's capability
+    // list. CFunc types never carry capabilities (the clause is rejected during type check).
+    std::vector<Ptr<Ty>> capTys;
+    if (funcType.throwsClause && !funcType.isC) {
+        for (auto& capType : funcType.throwsClause->capTypes) {
+            CJC_NULLPTR_CHECK(capType);
+            capType->SetTy(GetTyFromASTType(ctx, capType.get()));
+            capTys.push_back(capType->GetTy());
+        }
+    }
+    funcType.SetTy(typeManager.GetFunctionTy(paramTys, funcType.retType->GetTy(), {funcType.isC}, capTys));
     return funcType.GetTy();
 }
 
@@ -1787,6 +1797,7 @@ void TypeChecker::TypeCheckerImpl::PreSetDeclType(const ASTContext& ctx)
             continue; // Do not replace valid ty.
         }
         auto paramTys = GetFuncBodyParamTys(*fd->funcBody);
+        auto capTys = GetFuncBodyCapTys(*fd->funcBody);
         Ptr<Ty> retTy = TypeManager::GetQuestTy();
         if (fd->TestAttr(Attribute::CONSTRUCTOR)) {
             // Static init has return type of unit. Instance init has return type of current typeDecl.
@@ -1794,7 +1805,7 @@ void TypeChecker::TypeCheckerImpl::PreSetDeclType(const ASTContext& ctx)
                 ? TypeManager::GetPrimitiveTy(TypeKind::TYPE_UNIT)
                 : (fd->outerDecl && fd->outerDecl->IsNominalDecl() ? fd->outerDecl->GetTy()
                                                                    : TypeManager::GetInvalidTy());
-            fd->SetTy(typeManager.GetFunctionTy(paramTys, retTy));
+            fd->SetTy(typeManager.GetFunctionTy(paramTys, retTy, {}, capTys));
             continue;
         }
         if (fd->funcBody->retType) {
@@ -1806,7 +1817,7 @@ void TypeChecker::TypeCheckerImpl::PreSetDeclType(const ASTContext& ctx)
             fd->funcBody->TestAttr(Attribute::C) || (fd->TestAttr(Attribute::FOREIGN) && IsUnsafeBackend(backendType));
         bool hasVariableLenArg = fd->hasVariableLenArg ||
             (!fd->funcBody->paramLists.empty() && fd->funcBody->paramLists[0]->hasVariableLenArg);
-        fd->SetTy(typeManager.GetFunctionTy(paramTys, retTy, {isCFunc, false, hasVariableLenArg}));
+        fd->SetTy(typeManager.GetFunctionTy(paramTys, retTy, {isCFunc, false, hasVariableLenArg}, capTys));
         if (fd->TestAttr(Attribute::IS_CHECK_VISITED)) {
             fd->funcBody->SetTy(fd->GetTy());
         }
