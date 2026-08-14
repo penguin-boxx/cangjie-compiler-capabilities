@@ -33,6 +33,7 @@
 #include "cangjie/Modules/ImportManager.h"
 #include "cangjie/Modules/PackageManager.h"
 #include "cangjie/Parse/ASTHasher.h"
+#include "cangjie/Sema/CapabilityCheck.h"
 #include "cangjie/Sema/GenericInstantiationManager.h"
 #include "cangjie/Sema/TestManager.h"
 #include "cangjie/Sema/TypeChecker.h"
@@ -194,6 +195,7 @@ bool CompilerInstance::InitCompilerInstance()
     performMap.insert_or_assign(CompileStage::MACRO_EXPAND, &CompilerInstance::PerformMacroExpand);
     performMap.insert_or_assign(CompileStage::AST_DIFF, &CompilerInstance::PerformIncrementalScopeAnalysis);
     performMap.insert_or_assign(CompileStage::SEMA, &CompilerInstance::PerformSema);
+    performMap.insert_or_assign(CompileStage::CAPABILITY_CHECK, &CompilerInstance::PerformCapabilityCheck);
     performMap.insert_or_assign(CompileStage::DESUGAR_AFTER_SEMA, &CompilerInstance::PerformDesugarAfterSema);
     performMap.insert_or_assign(CompileStage::GENERIC_INSTANTIATION, &CompilerInstance::PerformGenericInstantiation);
     performMap.insert_or_assign(CompileStage::OVERFLOW_STRATEGY, &CompilerInstance::PerformOverflowStrategy);
@@ -707,6 +709,26 @@ bool CompilerInstance::PerformOverflowStrategy()
         DumpAST(GetSourcePackages(), invocation.globalOptions.output, "overflow");
     }
     return true;
+}
+
+bool CompilerInstance::PerformCapabilityCheck()
+{
+    // Checked exceptions (experimental): capability argument checking (proposal 3.3/3.5) over the
+    // typed AST. Must run before desugar destroys 'TryExpr' structure and before instantiation.
+    if (!invocation.globalOptions.enableChexc) {
+        return true;
+    }
+    Utils::ProfileRecorder recorder("Main Stage", "Capability Check");
+    auto errorCountBefore = diag.GetErrorCount();
+    bool asWarning = invocation.globalOptions.chexcSeverity == GlobalOptions::ChexcSeverity::CS_WARN;
+    Sema::ReportCapabilityMissHandler missHandler(diag, asWarning);
+    CJC_NULLPTR_CHECK(typeManager);
+    CJC_NULLPTR_CHECK(importManager);
+    for (auto& srcPkg : GetSourcePackages()) {
+        CJC_NULLPTR_CHECK(srcPkg);
+        Sema::CheckCapabilities(*typeManager, *importManager, *srcPkg, missHandler);
+    }
+    return diag.GetErrorCount() == errorCountBefore;
 }
 
 bool CompilerInstance::PerformDesugarAfterSema()

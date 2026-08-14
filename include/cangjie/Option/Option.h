@@ -595,6 +595,12 @@ public:
 
     bool enableChexc = false; /** Whether support for checked exceptions is enabled */
 
+    /** Severity of capability diagnostics under '--enable-checked-exceptions[=error|warn]';
+     * the bare flag means error. */
+    enum class ChexcSeverity : uint8_t { CS_ERROR, CS_WARN };
+
+    ChexcSeverity chexcSeverity = ChexcSeverity::CS_ERROR; /** Severity of checked-exception diagnostics */
+
     MockMode mock = MockMode::DEFAULT; /**< Whether enable mocking. */
 
     DiagFormat diagFormat = DiagFormat::DEFAULT; /** Whether output diagnostic with color*/

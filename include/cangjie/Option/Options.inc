@@ -132,7 +132,8 @@ PREDEFVALUE(warn_group, {
     VALUE("parser", "", { BACKEND(ALL) }, { GROUP(GLOBAL) COMMA GROUP(STABLE) COMMA GROUP(VISIBLE) }) COMMA
     VALUE("semantics", "", { BACKEND(ALL) }, { GROUP(GLOBAL) COMMA GROUP(STABLE) COMMA GROUP(VISIBLE) }) COMMA
     VALUE("interpreter", "", { BACKEND(ALL) }, { GROUP(GLOBAL) COMMA GROUP(STABLE) COMMA GROUP(VISIBLE) }) COMMA
-    VALUE("apilevel-check", "", { BACKEND(ALL) }, { GROUP(GLOBAL) COMMA GROUP(STABLE) COMMA GROUP(VISIBLE) })});
+    VALUE("apilevel-check", "", { BACKEND(ALL) }, { GROUP(GLOBAL) COMMA GROUP(STABLE) COMMA GROUP(VISIBLE) }) COMMA
+    VALUE("chexc", "", { BACKEND(ALL) }, { GROUP(GLOBAL) COMMA GROUP(STABLE) COMMA GROUP(VISIBLE) })});
 PREDEFVALUE(diagnostic_value, {
     VALUE("json", "", { BACKEND(ALL) }, { GROUP(STABLE) COMMA GROUP(VISIBLE) }) COMMA
     VALUE("noColor", "", { BACKEND(ALL) }, { GROUP(STABLE) COMMA GROUP(VISIBLE) }) COMMA
@@ -141,6 +142,11 @@ PREDEFVALUE(emit_chir_phase, {
     VALUE("raw", "emit CHIR before compiler optimization", {BACKEND(ALL)}, {GROUP(STABLE) COMMA GROUP(VISIBLE)}) COMMA
     VALUE("opt", "emit CHIR after compiler optimization (default)", {BACKEND(ALL)},
         {GROUP(STABLE) COMMA GROUP(VISIBLE)})});
+PREDEFVALUE(chexc_severity, {
+    VALUE("error", "report capability violations as errors (default)", { BACKEND(CJNATIVE) },
+        { GROUP(STABLE) COMMA GROUP(VISIBLE) }) COMMA
+    VALUE("warn", "report capability violations as warnings", { BACKEND(CJNATIVE) },
+        { GROUP(STABLE) COMMA GROUP(VISIBLE) })});
 PREDEFVALUE(chir_mode, {
     VALUE("standard", "", { BACKEND(ALL) }, { GROUP(STABLE) COMMA GROUP(VISIBLE) }) COMMA
     VALUE("withID", "", { BACKEND(ALL) }, { GROUP(STABLE) COMMA GROUP(VISIBLE) }) COMMA
@@ -349,9 +355,9 @@ OPTION("--enable-eh", ENABLE_EFFECTS, FLAG, { BACKEND(CJNATIVE) },
     { GROUP(GLOBAL) COMMA GROUP(VISIBLE) }, nullptr, {}, MULTIPLE_OCCURRENCE,
     "Enables experimental support for effect handlers")
 #endif
-OPTION("--enable-chexc", ENABLE_CHECKED_EXCEPTIONS, FLAG, { BACKEND(CJNATIVE) },
-    { GROUP(GLOBAL) COMMA GROUP(VISIBLE) }, nullptr, {}, MULTIPLE_OCCURRENCE,
-    "Enables experimental support for checked exceptions")
+OPTION("--enable-checked-exceptions", ENABLE_CHECKED_EXCEPTIONS, FLAG_WITH_ARG, { BACKEND(CJNATIVE) },
+    { GROUP(GLOBAL) COMMA GROUP(VISIBLE) }, "--enable-chexc", chexc_severity, MULTIPLE_OCCURRENCE,
+    "Enables experimental support for checked exceptions. Candidate severities:")
 OPTION("--dump-ast", DUMP_AST, FLAG, { BACKEND(ALL) },
     { GROUP(GLOBAL) COMMA GROUP(STABLE) COMMA GROUP(VISIBLE) }, nullptr, {}, MULTIPLE_OCCURRENCE,
     "Dump human readable AST when compiling for debug")
