@@ -343,7 +343,8 @@ struct ASTHasherImpl {
     template <int whatTypeToHash> void HashThrowsClause(const ThrowsClause& tc)
     {
         HashNode<whatTypeToHash>(tc);
-        SUPERHash<whatTypeToHash>(tc.throwsPos, tc.capTypes);
+        // `...` decides whether inference contributes to the list, so it is part of the hash.
+        SUPERHash<whatTypeToHash>(tc.throwsPos, tc.capTypes, tc.hasEllipsis);
     }
 
     template <int whatTypeToHash> void HashFuncParamList(const FuncParamList& fpl)

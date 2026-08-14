@@ -15,6 +15,8 @@
 #define CANGJIE_SEMA_CAPABILITYCHECK_H
 
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 #include "cangjie/AST/Node.h"
 
@@ -64,12 +66,31 @@ private:
 };
 
 /**
+ * Capability lists inferred for declarations without an authoritative clause (proposal 6.3).
+ * Kept beside the AST rather than written into declaration types: the checking pass stays a
+ * pure check, and call sites resolve a callee's list through this map.
+ */
+using InferredCapabilities = std::unordered_map<Ptr<const AST::Decl>, std::vector<Ptr<AST::Ty>>>;
+
+/**
+ * Infer capability parameter lists for the inference-eligible declarations of @p pkg
+ * (proposal 6.3): the least solution of the monotone equations over each strongly connected
+ * component of the intra-package call graph, computed bottom-up. Declarations carrying an
+ * authoritative clause are constants; a clause ending in `...` contributes its entries and
+ * still takes part. Polymorphic recursion is rejected with a diagnostic.
+ */
+InferredCapabilities InferCapabilities(
+    TypeManager& typeManager, const ImportManager& importManager, AST::Package& pkg, DiagnosticEngine& diag);
+
+/**
  * Run capability argument checking over every callable body and initializer of @p pkg on the
  * typed AST (after sema type check, before desugar destroys 'TryExpr' structure). The pass
- * never mutates types; every unsatisfied demand is passed to @p missHandler.
+ * never mutates types; every unsatisfied demand is passed to @p missHandler. @p inferred
+ * supplies the lists computed by InferCapabilities: they act as the declared clause of their
+ * declaration and are demanded at its call sites.
  */
 void CheckCapabilities(TypeManager& typeManager, const ImportManager& importManager, AST::Package& pkg,
-    CapabilityMissHandler& missHandler);
+    CapabilityMissHandler& missHandler, const InferredCapabilities& inferred = {});
 } // namespace Sema
 } // namespace Cangjie
 
