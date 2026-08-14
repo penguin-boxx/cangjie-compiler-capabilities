@@ -1284,6 +1284,19 @@ void ParserImpl::ParseInheritedTypes(InheritableDecl& decl)
     }
 }
 
+void ParserImpl::TryParseCapturesClause(InheritableDecl& decl)
+{
+    if (!Seeing(TokenKind::CAPTURES)) {
+        return;
+    }
+    if (decl.capturesClause) {
+        ParseDiagnoseRefactor(DiagKindRefactor::parse_duplicate_captures_clause, lookahead.Begin());
+        (void)ParseCapturesClause(); // Parse and drop the duplicate to recover.
+    } else {
+        decl.capturesClause = ParseCapturesClause();
+    }
+}
+
 void ParserImpl::ParseInterfaceDeclOrClassDeclGeneric(InheritableDecl& ret)
 {
     if (Skip(TokenKind::LT)) {
@@ -1294,11 +1307,24 @@ void ParserImpl::ParseInterfaceDeclOrClassDeclGeneric(InheritableDecl& ret)
         ParseDiagnoseRefactor(DiagKindRefactor::parse_expected_lt_brace, lookahead, ConvertToken(lookahead));
         ConsumeUntilDecl(TokenKind::LCURL);
     }
+    // Checked exceptions (experimental): a class may declare a `captures` clause; its position
+    // relative to the superclass list and the `where` block is arbitrary (proposal 3.9).
+    // Interfaces cannot capture: on them `captures` follows the natural error path below.
+    bool allowCaptures = ret.astKind == ASTKind::CLASS_DECL;
+    if (allowCaptures) {
+        TryParseCapturesClause(ret);
+    }
     if (Skip(TokenKind::UPPERBOUND)) {
         ParseInheritedTypes(ret);
     }
+    if (allowCaptures) {
+        TryParseCapturesClause(ret);
+    }
     if (Skip(TokenKind::WHERE)) {
         ParseConstraints(ret);
+    }
+    if (allowCaptures) {
+        TryParseCapturesClause(ret);
     }
 }
 
@@ -1594,13 +1620,18 @@ OwnedPtr<StructDecl> ParserImpl::ParseStructDecl(
         ret->generic = ParseGeneric();
         ret->EnableAttr(Attribute::GENERIC);
     }
+    // Checked exceptions (experimental): a struct may declare a `captures` clause; its position
+    // relative to the interface list and the `where` block is arbitrary (proposal 3.9).
+    TryParseCapturesClause(*ret);
     if (Skip(TokenKind::UPPERBOUND)) {
         ret->upperBoundPos = lastToken.Begin();
         ParseStructInheritedTypes(*ret);
     }
+    TryParseCapturesClause(*ret);
     if (Skip(TokenKind::WHERE)) {
         ParseConstraints(*ret);
     }
+    TryParseCapturesClause(*ret);
     // Used to parse nested structDecl or primary ctor decl.
     SetPrimaryDecl(ret->identifier, ret->identifier.IsRaw());
     ret->body = ParseStructBody(*ret);

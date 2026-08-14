@@ -1303,12 +1303,20 @@ private:
     bool CheckNormalFuncBody(ASTContext& ctx, AST::FuncBody& fb, std::vector<Ptr<AST::Ty>>& paramTys);
     bool CheckFuncBody(ASTContext& ctx, AST::FuncBody& fb);
     /**
-     * Checked exceptions: validate an elaborated 'throws' clause -- every entry must be a subtype
-     * of core 'Exception' (type parameters allowed when suitably bounded).
+     * Checked exceptions: validate an elaborated 'throws' or 'captures' clause -- every entry
+     * must be a subtype of core 'Exception' (type parameters allowed when suitably bounded),
+     * and no concrete entry may be an unchecked exception type (proposal 3.2 rule 5).
+     * @p clauseKeyword names the clause in diagnostics ("throws" or "captures").
      */
-    void ChkThrowsClauseTypes(ASTContext& ctx, AST::ThrowsClause& clause);
+    void ChkThrowsClauseTypes(ASTContext& ctx, AST::ThrowsClause& clause, const std::string& clauseKeyword = "throws");
     /** Checked exceptions: diagnose 'throws' clauses on foreign/C functions and CFunc types. */
     void ChkThrowsClauseOfFuncBody(ASTContext& ctx, AST::FuncBody& fb);
+    /**
+     * Checked exceptions: validate the 'captures' clause of a class or struct declaration
+     * (proposal 3.9) -- elaborate and validate its entries like 'throws' entries and ban
+     * primary constructors on capturing declarations (they cannot capture; author ruling).
+     */
+    void ChkCapturesClauseOfDecl(ASTContext& ctx, AST::InheritableDecl& decl);
     void AddRetTypeNode(AST::FuncBody& fb) const;
     bool CheckBodyRetType(ASTContext& ctx, AST::FuncBody& fb);
     void CheckFuncParamList(ASTContext& ctx, AST::FuncParamList& fpl);

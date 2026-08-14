@@ -348,6 +348,9 @@ OwnedPtr<Decl> PartialInstantiation::InstantiateStructDecl(const StructDecl& sd,
     for (auto& it : sd.inheritedTypes) {
         ret->inheritedTypes.push_back(InstantiateType(it.get(), visitor));
     }
+    if (sd.capturesClause) {
+        ret->capturesClause = InstantiateThrowsClause(*sd.capturesClause, visitor);
+    }
     ret->body = InstantiateNode(sd.body.get(), visitor);
     if (sd.generic) {
         ret->generic = InstantiateGeneric(*sd.generic, visitor);
@@ -362,6 +365,9 @@ OwnedPtr<Decl> PartialInstantiation::InstantiateClassDecl(const ClassDecl& cd, c
     auto ret = MakeOwned<ClassDecl>();
     for (auto& it : cd.inheritedTypes) {
         ret->inheritedTypes.push_back(InstantiateType(it.get(), visitor));
+    }
+    if (cd.capturesClause) {
+        ret->capturesClause = InstantiateThrowsClause(*cd.capturesClause, visitor);
     }
     ret->body = InstantiateNode(cd.body.get(), visitor);
     if (cd.generic) {

@@ -349,6 +349,35 @@ OwnedPtr<AST::ThrowsClause> ParserImpl::ParseThrowsClause(bool isDeclClause)
     return clause;
 }
 
+OwnedPtr<AST::ThrowsClause> ParserImpl::ParseCapturesClause()
+{
+    // Checked exceptions (proposal 3.9): the `captures` clause of a class or struct header.
+    // Reuses the ThrowsClause node shape; the grammar is the bare comma-separated list only:
+    // `captures E1, E2` (no parenthesized or ellipsis forms).
+    CJC_ASSERT(Seeing(TokenKind::CAPTURES));
+    auto clause = MakeOwned<ThrowsClause>();
+    ChainScope cs(*this, clause.get());
+    Next(); // Consume `captures`.
+    clause->throwsPos = lastToken.Begin();
+    clause->begin = clause->throwsPos;
+    clause->end = lastToken.End();
+    if (!SeeingAny(GetTypeFirst()) && !SeeingContextualKeyword()) {
+        ParseDiagnoseRefactor(
+            DiagKindRefactor::parse_expected_exception_type_after_captures, lookahead, ConvertToken(lookahead));
+        clause->EnableAttr(Attribute::IS_BROKEN);
+        return clause;
+    }
+    while (true) {
+        (void)clause->capTypes.emplace_back(ParseType());
+        if (!Skip(TokenKind::COMMA)) {
+            break;
+        }
+        clause->commaPosVector.emplace_back(lastToken.Begin());
+    }
+    clause->end = clause->capTypes.back()->end;
+    return clause;
+}
+
 // Parse the syntactic sugar of option types.
 OwnedPtr<AST::Type> ParserImpl::ParsePrefixType()
 {

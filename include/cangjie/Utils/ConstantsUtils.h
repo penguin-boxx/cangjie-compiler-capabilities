@@ -49,6 +49,7 @@ inline const std::string CHIR_READABLE_FILE_EXTENSION = ".chirtxt";
 
 // Built-in type name.
 inline const std::string CLASS_EXCEPTION = "Exception";
+inline const std::string CLASS_UNCHECKED_EXCEPTION = "UncheckedException";
 inline const std::string CLASS_ERROR = "Error";
 inline const std::string CLASS_COMMAND = "Command";
 inline const std::string CLASS_HANDLER_FRAME = "HandlerFrame";

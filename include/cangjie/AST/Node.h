@@ -1115,6 +1115,13 @@ protected:
 struct InheritableDecl : public Decl {
     Position upperBoundPos;                     /**< Position of <:. */
     std::vector<OwnedPtr<Type>> inheritedTypes; /**< Super class or super interfaces. */
+    /**
+     * Checked-exception `captures` clause (experimental, behind `--experimental --enable-chexc`;
+     * proposal 3.9): exception capabilities the class or struct captures at construction for use
+     * in its member bodies. Reuses the ThrowsClause node shape (`captures E1, E2`, bare list
+     * only). Only populated on ClassDecl and StructDecl. Optional, may be null.
+     */
+    OwnedPtr<ThrowsClause> capturesClause;
     std::set<Ptr<InterfaceTy>> GetSuperInterfaceTys() const;
     std::vector<Ptr<InterfaceTy>> GetStableSuperInterfaceTys() const;
     // guarantees sub-types always exist before super-types

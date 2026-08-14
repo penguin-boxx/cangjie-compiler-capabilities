@@ -503,6 +503,11 @@ void PrintClassDecl(unsigned indent, const ClassDecl& classDecl, std::ostream& s
         }
         PrintIndent(stream, indent + ONE_INDENT, "]");
     }
+    if (classDecl.capturesClause) {
+        PrintIndent(stream, indent + ONE_INDENT, "capturesClause [");
+        PrintThrowsClause(indent + TWO_INDENT, *classDecl.capturesClause, stream);
+        PrintIndent(stream, indent + ONE_INDENT, "]");
+    }
     PrintNode(classDecl.body.get(), indent + ONE_INDENT, "", stream);
     PrintIndent(stream, indent, "}");
 }
@@ -575,6 +580,11 @@ void PrintStructDecl(unsigned indent, const StructDecl& decl, std::ostream& stre
         for (auto& it : decl.inheritedTypes) {
             PrintNode(it.get(), indent + TWO_INDENT, "", stream);
         }
+        PrintIndent(stream, indent + ONE_INDENT, "]");
+    }
+    if (decl.capturesClause) {
+        PrintIndent(stream, indent + ONE_INDENT, "capturesClause [");
+        PrintThrowsClause(indent + TWO_INDENT, *decl.capturesClause, stream);
         PrintIndent(stream, indent + ONE_INDENT, "]");
     }
     PrintIndent(stream, indent + ONE_INDENT, "StructBody {");

@@ -280,6 +280,40 @@ std::vector<Ptr<Ty>> GetFuncBodyCapTys(const FuncBody& fb)
     return ret;
 }
 
+std::vector<Ptr<Ty>> GetDeclCapturesCapTys(const Decl& decl)
+{
+    // Checked exceptions: the 'captures' clause types of a class or struct declaration
+    // (proposal 3.9), elaborated during type check. Only supply/demand material: entries whose
+    // types failed elaboration are skipped (their errors are reported at the clause).
+    auto inheritable = DynamicCast<const InheritableDecl*>(&decl);
+    if (!inheritable || !inheritable->capturesClause) {
+        return {};
+    }
+    std::vector<Ptr<Ty>> ret;
+    for (auto& capType : inheritable->capturesClause->capTypes) {
+        CJC_NULLPTR_CHECK(capType);
+        if (Ty::IsTyCorrect(capType->GetTy())) {
+            ret.emplace_back(capType->GetTy());
+        }
+    }
+    return ret;
+}
+
+bool IsUncheckedExceptionTy(TypeManager& typeManager, const ImportManager& importManager, Ptr<Ty> ty)
+{
+    // Checked exceptions (proposal 6.4): an exception type is unchecked iff it is a subtype of
+    // the core 'UncheckedException' class. When std.core does not provide the class (compiling
+    // an older or partial core during bootstrap), every exception type is checked.
+    if (!Ty::IsTyCorrect(ty)) {
+        return false;
+    }
+    auto unchecked = importManager.GetCoreDecl<ClassDecl>(CLASS_UNCHECKED_EXCEPTION);
+    if (!unchecked || !Ty::IsTyCorrect(unchecked->GetTy())) {
+        return false;
+    }
+    return typeManager.IsSubtype(ty, unchecked->GetTy());
+}
+
 // Generate type mapping for src is an override or implement of target.
 MultiTypeSubst GenerateTypeMappingBetweenFuncs(TypeManager& typeManager, const FuncDecl& src, const FuncDecl& target)
 {
