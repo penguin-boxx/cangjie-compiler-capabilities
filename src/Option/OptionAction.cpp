@@ -1076,7 +1076,17 @@ std::unordered_map<Options::ID, std::function<bool(GlobalOptions&, OptionArgInst
 #ifndef DISABLE_EFFECT_HANDLERS
     {Options::ID::ENABLE_EFFECTS, OPTION_TRUE_ACTION(opts.enableEH = true) },
 #endif
-    {Options::ID::ENABLE_CHECKED_EXCEPTIONS, OPTION_TRUE_ACTION(opts.enableChexc = true) },
+    {Options::ID::ENABLE_CHECKED_EXCEPTIONS, [](GlobalOptions& opts, const OptionArgInstance& arg) {
+        // '--enable-checked-exceptions' (alias '--enable-chexc') and '=error' report capability
+        // violations as errors; '=warn' downgrades them to warnings (warn group 'chexc').
+        if (!arg.value.empty() && arg.value != "error" && arg.value != "warn") {
+            return false;
+        }
+        opts.enableChexc = true;
+        opts.chexcSeverity = arg.value == "warn" ? GlobalOptions::ChexcSeverity::CS_WARN
+                                                 : GlobalOptions::ChexcSeverity::CS_ERROR;
+        return true;
+    }},
 #endif // CANGJIE_CODEGEN_CJNATIVE_BACKEND
 };
 } // namespace

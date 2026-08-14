@@ -50,6 +50,7 @@ enum class CompileStage {
     MACRO_EXPAND,      /**< Expand macros. */
     AST_DIFF,          /**< Diff the AST to get incremental compilation scope. */
     SEMA,              /**< TypeCheck. */
+    CAPABILITY_CHECK,  /**< Checked-exception capability checking ('--enable-checked-exceptions'). */
     DESUGAR_AFTER_SEMA,
     GENERIC_INSTANTIATION, /**< GenericInstantiation. */
     OVERFLOW_STRATEGY,     /**< Overflow strategy. */
@@ -188,6 +189,13 @@ public:
      * Perform typecheck and other semantic check jobs.
      */
     virtual bool PerformSema();
+
+    /**
+     * Perform checked-exception capability checking (experimental, behind
+     * '--enable-checked-exceptions'). Runs on the typed AST after sema, before desugar
+     * destroys 'TryExpr' structure.
+     */
+    virtual bool PerformCapabilityCheck();
 
     /**
      * Perform desugar after sema.
@@ -423,10 +431,10 @@ public:
         SrcCodeCacheInfo(const SrcCodeCacheInfo& info) = default;
         SrcCodeCacheInfo& operator=(SrcCodeCacheInfo&& info) = default;
         SrcCodeCacheInfo& operator=(const SrcCodeCacheInfo& info) = default;
-        SrcCodeCacheInfo(const std::string& code) : code(code) {};
-        SrcCodeCacheInfo(std::string&& code) : code(std::move(code)) {};
-        SrcCodeCacheInfo(SrcCodeChangeState state, const std::string& code) : state(state), code(code) {};
-        SrcCodeCacheInfo(SrcCodeChangeState state, std::string&& code) : state(state), code(std::move(code)) {};
+        SrcCodeCacheInfo(const std::string& code) : code(code){};
+        SrcCodeCacheInfo(std::string&& code) : code(std::move(code)){};
+        SrcCodeCacheInfo(SrcCodeChangeState state, const std::string& code) : state(state), code(code){};
+        SrcCodeCacheInfo(SrcCodeChangeState state, std::string&& code) : state(state), code(std::move(code)){};
     };
     // the source code cache map use for LSP and cjdb. Key is path, Value is source change state and source code.
     std::unordered_map<std::string, SrcCodeCacheInfo> bufferCache;
