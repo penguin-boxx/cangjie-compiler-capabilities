@@ -1607,7 +1607,8 @@ TypeChecker::TypeCheckerImpl::FuncTyPair TypeChecker::TypeCheckerImpl::CollectVa
             if (hasThisRet) {
                 // Since 'CollectValidFuncTys' is only used for reference node, we do not need to keep 'This' ty here.
                 auto realThisTy = typeManager.GetInstantiatedTy(thisCd->GetTy(), mapping);
-                instTy = typeManager.GetFunctionTy(RawStaticCast<FuncTy*>(instTy)->paramTys, realThisTy);
+                auto instFuncTy = RawStaticCast<FuncTy*>(instTy);
+                instTy = typeManager.GetFunctionTy(instFuncTy->paramTys, realThisTy, {}, instFuncTy->capTys);
             }
             candidates.emplace_back(std::make_tuple(fd, instTy, mapping));
         }
@@ -2758,12 +2759,12 @@ std::optional<Ptr<Ty>> TypeChecker::TypeCheckerImpl::DynamicBindingThisType(
     auto declOfThisType = GetDeclOfThisType(baseExpr);
     if (auto cd = DynamicCast<ClassDecl*>(declOfThisType); cd && Ty::IsTyCorrect(cd->GetTy())) {
         auto instTy = typeManager.ApplySubstPack(typeManager.GetClassThisTy(*cd, cd->GetTy()->typeArgs), typeMapping);
-        baseExpr.SetTy(typeManager.GetFunctionTy(funcTy->paramTys, instTy));
+        baseExpr.SetTy(typeManager.GetFunctionTy(funcTy->paramTys, instTy, {}, funcTy->capTys));
         return instTy;
     } else if (auto ma = DynamicCast<MemberAccess*>(&baseExpr); ma && ma->baseExpr) {
         // If the baseExpr's type is generic type, set the function call's return type as 'gty'.
         if (auto gty = DynamicCast<GenericsTy*>(ma->baseExpr->GetTy()); gty) {
-            baseExpr.SetTy(typeManager.GetFunctionTy(funcTy->paramTys, gty));
+            baseExpr.SetTy(typeManager.GetFunctionTy(funcTy->paramTys, gty, {}, funcTy->capTys));
             return gty;
         }
     }

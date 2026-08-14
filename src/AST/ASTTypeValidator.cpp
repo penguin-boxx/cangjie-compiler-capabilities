@@ -126,13 +126,11 @@ private:
     std::unordered_map<Ptr<const Node>, bool> checkStatus;
 
     // Node kinds who's type and children can be ignored.
-    inline const static std::unordered_set<ASTKind> ignoreKinds{ASTKind::GENERIC_PARAM_DECL,
-        ASTKind::GENERIC_CONSTRAINT, ASTKind::PRIMARY_CTOR_DECL, ASTKind::TYPE_ALIAS_DECL, ASTKind::BUILTIN_DECL,
-        ASTKind::MODIFIER, ASTKind::ANNOTATION, ASTKind::PACKAGE_SPEC, ASTKind::IMPORT_SPEC, ASTKind::WILDCARD_PATTERN,
-        ASTKind::GENERIC, ASTKind::MACRO_EXPAND_DECL, ASTKind::MACRO_EXPAND_EXPR, ASTKind::MACRO_EXPAND_PARAM,
-        // Checked exceptions (experimental): the `throws` clause is semantically inert until its
-        // capability types are elaborated (like GENERIC_CONSTRAINT, its types carry no sema ty yet).
-        ASTKind::THROWS_CLAUSE};
+    inline const static std::unordered_set<ASTKind> ignoreKinds {
+        ASTKind::GENERIC_PARAM_DECL, ASTKind::GENERIC_CONSTRAINT,
+        ASTKind::PRIMARY_CTOR_DECL, ASTKind::TYPE_ALIAS_DECL, ASTKind::BUILTIN_DECL, ASTKind::MODIFIER,
+        ASTKind::ANNOTATION, ASTKind::PACKAGE_SPEC, ASTKind::IMPORT_SPEC, ASTKind::WILDCARD_PATTERN, ASTKind::GENERIC,
+        ASTKind::MACRO_EXPAND_DECL, ASTKind::MACRO_EXPAND_EXPR, ASTKind::MACRO_EXPAND_PARAM};
 
     // Node kinds who's sema type can be ignored.
     inline const static std::unordered_set<ASTKind> noneTyKinds{
@@ -148,6 +146,9 @@ private:
         ASTKind::RETURN_EXPR,
         ASTKind::LET_PATTERN_DESTRUCTOR,
         ASTKind::FUNC_PARAM_LIST,
+        // Checked exceptions (experimental): the clause node itself carries no sema ty, while its
+        // capability types are elaborated during PreCheck and validated like any other type node.
+        ASTKind::THROWS_CLAUSE,
     };
 };
 

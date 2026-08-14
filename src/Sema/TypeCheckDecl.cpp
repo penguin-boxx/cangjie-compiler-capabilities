@@ -83,7 +83,8 @@ void TypeChecker::TypeCheckerImpl::CheckFuncDecl(ASTContext& ctx, FuncDecl& fd)
         // NOTE: Error's for synthesized quest ty must be reported in 'CheckBodyRetType',
         // otherwise it means funcBody contains broken nodes.
         // Update return type to invalid, keep 'fd''s type in funcTy format.
-        fd.SetTy(typeManager.GetFunctionTy(RawStaticCast<FuncTy*>(fd.GetTy())->paramTys, TypeManager::GetInvalidTy()));
+        auto fdFuncTy = RawStaticCast<FuncTy*>(fd.GetTy());
+        fd.SetTy(typeManager.GetFunctionTy(fdFuncTy->paramTys, TypeManager::GetInvalidTy(), {}, fdFuncTy->capTys));
     }
     // NOTE: 'fd''s type should only be updated inside 'CheckFuncBody' not here.
     if (fd.TestAttr(AST::Attribute::MAIN_ENTRY)) {

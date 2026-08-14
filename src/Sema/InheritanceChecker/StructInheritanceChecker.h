@@ -76,6 +76,12 @@ private:
     void CheckGenericTypeArgInfo(const MemberSignature& parent, const MemberSignature& child) const;
     void CheckInheritanceForInterface(const MemberSignature& interface, const MemberSignature& child) const;
     bool CheckImplementationRelation(const MemberSignature& parent, const MemberSignature& child) const;
+    /**
+     * Checked exceptions (proposal 3.8): the override's 'throws' list must be pointwise subsumed
+     * by the original's. Constructors are exempt.
+     */
+    void CheckThrowsClauseCompatible(const AST::FuncDecl& parentFunc, const AST::FuncDecl& childFunc,
+        const FuncTy& parentTy, const FuncTy& childTy) const;
     void CheckMutModifierCompatible(const MemberSignature& parent, const Decl& child) const;
     void CheckAccessVisibility(const Decl& parent, const Decl& child, const Decl& diagNode) const;
     bool IsExtendedDefaultImpl(const MemberSignature& parent, const Decl& child) const;

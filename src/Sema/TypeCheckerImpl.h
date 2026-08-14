@@ -1302,6 +1302,13 @@ private:
     void CheckEntryFunc(AST::FuncDecl& fd);
     bool CheckNormalFuncBody(ASTContext& ctx, AST::FuncBody& fb, std::vector<Ptr<AST::Ty>>& paramTys);
     bool CheckFuncBody(ASTContext& ctx, AST::FuncBody& fb);
+    /**
+     * Checked exceptions: validate an elaborated 'throws' clause -- every entry must be a subtype
+     * of core 'Exception' (type parameters allowed when suitably bounded).
+     */
+    void ChkThrowsClauseTypes(ASTContext& ctx, AST::ThrowsClause& clause);
+    /** Checked exceptions: diagnose 'throws' clauses on foreign/C functions and CFunc types. */
+    void ChkThrowsClauseOfFuncBody(ASTContext& ctx, AST::FuncBody& fb);
     void AddRetTypeNode(AST::FuncBody& fb) const;
     bool CheckBodyRetType(ASTContext& ctx, AST::FuncBody& fb);
     void CheckFuncParamList(ASTContext& ctx, AST::FuncParamList& fpl);

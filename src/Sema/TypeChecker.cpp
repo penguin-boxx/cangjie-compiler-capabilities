@@ -188,8 +188,42 @@ void TypeChecker::TypeCheckerImpl::ReplaceFuncRetTyWithThis(FuncBody& fb, Ptr<Ty
     }
 }
 
+void TypeChecker::TypeCheckerImpl::ChkThrowsClauseTypes(ASTContext& ctx, ThrowsClause& clause)
+{
+    auto exception = importManager.GetCoreDecl<ClassDecl>(CLASS_EXCEPTION);
+    for (auto& capType : clause.capTypes) {
+        CJC_NULLPTR_CHECK(capType);
+        CheckReferenceTypeLegality(ctx, *capType);
+        auto capTy = capType->GetTy();
+        if (!Ty::IsTyCorrect(capTy)) {
+            continue;
+        }
+        bool isExceptionSubtype =
+            (capTy->IsClass() || capTy->IsGeneric()) && exception && typeManager.IsSubtype(capTy, exception->GetTy());
+        if (!isExceptionSubtype) {
+            diag.DiagnoseRefactor(
+                DiagKindRefactor::sema_chexc_clause_type_not_exception, *capType, capType->ToString());
+        }
+    }
+}
+
+void TypeChecker::TypeCheckerImpl::ChkThrowsClauseOfFuncBody(ASTContext& ctx, FuncBody& fb)
+{
+    if (!fb.throwsClause) {
+        return;
+    }
+    if (fb.funcDecl && fb.funcDecl->TestAttr(Attribute::FOREIGN)) {
+        diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_clause_on_cfunc, *fb.throwsClause, "a foreign function");
+    } else if (fb.TestAttr(Attribute::C)) {
+        diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_clause_on_cfunc, *fb.throwsClause, "a 'CFunc' function");
+    } else {
+        ChkThrowsClauseTypes(ctx, *fb.throwsClause);
+    }
+}
+
 bool TypeChecker::TypeCheckerImpl::CheckFuncBody(ASTContext& ctx, FuncBody& fb)
 {
+    ChkThrowsClauseOfFuncBody(ctx, fb);
     if (fb.retType) {
         Synthesize({ctx, SynPos::NONE}, fb.retType.get());
     } else {
@@ -235,6 +269,7 @@ bool TypeChecker::TypeCheckerImpl::CheckNormalFuncBody(ASTContext& ctx, FuncBody
     }
     CheckFuncParamList(ctx, *fb.paramLists[0]);
     paramTys = GetFuncBodyParamTys(fb);
+    auto capTys = GetFuncBodyCapTys(fb);
 
     bool isCFFIBackend = IsUnsafeBackend(backendType);
     bool isCFunc =
@@ -246,12 +281,12 @@ bool TypeChecker::TypeCheckerImpl::CheckNormalFuncBody(ASTContext& ctx, FuncBody
             fb.EnableAttr(Attribute::IS_CHECK_VISITED); // Avoid re-enter funcDecl check, when function is invalid.
             Synthesize({ctx, SynPos::NONE}, fb.body.get()); // Synthesize for other decl/expr in function body.
         }
-        fb.SetTy(typeManager.GetFunctionTy(paramTys, fb.retType->GetTy(), {isCFunc, false, hasVariableLenArg}));
+        fb.SetTy(typeManager.GetFunctionTy(paramTys, fb.retType->GetTy(), {isCFunc, false, hasVariableLenArg}, capTys));
         return false;
     }
 
     // Set funcTy before Synthesize body, avoid recursively call typecheck loop.
-    auto funcTy = typeManager.GetFunctionTy(paramTys, fb.retType->GetTy(), {isCFunc, false, hasVariableLenArg});
+    auto funcTy = typeManager.GetFunctionTy(paramTys, fb.retType->GetTy(), {isCFunc, false, hasVariableLenArg}, capTys);
     if (fb.funcDecl) {
         fb.funcDecl->SetTy(funcTy);
     }
@@ -259,7 +294,7 @@ bool TypeChecker::TypeCheckerImpl::CheckNormalFuncBody(ASTContext& ctx, FuncBody
 
     if (!CheckBodyRetType(ctx, fb)) {
         // Update 'fb.GetTy()' witch updated 'fb.retType->GetTy()'.
-        fb.SetTy(typeManager.GetFunctionTy(paramTys, fb.retType->GetTy(), {isCFunc, false, hasVariableLenArg}));
+        fb.SetTy(typeManager.GetFunctionTy(paramTys, fb.retType->GetTy(), {isCFunc, false, hasVariableLenArg}, capTys));
         return false;
     }
 
@@ -267,7 +302,7 @@ bool TypeChecker::TypeCheckerImpl::CheckNormalFuncBody(ASTContext& ctx, FuncBody
         UnsafeCheck(fb);
     }
 
-    funcTy = typeManager.GetFunctionTy(paramTys, fb.retType->GetTy(), {isCFunc, false, hasVariableLenArg});
+    funcTy = typeManager.GetFunctionTy(paramTys, fb.retType->GetTy(), {isCFunc, false, hasVariableLenArg}, capTys);
     // Update funcDecl's type after body is checked.
     if (fb.funcDecl) {
         fb.funcDecl->SetTy(funcTy);
@@ -461,7 +496,7 @@ void TypeChecker::TypeCheckerImpl::CheckCtorFuncBody(ASTContext& ctx, FuncBody& 
     }
     CheckFuncParamList(ctx, *fb.paramLists[0].get());
     auto paramTys = GetFuncBodyParamTys(fb);
-    fb.SetTy(typeManager.GetFunctionTy(paramTys, ctorTy));
+    fb.SetTy(typeManager.GetFunctionTy(paramTys, ctorTy, {}, GetFuncBodyCapTys(fb)));
     fb.funcDecl->SetTy(fb.GetTy());
     fb.retType->SetTy(ctorTy);
     Synthesize({ctx, SynPos::UNUSED}, fb.body.get());

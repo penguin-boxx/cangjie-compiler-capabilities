@@ -263,6 +263,23 @@ std::vector<Ptr<Ty>> GetFuncBodyParamTys(const FuncBody& fb)
     return ret;
 }
 
+std::vector<Ptr<Ty>> GetFuncBodyCapTys(const FuncBody& fb)
+{
+    // Checked exceptions: the declaration's 'throws' clause types (elaborated during PreCheck's
+    // name resolution) become the capability list of the declaration's functional type.
+    // Foreign/C functions never carry capabilities; the clause on them is diagnosed separately.
+    bool isCLike = fb.TestAttr(Attribute::C) || (fb.funcDecl && fb.funcDecl->TestAttr(Attribute::FOREIGN));
+    if (!fb.throwsClause || isCLike) {
+        return {};
+    }
+    std::vector<Ptr<Ty>> ret;
+    for (auto& capType : fb.throwsClause->capTypes) {
+        CJC_NULLPTR_CHECK(capType);
+        ret.emplace_back(Ty::IsInitialTy(capType->GetTy()) ? TypeManager::GetInvalidTy() : capType->GetTy());
+    }
+    return ret;
+}
+
 // Generate type mapping for src is an override or implement of target.
 MultiTypeSubst GenerateTypeMappingBetweenFuncs(TypeManager& typeManager, const FuncDecl& src, const FuncDecl& target)
 {

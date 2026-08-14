@@ -411,4 +411,12 @@ WARNING(sema_hide_must_at_end, APILEVEL_CHECK, "annotation '%s' must be placed b
 
 WARNING(sema_unused_import, UNUSED, "unused import '%s'", "unused import")
 
+// Checked exceptions (experimental, behind '--experimental --enable-chexc').
+ERROR(sema_chexc_clause_type_not_exception, "type '%s' in 'throws' clause is not a subtype of class 'Exception'",
+    "this type must be a subtype of class 'Exception'")
+ERROR(sema_chexc_clause_on_cfunc, "a 'throws' clause is not allowed on %s", "'throws' clause is not allowed here")
+ERROR(sema_chexc_override_missing_capability,
+    "exception type '%s' in 'throws' clause of '%s' is not covered by the overridden or implemented declaration",
+    "no exception type in the original declaration's 'throws' clause is a supertype of '%s'")
+
 ERROR(sema_diag_end, "")
