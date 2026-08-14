@@ -195,21 +195,38 @@ void TypeChecker::TypeCheckerImpl::ChkThrowsClauseTypes(
     for (auto& capType : clause.capTypes) {
         CJC_NULLPTR_CHECK(capType);
         CheckReferenceTypeLegality(ctx, *capType);
-        auto capTy = capType->GetTy();
-        if (!Ty::IsTyCorrect(capTy)) {
+        if (!Ty::IsTyCorrect(capType->GetTy())) {
             continue;
         }
-        bool isExceptionSubtype =
-            (capTy->IsClass() || capTy->IsGeneric()) && exception && typeManager.IsSubtype(capTy, exception->GetTy());
-        if (!isExceptionSubtype) {
-            diag.DiagnoseRefactor(
-                DiagKindRefactor::sema_chexc_clause_type_not_exception, *capType, capType->ToString(), clauseKeyword);
-        } else if (!capTy->IsGeneric() && TypeCheckUtil::IsUncheckedExceptionTy(typeManager, importManager, capTy)) {
-            // Proposal 3.2 rule 5: a concrete unchecked exception type never needs a capability,
-            // so listing it is misleading and rejected. Type parameters are exempt: a requirement
-            // instantiating to an unchecked type is trivially satisfied instead (proposal 6.4).
-            diag.DiagnoseRefactor(
-                DiagKindRefactor::sema_chexc_unchecked_type_in_clause, *capType, capType->ToString(), clauseKeyword);
+        // A tuple entry is a capability list alias (proposal 6.1): its ELEMENTS are the
+        // capabilities, so they are what the entry rules apply to. Expansion is recursive, so
+        // an alias of aliases is validated element by element as well.
+        std::vector<OwnedPtr<Type>> single;
+        single.emplace_back(std::move(capType));
+        auto elements = TypeCheckUtil::ExpandCapabilityList(single);
+        capType = std::move(single.front());
+        // A directly written entry is named by its source text; an element that came out of an
+        // alias tuple has no source of its own, so it is named by its type.
+        bool expanded = elements.size() != 1 || elements.front() != capType->GetTy();
+        for (auto capTy : elements) {
+            if (!Ty::IsTyCorrect(capTy)) {
+                continue;
+            }
+            auto entryName = expanded ? Ty::ToString(capTy) : capType->ToString();
+            bool isExceptionSubtype = (capTy->IsClass() || capTy->IsGeneric()) && exception &&
+                typeManager.IsSubtype(capTy, exception->GetTy());
+            if (!isExceptionSubtype) {
+                diag.DiagnoseRefactor(
+                    DiagKindRefactor::sema_chexc_clause_type_not_exception, *capType, entryName, clauseKeyword);
+            } else if (!capTy->IsGeneric() &&
+                TypeCheckUtil::IsUncheckedExceptionTy(typeManager, importManager, capTy)) {
+                // Proposal 3.2 rule 5: a concrete unchecked exception type never needs a
+                // capability, so listing it is misleading and rejected. Type parameters are
+                // exempt: a requirement instantiating to an unchecked type is trivially
+                // satisfied instead (proposal 6.4).
+                diag.DiagnoseRefactor(
+                    DiagKindRefactor::sema_chexc_unchecked_type_in_clause, *capType, entryName, clauseKeyword);
+            }
         }
     }
 }

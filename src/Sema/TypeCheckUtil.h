@@ -183,6 +183,12 @@ std::vector<Ptr<AST::Ty>> GetFuncBodyParamTys(const AST::FuncBody& fb);
  * Checked exceptions: get the exception capability tys of @p fb 's elaborated 'throws' clause.
  * Empty when there is no clause or the function is foreign/C.
  */
+/**
+ * Expands a checked-exception clause's types into a capability list, splicing tuple entries
+ * (capability list aliases, proposal 6.1) recursively.
+ */
+std::vector<Ptr<AST::Ty>> ExpandCapabilityList(const std::vector<OwnedPtr<AST::Type>>& capTypes);
+
 std::vector<Ptr<AST::Ty>> GetFuncBodyCapTys(const AST::FuncBody& fb);
 /**
  * Checked exceptions: get the exception capability tys of @p decl 's elaborated 'captures'
