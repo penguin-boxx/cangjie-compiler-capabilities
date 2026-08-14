@@ -1806,8 +1806,13 @@ Ptr<Ty> TyGeneralizer::Generalize(Ty& ty)
                 paramTys.push_back(Generalize(it));
             }
             auto retType = Generalize(funcTy.retTy);
+            // Capability lists are generalized with the rest of the type (proposal 3.6).
+            std::vector<Ptr<Ty>> capTys;
+            for (auto& it : funcTy.capTys) {
+                capTys.push_back(Generalize(it));
+            }
             Ptr<Ty> ret = tyMgr.GetFunctionTy(
-                paramTys, retType, {funcTy.IsCFunc(), funcTy.isClosureTy, funcTy.hasVariableLenArg});
+                paramTys, retType, {funcTy.IsCFunc(), funcTy.isClosureTy, funcTy.hasVariableLenArg}, capTys);
             return ret;
         }
         case TypeKind::TYPE_TUPLE: {

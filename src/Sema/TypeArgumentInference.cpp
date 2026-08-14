@@ -10,13 +10,13 @@
  * This file implements type argument inference.
  */
 
-#include "cangjie/AST/Match.h"
-#include "TypeCheckerImpl.h"
-#include "TypeCheckUtil.h"
-#include "ExtraScopes.h"
-#include "LocalTypeArgumentSynthesis.h"
 #include "DiagSuppressor.h"
 #include "Diags.h"
+#include "ExtraScopes.h"
+#include "LocalTypeArgumentSynthesis.h"
+#include "TypeCheckUtil.h"
+#include "TypeCheckerImpl.h"
+#include "cangjie/AST/Match.h"
 
 using namespace Cangjie;
 using namespace AST;
@@ -220,8 +220,10 @@ std::optional<Ptr<AST::Ty>> UnsolvedAsQuest(TypeManager& tyMgr, const TyVars& ty
             paramTys.push_back(it);
         }
         if (auto retType = UnsolvedAsQuest(tyMgr, tyVarsToSolve, *funcTy->retTy)) {
-            Ptr<Ty> fin = tyMgr.GetFunctionTy(
-                paramTys, *retType, {funcTy->IsCFunc(), funcTy->isClosureTy, funcTy->hasVariableLenArg});
+            // Capability lists take no part in type argument inference (proposal 3.6), but they
+            // must survive it: the literal checked against this type inherits them (3.5).
+            Ptr<Ty> fin = tyMgr.GetFunctionTy(paramTys, *retType,
+                {funcTy->IsCFunc(), funcTy->isClosureTy, funcTy->hasVariableLenArg}, funcTy->capTys);
             return fin;
         } else {
             return std::nullopt;
