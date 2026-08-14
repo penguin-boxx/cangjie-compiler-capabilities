@@ -91,6 +91,7 @@ private:
         const AST::QualifiedType& node, const VisitFunc& visitor);
     static OwnedPtr<AST::ParenType> InstantiateParenType(const AST::ParenType& node, const VisitFunc& visitor);
     static OwnedPtr<AST::OptionType> InstantiateOptionType(const AST::OptionType& node, const VisitFunc& visitor);
+    static OwnedPtr<AST::ThrowsClause> InstantiateThrowsClause(const AST::ThrowsClause& node, const VisitFunc& visitor);
     static OwnedPtr<AST::FuncType> InstantiateFuncType(const AST::FuncType& node, const VisitFunc& visitor);
     static OwnedPtr<AST::TupleType> InstantiateTupleType(const AST::TupleType& node, const VisitFunc& visitor);
     static OwnedPtr<AST::ConstantType> InstantiateConstantType(const AST::ConstantType& node, const VisitFunc& visitor);

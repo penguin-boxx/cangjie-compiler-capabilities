@@ -1079,6 +1079,7 @@ std::unordered_map<Options::ID, std::function<bool(GlobalOptions&, OptionArgInst
 #ifndef DISABLE_EFFECT_HANDLERS
     {Options::ID::ENABLE_EFFECTS, OPTION_TRUE_ACTION(opts.enableEH = true) },
 #endif
+    {Options::ID::ENABLE_CHECKED_EXCEPTIONS, OPTION_TRUE_ACTION(opts.enableChexc = true) },
 #endif // CANGJIE_CODEGEN_CJNATIVE_BACKEND
 };
 } // namespace

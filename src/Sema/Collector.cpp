@@ -333,6 +333,13 @@ void Collector::CollectFuncBody(ASTContext& ctx, FuncBody& fb, bool buildTrie)
         BuildSymbolTable(ctx, funcParamList.get(), buildTrie);
     }
     BuildSymbolTable(ctx, fb.retType.get(), buildTrie);
+    if (fb.throwsClause) {
+        // Checked exceptions (experimental): capability types may reference the function's
+        // generic parameters, so they are collected inside the function's scope.
+        for (auto& capType : fb.throwsClause->capTypes) {
+            BuildSymbolTable(ctx, capType.get(), buildTrie);
+        }
+    }
     if (fb.body != nullptr) {
         for (auto& n : fb.body->body) {
             BuildSymbolTable(ctx, n.get(), buildTrie);
@@ -1310,6 +1317,11 @@ void Collector::BuildSymbolTable(ASTContext& ctx, Ptr<Node> node, bool buildTrie
             AddSymbol(ctx, nodeInfo, buildTrie);
             for (auto& paramType : ft->paramTypes) {
                 BuildSymbolTable(ctx, paramType.get(), buildTrie);
+            }
+            if (ft->throwsClause) {
+                for (auto& capType : ft->throwsClause->capTypes) {
+                    BuildSymbolTable(ctx, capType.get(), buildTrie);
+                }
             }
             BuildSymbolTable(ctx, ft->retType.get(), buildTrie);
             break;

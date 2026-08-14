@@ -467,11 +467,28 @@ OwnedPtr<OptionType> PartialInstantiation::InstantiateOptionType(const OptionTyp
     return ret;
 }
 
+OwnedPtr<ThrowsClause> PartialInstantiation::InstantiateThrowsClause(const ThrowsClause& node, const VisitFunc& visitor)
+{
+    auto ret = MakeOwned<ThrowsClause>();
+    CopyNodeField(ret.get(), node);
+    ret->throwsPos = node.throwsPos;
+    ret->leftParenPos = node.leftParenPos;
+    ret->rightParenPos = node.rightParenPos;
+    ret->commaPosVector = node.commaPosVector;
+    for (auto& capType : node.capTypes) {
+        ret->capTypes.emplace_back(InstantiateType(capType.get(), visitor));
+    }
+    return ret;
+}
+
 OwnedPtr<FuncType> PartialInstantiation::InstantiateFuncType(const FuncType& node, const VisitFunc& visitor)
 {
     auto ret = MakeOwned<FuncType>();
     for (auto& paramType : node.paramTypes) {
         ret->paramTypes.emplace_back(InstantiateType(paramType.get(), visitor));
+    }
+    if (node.throwsClause) {
+        ret->throwsClause = InstantiateThrowsClause(*node.throwsClause, visitor);
     }
     ret->retType = InstantiateType(node.retType.get(), visitor);
     ret->isC = node.isC;
@@ -1422,6 +1439,9 @@ OwnedPtr<FuncBody> PartialInstantiation::InstantiateFuncBody(const FuncBody& fb,
     ret->doubleArrowPos = fb.doubleArrowPos;
     ret->colonPos = fb.colonPos;
     ret->retType = InstantiateType(fb.retType.get(), visitor);
+    if (fb.throwsClause) {
+        ret->throwsClause = InstantiateThrowsClause(*fb.throwsClause, visitor);
+    }
     ret->body = InstantiateExpr(fb.body.get(), visitor);
     if (fb.generic) {
         ret->generic = InstantiateGeneric(*fb.generic, visitor);
@@ -1577,6 +1597,7 @@ OwnedPtr<NodeT> PartialInstantiation::InstantiateNode(Ptr<NodeT> node, const Vis
         [&visitor](const StructBody& rb) { return OwnedPtr<Node>(InstantiateStructBody(rb, visitor)); },
         [&visitor](const InterfaceBody& ib) { return OwnedPtr<Node>(InstantiateInterfaceBody(ib, visitor)); },
         [&visitor](const GenericConstraint& gc) { return OwnedPtr<Node>(InstantiateGenericConstraint(gc, visitor)); },
+        [&visitor](const ThrowsClause& tc) { return OwnedPtr<Node>(InstantiateThrowsClause(tc, visitor)); },
         [&visitor](const FuncBody& fb) { return OwnedPtr<Node>(InstantiateFuncBody(fb, visitor)); },
         [&visitor](const FuncParamList& fpl) { return OwnedPtr<Node>(InstantiateFuncParamList(fpl, visitor)); },
         [&visitor](const FuncArg& fa) { return OwnedPtr<Node>(InstantiateFuncArg(fa, visitor)); },

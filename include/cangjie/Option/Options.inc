@@ -10,6 +10,9 @@
  * This file lists the configuration for all cjc options, which is included by headers.
  */
 
+// This file is a hand-laid-out macro table; keep clang-format away from it.
+// clang-format off
+
 // ------------------------------ A guide to Options.inc ------------------------------
 // This file lists all compile options `cjc` supports. Each option listed in the file
 // has a number of properties. Command line argument parser will check properties and
@@ -346,6 +349,9 @@ OPTION("--enable-eh", ENABLE_EFFECTS, FLAG, { BACKEND(CJNATIVE) },
     { GROUP(GLOBAL) COMMA GROUP(VISIBLE) }, nullptr, {}, MULTIPLE_OCCURRENCE,
     "Enables experimental support for effect handlers")
 #endif
+OPTION("--enable-chexc", ENABLE_CHECKED_EXCEPTIONS, FLAG, { BACKEND(CJNATIVE) },
+    { GROUP(GLOBAL) COMMA GROUP(VISIBLE) }, nullptr, {}, MULTIPLE_OCCURRENCE,
+    "Enables experimental support for checked exceptions")
 OPTION("--dump-ast", DUMP_AST, FLAG, { BACKEND(ALL) },
     { GROUP(GLOBAL) COMMA GROUP(STABLE) COMMA GROUP(VISIBLE) }, nullptr, {}, MULTIPLE_OCCURRENCE,
     "Dump human readable AST when compiling for debug")
@@ -784,3 +790,4 @@ OPTION("--discard-eh-frame", DISCARD_EH_FRAME, FLAG, { BACKEND(CJNATIVE) },
 // unless it is a single character option or it is a single character abbreviation.
 #undef COMMA
 #endif // OPTION
+// clang-format on

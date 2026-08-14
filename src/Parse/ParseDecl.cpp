@@ -2246,6 +2246,11 @@ void ParserImpl::ParsePropMemberBody(const ScopeKind& scopeKind, FuncBody& fb)
             DiagGetOrSetCannotBeGeneric("setter", *fb.generic);
         }
     }
+    // Checked exceptions (experimental): property accessors may carry a `throws` clause,
+    // e.g. `get() throws GException { ... }` (proposal rule: clauses on all callables).
+    if (Seeing(TokenKind::THROWS)) {
+        fb.throwsClause = ParseThrowsClause(true);
+    }
     if (!Seeing(TokenKind::LCURL)) {
         ParseDiagnoseRefactor(DiagKindRefactor::parse_expected_left_brace, lookahead, ConvertToken(lookahead));
         ConsumeUntilDecl(TokenKind::LCURL);
@@ -2293,7 +2298,20 @@ OwnedPtr<FuncBody> ParserImpl::ParseFuncBody(ScopeKind scopeKind)
             enableThis = false;
         }
     }
+    // Checked exceptions (experimental): a `throws` clause and generic constraints may appear
+    // in either order after the return type (proposal §3.2 rule 4).
+    if (Seeing(TokenKind::THROWS)) {
+        ret->throwsClause = ParseThrowsClause(true);
+    }
     ParseFuncGenericConstraints(*ret);
+    if (Seeing(TokenKind::THROWS)) {
+        if (ret->throwsClause) {
+            ParseDiagnoseRefactor(DiagKindRefactor::parse_duplicate_throws_clause, lookahead.Begin());
+            (void)ParseThrowsClause(true); // Parse and drop the duplicate to recover.
+        } else {
+            ret->throwsClause = ParseThrowsClause(true);
+        }
+    }
     if (Seeing(TokenKind::LCURL)) {
         ret->body = ParseBlock(ScopeKind::FUNC_BODY);
         ret->end = ret->body->end;
@@ -2302,6 +2320,9 @@ OwnedPtr<FuncBody> ParserImpl::ParseFuncBody(ScopeKind scopeKind)
         ret->end = lastGC->end;
     } else {
         ret->end = ret->retType ? ret->retType->end : paramsEndToken.End();
+    }
+    if (!ret->body && ret->throwsClause && ret->end < ret->throwsClause->end) {
+        ret->end = ret->throwsClause->end;
     }
     return ret;
 }

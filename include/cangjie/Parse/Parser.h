@@ -121,6 +121,9 @@ public:
     Parser& SetEHEnabled(bool enabled);
     bool IsEHEnabled() const;
 
+    Parser& SetChexcEnabled(bool enabled);
+    bool IsChexcEnabled() const;
+
     Parser& SetModuleName(const std::string& name);
     Parser& SetPrimaryDecl(const std::string& decl);
     Parser& SetForImport(bool isForImport);
