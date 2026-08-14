@@ -74,7 +74,7 @@ public:
     Ptr<AST::StructTy> GetStructTy(AST::StructDecl& sd, const std::vector<Ptr<AST::Ty>>& typeArgs);
     Ptr<AST::TupleTy> GetTupleTy(const std::vector<Ptr<AST::Ty>>& typeArgs, bool isClosureTy = false);
     Ptr<AST::FuncTy> GetFunctionTy(const std::vector<Ptr<AST::Ty>>& paramTys, Ptr<AST::Ty> retTy,
-        AST::FuncTy::Config cfg = {false, false, false, false});
+        AST::FuncTy::Config cfg = {false, false, false, false}, const std::vector<Ptr<AST::Ty>>& capTys = {});
 
     Ptr<AST::ArrayTy> GetArrayTy(Ptr<AST::Ty> elemTy, unsigned int dims);
     Ptr<AST::VArrayTy> GetVArrayTy(AST::Ty& elemTy, int64_t size);
@@ -181,6 +181,19 @@ public:
      */
     bool IsFuncParameterTypesIdentical(const std::vector<Ptr<AST::Ty>>& paramTys1,
         const std::vector<Ptr<AST::Ty>>& paramTys2, const TypeSubst& typeMapping = {});
+    /**
+     * Checked exceptions (experimental): set subsumption of exception capability lists.
+     * @p subCapTys is subsumed by @p superCapTys iff for every c2 in @p subCapTys there exists
+     * a c1 in @p superCapTys with c2 <: c1 (contravariant 'CanThrow': a handler for a base
+     * exception type also handles the more specific one).
+     */
+    bool IsCapTysSubsumed(const std::vector<Ptr<AST::Ty>>& subCapTys, const std::vector<Ptr<AST::Ty>>& superCapTys);
+    /**
+     * Checked exceptions (experimental): recursively rebuild @p ty with every functional type's
+     * capability list removed. Used where overloading compares signatures modulo capability
+     * lists (proposal 3.7).
+     */
+    Ptr<AST::Ty> EraseCapTys(Ptr<AST::Ty> ty);
     TypeCompatibility CheckTypeCompatibility(
         Ptr<AST::Ty> lvalue, Ptr<AST::Ty> rvalue, bool implicitBoxed = true, bool isGeneric = false);
     bool CheckGenericDeclInstantiation(Ptr<const AST::Decl> d, const std::vector<Ptr<AST::Ty>>& typeArgs);
@@ -633,8 +646,8 @@ private:
 
     std::unordered_set<Ptr<AST::Ty>> GetAllExtendInterfaceTyHelper(
         const std::set<Ptr<AST::ExtendDecl>>& extends, const std::vector<Ptr<AST::Ty>>& typeArgs);
-    bool HasExtendInterfaceTyHelper(AST::Ty& superTy, const std::set<Ptr<AST::ExtendDecl>>& extends,
-        const std::vector<Ptr<AST::Ty>>& typeArgs);
+    bool HasExtendInterfaceTyHelper(
+        AST::Ty& superTy, const std::set<Ptr<AST::ExtendDecl>>& extends, const std::vector<Ptr<AST::Ty>>& typeArgs);
 
     Ptr<AST::Ty> SubstituteTypeArgs(Ptr<AST::Ty> baseTy, std::vector<Ptr<AST::Ty>>& typeArgs);
     std::vector<Ptr<AST::Ty>> RecursiveSubstituteTypeAliasInTy(

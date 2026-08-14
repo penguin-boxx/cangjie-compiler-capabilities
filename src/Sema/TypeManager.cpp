@@ -16,8 +16,8 @@
 #include <utility>
 #include <vector>
 
-#include "TypeCheckUtil.h"
 #include "LocalTypeArgumentSynthesis.h"
+#include "TypeCheckUtil.h"
 
 #include "ExtraScopes.h"
 #include "cangjie/AST/Match.h"
@@ -151,9 +151,10 @@ Ptr<TupleTy> TypeManager::GetTupleTy(const std::vector<Ptr<Ty>>& typeArgs, bool 
     return GetTypeTy<TupleTy>(typeArgs, isClosureTy);
 }
 
-Ptr<FuncTy> TypeManager::GetFunctionTy(const std::vector<Ptr<Ty>>& paramTys, Ptr<Ty> retTy, FuncTy::Config cfg)
+Ptr<FuncTy> TypeManager::GetFunctionTy(
+    const std::vector<Ptr<Ty>>& paramTys, Ptr<Ty> retTy, FuncTy::Config cfg, const std::vector<Ptr<Ty>>& capTys)
 {
-    return GetTypeTy<FuncTy>(paramTys, retTy, cfg);
+    return GetTypeTy<FuncTy>(paramTys, retTy, cfg, capTys);
 }
 
 Ptr<Ty> TypeManager::GetIntersectionTy(const std::set<Ptr<Ty>>& tys)
@@ -320,8 +321,12 @@ Ptr<Ty> TypeManager::TyInstantiator::Instantiate(Ty& ty)
                 paramTys.push_back(Instantiate(it));
             }
             auto retType = Instantiate(funcTy.retTy);
+            std::vector<Ptr<Ty>> capTys;
+            for (auto& it : funcTy.capTys) {
+                capTys.push_back(Instantiate(it));
+            }
             Ptr<Ty> ret = tyMgr.GetFunctionTy(
-                paramTys, retType, {funcTy.IsCFunc(), funcTy.isClosureTy, funcTy.hasVariableLenArg});
+                paramTys, retType, {funcTy.IsCFunc(), funcTy.isClosureTy, funcTy.hasVariableLenArg}, capTys);
             return ret;
         }
         case TypeKind::TYPE_TUPLE: {
@@ -888,9 +893,57 @@ bool TypeManager::IsFuncSubtype(const Ty& leaf, const Ty& root)
     auto& rootFuncType = static_cast<const FuncTy&>(root);
     if (IsFuncParametersSubtype(leafFuncType, rootFuncType)) {
         bool noCast = leafFuncType.noCast || rootFuncType.noCast;
-        return IsSubtype(leafFuncType.retTy, rootFuncType.retTy, noCast);
+        // Checked exceptions (proposal 3.4): the subtype's capability list must be subsumed by the
+        // supertype's, so any call site providing the supertype's capabilities can invoke the subtype.
+        return IsSubtype(leafFuncType.retTy, rootFuncType.retTy, noCast) &&
+            IsCapTysSubsumed(leafFuncType.capTys, rootFuncType.capTys);
     }
     return false;
+}
+
+bool TypeManager::IsCapTysSubsumed(const std::vector<Ptr<Ty>>& subCapTys, const std::vector<Ptr<Ty>>& superCapTys)
+{
+    return std::all_of(subCapTys.begin(), subCapTys.end(), [this, &superCapTys](Ptr<Ty> subCap) {
+        return std::any_of(superCapTys.begin(), superCapTys.end(),
+            [this, subCap](Ptr<Ty> superCap) { return IsSubtype(subCap, superCap); });
+    });
+}
+
+Ptr<Ty> TypeManager::EraseCapTys(Ptr<Ty> ty)
+{
+    if (!Ty::IsTyCorrect(ty) || ty->kind <= TypeKind::TYPE_BOOLEAN) {
+        return ty;
+    }
+    if (auto funcTy = DynamicCast<FuncTy*>(ty)) {
+        std::vector<Ptr<Ty>> paramTys;
+        bool changed = !funcTy->capTys.empty();
+        for (auto paramTy : funcTy->paramTys) {
+            auto erased = EraseCapTys(paramTy);
+            changed = changed || erased != paramTy;
+            paramTys.push_back(erased);
+        }
+        auto retTy = EraseCapTys(funcTy->retTy);
+        changed = changed || retTy != funcTy->retTy;
+        if (!changed) {
+            return ty;
+        }
+        return GetFunctionTy(
+            paramTys, retTy, {funcTy->isC, funcTy->isClosureTy, funcTy->hasVariableLenArg, funcTy->noCast});
+    }
+    if (ty->typeArgs.empty()) {
+        return ty;
+    }
+    std::vector<Ptr<Ty>> typeArgs;
+    bool changed = false;
+    for (auto arg : ty->typeArgs) {
+        auto erased = EraseCapTys(arg);
+        changed = changed || erased != arg;
+        typeArgs.push_back(erased);
+    }
+    if (!changed) {
+        return ty;
+    }
+    return SubstituteTypeArgs(ty, typeArgs);
 }
 
 bool TypeManager::IsFuncParametersSubtype(const FuncTy& leaf, const FuncTy& root)
@@ -1120,8 +1173,12 @@ bool TypeManager::IsFuncParameterTypesIdentical(const FuncTy& t1, const FuncTy& 
     if (Ty::IsTyCorrect(&t1) && Ty::IsTyCorrect(&t2) && t1.paramTys.size() == t2.paramTys.size()) {
         result = true;
         for (size_t i = 0; i < t2.paramTys.size(); i++) {
-            result =
-                result && CheckTypeCompatibility(t1.paramTys[i], t2.paramTys[i], false) == TypeCompatibility::IDENTICAL;
+            // Checked exceptions (proposal 3.7): overloading and overriding compare signatures with
+            // all capability lists removed, so parameter functional types differing only in their
+            // 'throws' lists are the same type here.
+            result = result &&
+                CheckTypeCompatibility(EraseCapTys(t1.paramTys[i]), EraseCapTys(t2.paramTys[i]), false) ==
+                    TypeCompatibility::IDENTICAL;
         }
     }
     return result;
@@ -1135,7 +1192,10 @@ bool TypeManager::IsFuncParameterTypesIdentical(
         result = true;
         for (size_t i = 0; i < paramTys2.size(); i++) {
             auto paramTy1 = GetInstantiatedTy(paramTys1[i], typeMapping);
-            result = result && CheckTypeCompatibility(paramTy1, paramTys2[i], false) == TypeCompatibility::IDENTICAL;
+            // Checked exceptions (proposal 3.7): compare modulo capability lists.
+            result = result &&
+                CheckTypeCompatibility(EraseCapTys(paramTy1), EraseCapTys(paramTys2[i]), false) ==
+                    TypeCompatibility::IDENTICAL;
         }
     }
     return result;
@@ -1254,8 +1314,8 @@ bool TypeManager::IsTyExtendInterface(const Ty& classTy, const Ty& interfaceTy)
     return false;
 }
 
-bool TypeManager::HasExtendInterfaceTyHelper(Ty& superTy, const std::set<Ptr<ExtendDecl>>& extends,
-    const std::vector<Ptr<Ty>>& typeArgs)
+bool TypeManager::HasExtendInterfaceTyHelper(
+    Ty& superTy, const std::set<Ptr<ExtendDecl>>& extends, const std::vector<Ptr<Ty>>& typeArgs)
 {
     PData::CommitScope cs(constraints);
     for (auto& extend : extends) {
@@ -1972,7 +2032,9 @@ bool TypeManager::IsFuncDeclSubType(const AST::FuncDecl& decl, const AST::FuncDe
 
 bool TypeManager::IsFuncTySubType(const AST::FuncTy& type1, const AST::FuncTy& type2)
 {
-    return IsFuncParameterTypesIdentical(type1.paramTys, type2.paramTys) && IsSubtype(type1.retTy, type2.retTy);
+    // Checked exceptions (proposal 3.4): capability lists compare by set subsumption.
+    return IsFuncParameterTypesIdentical(type1.paramTys, type2.paramTys) && IsSubtype(type1.retTy, type2.retTy) &&
+        IsCapTysSubsumed(type1.capTys, type2.capTys);
 }
 #endif
 
@@ -2311,7 +2373,7 @@ TypeSubst GetGreedySubst(Constraint& cst)
     }
     return m;
 }
-}
+} // namespace
 
 Ptr<AST::Ty> TypeManager::TryGreedySubst(Ptr<AST::Ty> ty)
 {
@@ -2382,7 +2444,12 @@ Ptr<Ty> TypeManager::ReplaceThisTy(Ptr<Ty> now)
                 paramTys.push_back(ReplaceThisTy(p));
             }
             auto retTy = ReplaceThisTy(funcTy.retTy);
-            return GetFunctionTy(paramTys, retTy, {funcTy.IsCFunc(), funcTy.isClosureTy, funcTy.hasVariableLenArg});
+            std::vector<Ptr<Ty>> capTys;
+            for (auto& c : funcTy.capTys) {
+                capTys.push_back(ReplaceThisTy(c));
+            }
+            return GetFunctionTy(
+                paramTys, retTy, {funcTy.IsCFunc(), funcTy.isClosureTy, funcTy.hasVariableLenArg}, capTys);
         }
         case TypeKind::TYPE_TUPLE:
             return GetTupleTy(newArgs, static_cast<TupleTy&>(*now).isClosureTy);
@@ -2431,7 +2498,8 @@ Ptr<Ty> TypeManager::SubstituteTypeArgs(Ptr<Ty> baseTy, std::vector<Ptr<Ty>>& ty
             auto returnTy = typeArgs.back();
             typeArgs.pop_back();
             auto funcTy = StaticCast<FuncTy>(baseTy);
-            return GetFunctionTy(typeArgs, returnTy, {funcTy->isC, false, funcTy->hasVariableLenArg});
+            // NOTE: 'typeArgs' only covers params and return type; capability types are carried over unchanged.
+            return GetFunctionTy(typeArgs, returnTy, {funcTy->isC, false, funcTy->hasVariableLenArg}, funcTy->capTys);
         }
         case TypeKind::TYPE: {
             return baseTy;
@@ -2535,7 +2603,7 @@ Ptr<Ty> TypeManager::ObtainsAliasType(Ptr<const Node> node)
                 params.emplace_back(ObtainsAliasType(param.get()));
             }
             auto retTy = ObtainsAliasType(ft->retType.get());
-            ret = GetFunctionTy(params, retTy, {ft->isC, false, fTy->hasVariableLenArg});
+            ret = GetFunctionTy(params, retTy, {ft->isC, false, fTy->hasVariableLenArg}, fTy->capTys);
             break;
         }
         case ASTKind::TUPLE_TYPE: {
@@ -2636,7 +2704,12 @@ Ptr<AST::Ty> TypeManager::SubstituteTypeAliasInTy(AST::Ty& ty, bool needSubstitu
             auto returnTy = typeArgs.back();
             typeArgs.pop_back();
             auto& funcTy = static_cast<FuncTy&>(ty);
-            return GetFunctionTy(typeArgs, returnTy, {funcTy.isC, false, funcTy.hasVariableLenArg});
+            std::vector<Ptr<Ty>> capTys;
+            for (auto capTy : funcTy.capTys) {
+                CJC_ASSERT(capTy);
+                capTys.push_back(SubstituteTypeAliasInTy(*capTy, needSubstituteGeneric, typeMapping));
+            }
+            return GetFunctionTy(typeArgs, returnTy, {funcTy.isC, false, funcTy.hasVariableLenArg}, capTys);
         }
         case TypeKind::TYPE: {
             return GetUnaliasedTypeFromTypeAlias(

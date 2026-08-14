@@ -21,9 +21,9 @@
 #include "TyVarConstraintGraph.h"
 #include "TypeCheckUtil.h"
 
+#include "cangjie/AST/ASTCasting.h"
 #include "cangjie/AST/Node.h"
 #include "cangjie/Sema/TypeManager.h"
-#include "cangjie/AST/ASTCasting.h"
 
 using namespace Cangjie;
 using namespace AST;
@@ -463,6 +463,10 @@ bool LocalTypeArgumentSynthesis::UnifyFuncTy(const Tracked<FuncTy>& argTTy, cons
 {
     auto& argTy = argTTy.ty;
     auto& paramTy = paramTTy.ty;
+    // Checked exceptions (proposal 3.6): capability lists ('capTys') are deliberately IGNORED here.
+    // They are never unified and differing list lengths never cause rejection, to avoid row-type
+    // unification; type variables occurring only in capability lists simply stay unsolved.
+    // Reconciliation of differing ground lists happens via join/meet (JoinAndMeet), not unification.
     if (argTy.paramTys.size() != paramTy.paramTys.size()) {
         return false;
     }
@@ -853,7 +857,7 @@ size_t LocalTypeArgumentSynthesis::CountUnsolvedTyVars(const TypeSubst& subst)
 {
     auto tyVars = argPack.tyVarsToSolve;
     size_t counter = 0;
-    for (auto& tyVar: tyVars) {
+    for (auto& tyVar : tyVars) {
         if (!Utils::InKeys(tyVar, subst) ||
             std::any_of(subst.begin(), subst.end(), [tyVar](auto it) { return it.second->Contains(tyVar); })) {
             counter++;
@@ -886,7 +890,7 @@ std::optional<TypeSubst> LocalTypeArgumentSynthesis::GetBestSolution(const TypeS
     std::vector<bool> maximals(candidates.size(), true);
     if (allowPartial) {
         std::vector<size_t> unsolvedCount;
-        for (auto& tySub: candidates) {
+        for (auto& tySub : candidates) {
             unsolvedCount.push_back(CountUnsolvedTyVars(tySub));
         }
         auto minCount = *std::min_element(unsolvedCount.begin(), unsolvedCount.end());
@@ -1104,10 +1108,10 @@ SolvingErrInfo LocalTypeArgumentSynthesis::GetErrInfo()
     if (errMsg.tyVar) {
         errMsg.tyVar = StaticCast<TyVar*>(tyMgr.RecoverUnivTyVar(errMsg.tyVar));
     }
-    for (auto& ty: errMsg.lbs) {
+    for (auto& ty : errMsg.lbs) {
         ty = tyMgr.RecoverUnivTyVar(ty);
     }
-    for (auto& ty: errMsg.ubs) {
+    for (auto& ty : errMsg.ubs) {
         ty = tyMgr.RecoverUnivTyVar(ty);
     }
     return errMsg;
@@ -1156,26 +1160,17 @@ SolvingErrInfo LocalTypeArgumentSynthesis::MakeMsgConflictingConstraints(
 
 SolvingErrInfo LocalTypeArgumentSynthesis::MakeMsgNoConstraint(TyVar& v) const
 {
-    return {
-        .style = SolvingErrStyle::NO_CONSTRAINT,
-        .tyVar = &v
-    };
+    return {.style = SolvingErrStyle::NO_CONSTRAINT, .tyVar = &v};
 }
 
 SolvingErrInfo LocalTypeArgumentSynthesis::MakeMsgMismatchedArg(const Blame& blame) const
 {
-    return {
-        .style = SolvingErrStyle::ARG_MISMATCH,
-        .blames = {{blame}}
-    };
+    return {.style = SolvingErrStyle::ARG_MISMATCH, .blames = {{blame}}};
 }
 
 SolvingErrInfo LocalTypeArgumentSynthesis::MakeMsgMismatchedRet(const Blame& blame) const
 {
-    return {
-        .style = SolvingErrStyle::RET_MISMATCH,
-        .blames = {{blame}}
-    };
+    return {.style = SolvingErrStyle::RET_MISMATCH, .blames = {{blame}}};
 }
 
 void LocalTypeArgumentSynthesis::MaybeSetErrMsg(const SolvingErrInfo& s)
@@ -1195,8 +1190,7 @@ std::optional<TypeSubst> TypeChecker::TypeCheckerImpl::SolveConstraints(const Co
     return LocalTypeArgumentSynthesis::SolveConstraints(typeManager, cst);
 }
 
-bool LocalTypeArgumentSynthesis::Unify(
-    TypeManager& tyMgr, Constraint& cst, AST::Ty& argTy, AST::Ty& paramTy)
+bool LocalTypeArgumentSynthesis::Unify(TypeManager& tyMgr, Constraint& cst, AST::Ty& argTy, AST::Ty& paramTy)
 {
     LocTyArgSynArgPack dummyArgPack = {
         {}, {}, {}, {}, TypeManager::GetInvalidTy(), TypeManager::GetInvalidTy(), Blame()};

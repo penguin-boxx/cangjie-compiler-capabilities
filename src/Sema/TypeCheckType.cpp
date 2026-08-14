@@ -195,7 +195,7 @@ void RestoreTypes(std::vector<OwnedPtr<Type>>& src, std::vector<OwnedPtr<Type>>&
     }
     backup.clear();
 }
-}
+} // namespace
 
 void TypeChecker::TypeCheckerImpl::CheckRefTypeWithRealTarget(RefType& rt)
 {
@@ -261,6 +261,10 @@ void TypeChecker::TypeCheckerImpl::CheckCFuncType(ASTContext& ctx, const RefType
     auto arg = DynamicCast<FuncType>(args[0]);
     if (!arg) {
         return;
+    }
+    // Checked exceptions: CFunc types must not carry a 'throws' clause (proposal FFI ruling).
+    if (arg->throwsClause && !arg->isC) {
+        diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_clause_on_cfunc, *arg->throwsClause, "a 'CFunc' type");
     }
     for (auto& it : arg->paramTypes) {
         CheckCFuncParamType(*it);
@@ -331,6 +335,15 @@ void TypeChecker::TypeCheckerImpl::CheckFuncType(ASTContext& ctx, FuncType& ft)
     }
     CJC_NULLPTR_CHECK(ft.retType);
     CheckReferenceTypeLegality(ctx, *ft.retType);
+    // Checked exceptions: validate the 'throws' clause of a functional type; CFunc types must not
+    // carry one (proposal FFI ruling).
+    if (ft.throwsClause) {
+        if (ft.isC) {
+            diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_clause_on_cfunc, *ft.throwsClause, "a 'CFunc' type");
+        } else {
+            ChkThrowsClauseTypes(ctx, *ft.throwsClause);
+        }
+    }
     if (!ft.isC) {
         return;
     }

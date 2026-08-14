@@ -52,7 +52,7 @@ public:
     virtual ~RefNodeWalker() = default;
 
 protected:
-    explicit RefNodeWalker(Expr& expr) : expr(&expr) {};
+    explicit RefNodeWalker(Expr& expr) : expr(&expr){};
     virtual RetT Visit(RefExpr& re) = 0;
     virtual RetT Visit(MemberAccess& ma) = 0;
     virtual RetT Visit(PrimitiveTypeExpr& pte) = 0;
@@ -337,7 +337,7 @@ protected:
             typeMapping.insert(baseMapping.begin(), baseMapping.end());
             auto instTy = checker.typeManager.GetInstantiatedTy(decl->GetTy(), typeMapping);
             if (auto fTy = DynamicCast<FuncTy>(instTy); fTy && Is<ClassThisTy>(fTy->retTy)) {
-                instTy = checker.typeManager.GetFunctionTy(fTy->paramTys, &baseTy);
+                instTy = checker.typeManager.GetFunctionTy(fTy->paramTys, &baseTy, {}, fTy->capTys);
             }
             tys.emplace(instTy);
         }

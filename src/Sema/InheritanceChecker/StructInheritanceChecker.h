@@ -13,12 +13,12 @@
 #ifndef CANGJIE_SEMA_INHERITANCE_CHECKER_H
 #define CANGJIE_SEMA_INHERITANCE_CHECKER_H
 
+#include "MemberSignature.h"
 #include "cangjie/AST/Node.h"
 #include "cangjie/AST/Walker.h"
 #include "cangjie/Basic/DiagnosticEngine.h"
-#include "cangjie/Sema/TypeManager.h"
 #include "cangjie/Modules/ImportManager.h"
-#include "MemberSignature.h"
+#include "cangjie/Sema/TypeManager.h"
 
 namespace Cangjie {
 using namespace AST;
@@ -76,6 +76,12 @@ private:
     void CheckGenericTypeArgInfo(const MemberSignature& parent, const MemberSignature& child) const;
     void CheckInheritanceForInterface(const MemberSignature& interface, const MemberSignature& child) const;
     bool CheckImplementationRelation(const MemberSignature& parent, const MemberSignature& child) const;
+    /**
+     * Checked exceptions (proposal 3.8): the override's 'throws' list must be pointwise subsumed
+     * by the original's. Constructors are exempt.
+     */
+    void CheckThrowsClauseCompatible(const AST::FuncDecl& parentFunc, const AST::FuncDecl& childFunc,
+        const FuncTy& parentTy, const FuncTy& childTy) const;
     void CheckMutModifierCompatible(const MemberSignature& parent, const Decl& child) const;
     void CheckAccessVisibility(const Decl& parent, const Decl& child, const Decl& diagNode) const;
     bool IsExtendedDefaultImpl(const MemberSignature& parent, const Decl& child) const;
@@ -161,7 +167,8 @@ private:
      * key: generic decl with instantiated type, value: pair of member signatures to report diagnose.
      */
     std::map<std::pair<Ptr<const Decl>, const std::vector<Ptr<Ty>>>,
-        std::vector<std::pair<MemberSignature, MemberSignature>>> genericMembersForInstantiatedDecl;
+        std::vector<std::pair<MemberSignature, MemberSignature>>>
+        genericMembersForInstantiatedDecl;
     std::vector<std::tuple<Ptr<const Node>, Ptr<const Decl>, const std::vector<Ptr<Ty>>>> instTriggerInfos;
     std::stack<TypeSubst> institutionMaps;
     bool infiniteInstantiationOccured{false};

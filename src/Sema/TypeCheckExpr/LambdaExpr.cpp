@@ -8,8 +8,8 @@
 
 #include "DiagSuppressor.h"
 #include "Diags.h"
-#include "TypeCheckUtil.h"
 #include "ExtraScopes.h"
+#include "TypeCheckUtil.h"
 
 using namespace Cangjie;
 using namespace AST;
@@ -41,9 +41,8 @@ bool IsAnyParamTypeOmitted(const LambdaExpr& le)
 {
     CJC_ASSERT(le.funcBody && !le.funcBody->paramLists.empty());
     auto& paramList = le.funcBody->paramLists[0];
-    return std::any_of(paramList->params.cbegin(), paramList->params.cend(), [](auto& param) {
-        return param->type == nullptr;
-    });
+    return std::any_of(
+        paramList->params.cbegin(), paramList->params.cend(), [](auto& param) { return param->type == nullptr; });
 }
 
 void ClearCacheForNames(ASTContext& ctx, const LambdaExpr& le, const std::vector<std::string>& paramNames)
@@ -101,8 +100,7 @@ void ClearCacheForNames(ASTContext& ctx, const LambdaExpr& le, const std::vector
 
 void ClearInvalidTypeCheckCache(ASTContext& ctx, const LambdaExpr& le, const Ty& target)
 {
-    if ((ctx.lastTargetTypeMap.count(&le) == 0 || ctx.lastTargetTypeMap[&le] != &target) &&
-        IsAnyParamTypeOmitted(le)) {
+    if ((ctx.lastTargetTypeMap.count(&le) == 0 || ctx.lastTargetTypeMap[&le] != &target) && IsAnyParamTypeOmitted(le)) {
         std::vector<std::string> names;
         CJC_ASSERT(le.funcBody && !le.funcBody->paramLists.empty());
         for (auto& param : le.funcBody->paramLists[0]->params) {
@@ -258,7 +256,7 @@ void TypeChecker::TypeCheckerImpl::TryInferFromSyntaxInfo(ASTContext& ctx, const
     bool resultConstrained = false;
     std::function<VisitAction(Ptr<Node>)> memberScanner;
     memberScanner = [&ctx, &unsolvedParams, &candiHandler, &memberScanner, &resultConstrained](
-        Ptr<Node> n) -> VisitAction {
+                        Ptr<Node> n) -> VisitAction {
         if (auto be = DynamicCast<BinaryExpr*>(n)) {
             auto old = resultConstrained;
             resultConstrained = true;
@@ -409,8 +407,10 @@ bool TypeChecker::TypeCheckerImpl::ChkLamExpr(ASTContext& ctx, Ty& target, Lambd
         if (ChkLamBody(ctx, *le.funcBody) && paramsMatched) {
             ds.ReportDiag();
             // The call to GetFunctionTy is necessary to create (cached) CPointer types if necessary.
+            // Checked exceptions (proposal 3.5): a literal checked against an expected functional type
+            // inherits the expected type's capability list into its own type.
             le.funcBody->SetTy(typeManager.GetFunctionTy(lamParamTys, StaticCast<FuncTy*>(le.funcBody->GetTy())->retTy,
-                {tgtTy->isC, tgtTy->isClosureTy, tgtTy->hasVariableLenArg}));
+                {tgtTy->isC, tgtTy->isClosureTy, tgtTy->hasVariableLenArg}, tgtTy->capTys));
             le.SetTy(le.funcBody->GetTy());
             return true;
         } else if (IsLambdaIncompatible(le, !paramsMatched)) {
