@@ -726,7 +726,10 @@ bool CompilerInstance::PerformCapabilityCheck()
     CJC_NULLPTR_CHECK(importManager);
     for (auto& srcPkg : GetSourcePackages()) {
         CJC_NULLPTR_CHECK(srcPkg);
-        Sema::CheckCapabilities(*typeManager, *importManager, *srcPkg, missHandler);
+        // Capability parameter inference runs first and its results act as the declared clauses
+        // of the declarations it covers (proposal 6.3.3: parameters before arguments).
+        auto inferred = Sema::InferCapabilities(*typeManager, *importManager, *srcPkg, diag);
+        Sema::CheckCapabilities(*typeManager, *importManager, *srcPkg, missHandler, inferred);
     }
     return diag.GetErrorCount() == errorCountBefore;
 }

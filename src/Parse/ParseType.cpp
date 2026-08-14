@@ -280,12 +280,16 @@ OwnedPtr<AST::ThrowsClause> ParserImpl::ParseThrowsClause(bool isDeclClause)
     clause->throwsPos = lastToken.Begin();
     clause->begin = clause->throwsPos;
     clause->end = lastToken.End();
-    auto diagnoseEllipsis = [this, isDeclClause]() {
-        // `...` (proposal §6.3.5) is parsed but rejected: never legal in function types, not
-        // supported yet on declarations.
-        ParseDiagnoseRefactor(isDeclClause ? DiagKindRefactor::parse_ellipsis_in_throws_clause_unsupported
-                                           : DiagKindRefactor::parse_ellipsis_in_func_type_throws_clause,
-            MakeRange(lookahead.Begin(), lookahead.End()));
+    auto diagnoseEllipsis = [this, isDeclClause, &clause]() {
+        // On a declaration `...` re-enables capability parameter inference, whose result is
+        // unioned with the listed entries (proposal 6.3.5). A functional type's list is always
+        // complete, so the marker is rejected there (proposal 3.4).
+        if (isDeclClause) {
+            clause->hasEllipsis = true;
+        } else {
+            ParseDiagnoseRefactor(DiagKindRefactor::parse_ellipsis_in_func_type_throws_clause,
+                MakeRange(lookahead.Begin(), lookahead.End()));
+        }
         Next(); // Consume `...` and continue parsing.
     };
     if (Skip(TokenKind::LPAREN)) {

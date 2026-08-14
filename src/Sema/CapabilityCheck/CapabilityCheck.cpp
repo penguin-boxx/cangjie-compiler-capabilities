@@ -35,7 +35,10 @@
 
 #include <algorithm>
 #include <functional>
+#include <set>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -61,10 +64,47 @@ using RootSupply = std::function<bool(Ptr<Ty>)>;
 
 class CapabilityChecker {
 public:
-    CapabilityChecker(
-        TypeManager& typeManager, const ImportManager& importManager, Sema::CapabilityMissHandler& missHandler)
-        : typeManager(typeManager), importManager(importManager), missHandler(missHandler)
+    CapabilityChecker(TypeManager& typeManager, const ImportManager& importManager,
+        Sema::CapabilityMissHandler& missHandler, const Sema::InferredCapabilities& inferred = {})
+        : typeManager(typeManager), importManager(importManager), missHandler(missHandler), inferred(inferred)
     {
+    }
+
+    /**
+     * Check one callable in collect mode (proposal 6.3): the declaration's own inferred list is
+     * not consulted as a supply, so every requirement its body does not discharge locally
+     * reaches the miss handler. Explicit clause entries still supply.
+     */
+    void CollectResidualDemands(Decl& decl, Ptr<const Decl> ownerDecl)
+    {
+        collectingFor = ownerDecl;
+        CheckDecl(decl);
+        collectingFor = nullptr;
+    }
+
+    void CheckDecl(Decl& decl)
+    {
+        switch (decl.astKind) {
+            case ASTKind::FUNC_DECL:
+                CheckCallable(StaticCast<FuncDecl&>(decl));
+                break;
+            case ASTKind::PROP_DECL: {
+                auto& pd = StaticCast<PropDecl&>(decl);
+                for (auto& getter : pd.getters) {
+                    if (getter) {
+                        CheckCallable(*getter);
+                    }
+                }
+                for (auto& setter : pd.setters) {
+                    if (setter) {
+                        CheckCallable(*setter);
+                    }
+                }
+                break;
+            }
+            default:
+                break;
+        }
     }
 
     void CheckPackage(Package& pkg)
@@ -238,12 +278,24 @@ private:
     {
         CJC_NULLPTR_CHECK(node);
         switch (node->astKind) {
-            case ASTKind::FUNC_BODY:
+            case ASTKind::FUNC_BODY: {
                 // Named callables: the body of a callable with a 'throws' list is a capability
                 // scope. Nested (local) functions keep the enclosing scopes: pre-Modal,
                 // capability checking is purely lexical (author ruling).
-                supplies.emplace_back(TypeCheckUtil::GetFuncBodyCapTys(StaticCast<FuncBody&>(*node)));
+                auto& fb = StaticCast<FuncBody&>(*node);
+                auto caps = TypeCheckUtil::GetFuncBodyCapTys(fb);
+                // An inferred list acts as the declaration's clause — except while collecting
+                // that very declaration's residual demands, when consulting it would make every
+                // requirement look discharged (proposal 6.3.2).
+                if (fb.funcDecl && fb.funcDecl != collectingFor) {
+                    auto it = inferred.find(fb.funcDecl);
+                    if (it != inferred.end()) {
+                        caps.insert(caps.end(), it->second.begin(), it->second.end());
+                    }
+                }
+                supplies.emplace_back(std::move(caps));
                 return VisitAction::WALK_CHILDREN;
+            }
             case ASTKind::LAMBDA_EXPR:
                 // A literal's capability list comes from the expected type only and is stored
                 // on the literal's functional type (proposal 3.5).
@@ -369,6 +421,18 @@ private:
                 Demand(cap, ce, DescribeCallee(ce));
             }
         }
+        // A callee whose list was inferred (proposal 6.3) carries it beside the AST rather than
+        // in its type, because inference runs after the call site's type was formed.
+        if (ce.resolvedFunction) {
+            auto it = inferred.find(ce.resolvedFunction);
+            if (it != inferred.end()) {
+                for (auto cap : it->second) {
+                    if (Ty::IsTyCorrect(cap)) {
+                        Demand(cap, ce, DescribeCallee(ce));
+                    }
+                }
+            }
+        }
         DemandConstructedCaptures(ce);
     }
 
@@ -448,6 +512,287 @@ private:
     RootSupply rootSupply;
     // Capabilities captured by the class or struct whose members are being checked (proposal 3.9).
     SupplyScope classCaptures;
+    // Lists inferred for declarations without an authoritative clause (proposal 6.3).
+    const Sema::InferredCapabilities& inferred;
+    // Set while collecting one declaration's residual demands: its own inferred list is not a supply.
+    Ptr<const Decl> collectingFor{nullptr};
+};
+/// Collects residual demands instead of diagnosing them (proposal 6.3, the miss-handler seam).
+class CollectingMissHandler : public Sema::CapabilityMissHandler {
+public:
+    void HandleMiss(const Sema::CapabilityDemand& demand) override
+    {
+        if (Ty::IsTyCorrect(demand.exceptionTy)) {
+            collected.emplace_back(demand.exceptionTy);
+        }
+    }
+    std::vector<Ptr<Ty>> Take()
+    {
+        auto ret = std::move(collected);
+        collected.clear();
+        return ret;
+    }
+
+private:
+    std::vector<Ptr<Ty>> collected;
+};
+
+/**
+ * Capability parameter inference (proposal 6.3).
+ *
+ * Eligible declarations are those without an authoritative clause that are not part of the
+ * package's exported surface. Their lists are the least solution of
+ *     C(f) = local(f) ∪ ⋃ over call sites in f: (C(callee) ∖ discharged at the site)
+ * computed per strongly connected component of the intra-package call graph, bottom-up.
+ *
+ * The subtraction needs no separate representation: running the checking walker over a body in
+ * collect mode reports exactly those requirements that the supply stack at their site does not
+ * discharge, and a callee's current list is demanded at its call sites. Iterating that walk to
+ * a fixed point therefore solves the equations directly, and monotonicity (lists only grow)
+ * guarantees termination.
+ */
+class CapabilityInferencer {
+public:
+    CapabilityInferencer(TypeManager& typeManager, const ImportManager& importManager, DiagnosticEngine& diag)
+        : typeManager(typeManager), importManager(importManager), diag(diag)
+    {
+    }
+
+    Sema::InferredCapabilities Infer(Package& pkg)
+    {
+        CollectEligible(pkg);
+        BuildCallGraph();
+        for (auto& component : StronglyConnectedComponents()) {
+            SolveComponent(component);
+        }
+        return std::move(inferred);
+    }
+
+private:
+    /// Proposal 6.3.1: inference applies to declarations that are not part of the exported
+    /// surface and carry no authoritative clause. A clause ending in `...` keeps inference on.
+    static bool IsEligible(const FuncDecl& fd)
+    {
+        if (!fd.funcBody || !fd.funcBody->body) {
+            return false;
+        }
+        if (fd.TestAttr(Attribute::PUBLIC) || fd.TestAttr(Attribute::PROTECTED)) {
+            return false;
+        }
+        // Interface members are contracts: their lists are written explicitly.
+        if (fd.outerDecl && fd.outerDecl->astKind == ASTKind::INTERFACE_DECL) {
+            return false;
+        }
+        auto& clause = fd.funcBody->throwsClause;
+        return !clause || clause->hasEllipsis;
+    }
+
+    void CollectEligibleMember(Decl& member)
+    {
+        if (auto fd = DynamicCast<FuncDecl*>(&member); fd && IsEligible(*fd)) {
+            order.emplace_back(fd);
+        } else if (auto pd = DynamicCast<PropDecl*>(&member)) {
+            for (auto& accessor : pd->getters) {
+                if (accessor && IsEligible(*accessor)) {
+                    order.emplace_back(accessor.get());
+                }
+            }
+            for (auto& accessor : pd->setters) {
+                if (accessor && IsEligible(*accessor)) {
+                    order.emplace_back(accessor.get());
+                }
+            }
+        }
+    }
+
+    void CollectEligible(Package& pkg)
+    {
+        for (auto& file : pkg.files) {
+            CJC_NULLPTR_CHECK(file);
+            for (auto& decl : file->decls) {
+                CJC_NULLPTR_CHECK(decl);
+                if (decl->astKind == ASTKind::MAIN_DECL) {
+                    continue; // 'main' clauses go to the default handler; never inferred.
+                }
+                CollectEligibleMember(*decl);
+                for (auto& member : decl->GetMemberDecls()) {
+                    if (member) {
+                        CollectEligibleMember(*member);
+                    }
+                }
+            }
+        }
+        for (size_t i = 0; i < order.size(); ++i) {
+            index[order[i]] = i;
+        }
+    }
+
+    /// Edges run from a caller to the eligible callees it invokes; only such edges can carry a
+    /// list that is still being computed.
+    void BuildCallGraph()
+    {
+        callees.resize(order.size());
+        for (size_t i = 0; i < order.size(); ++i) {
+            auto caller = order[i];
+            Walker(caller->funcBody.get(), [this, i](Ptr<Node> node) {
+                if (auto ce = DynamicCast<CallExpr*>(node.get()); ce && ce->resolvedFunction) {
+                    auto found = index.find(ce->resolvedFunction);
+                    if (found != index.end() && found->second != i) {
+                        callees[i].emplace(found->second);
+                        CheckPolymorphicRecursion(*ce, i, found->second);
+                    }
+                }
+                return VisitAction::WALK_CHILDREN;
+            }).Walk();
+        }
+    }
+
+    /**
+     * Proposal 6.3.4: a cycle that re-enters a member at a growing generic instantiation has no
+     * finite candidate universe, so inference is rejected and explicit clauses are required.
+     * Detected by an occurs check on the call's type arguments.
+     */
+    void CheckPolymorphicRecursion(const CallExpr& ce, size_t caller, size_t callee)
+    {
+        auto callerGeneric = order[caller]->GetGeneric();
+        if (!callerGeneric || reportedPolymorphic.count(caller) > 0) {
+            return;
+        }
+        auto nre = DynamicCast<NameReferenceExpr*>(ce.baseFunc.get());
+        if (!nre) {
+            return;
+        }
+        for (auto typeArg : nre->instTys) {
+            if (!Ty::IsTyCorrect(typeArg) || typeArg->IsGeneric()) {
+                continue;
+            }
+            for (auto& typeParam : callerGeneric->typeParameters) {
+                if (!typeParam || !Ty::IsTyCorrect(typeParam->GetTy())) {
+                    continue;
+                }
+                // A type argument that properly contains the caller's own type parameter grows
+                // on every turn of the cycle.
+                if (typeArg != typeParam->GetTy() && ContainsTy(typeArg, typeParam->GetTy())) {
+                    (void)callee;
+                    diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_polymorphic_recursion, ce,
+                        order[caller]->identifier.Val(), Ty::ToString(typeArg));
+                    reportedPolymorphic.emplace(caller);
+                    return;
+                }
+            }
+        }
+    }
+
+    static bool ContainsTy(Ptr<Ty> haystack, Ptr<Ty> needle)
+    {
+        if (!haystack) {
+            return false;
+        }
+        if (haystack == needle) {
+            return true;
+        }
+        return std::any_of(haystack->typeArgs.begin(), haystack->typeArgs.end(),
+            [needle](Ptr<Ty> arg) { return ContainsTy(arg, needle); });
+    }
+
+    /// Tarjan's algorithm; components come out in reverse topological order, i.e. callees first,
+    /// which is exactly the bottom-up order the proposal's phase ordering asks for.
+    std::vector<std::vector<size_t>> StronglyConnectedComponents()
+    {
+        tarjanIndex.assign(order.size(), kUnvisited);
+        tarjanLow.assign(order.size(), 0);
+        onStack.assign(order.size(), false);
+        std::vector<std::vector<size_t>> components;
+        for (size_t i = 0; i < order.size(); ++i) {
+            if (tarjanIndex[i] == kUnvisited) {
+                StrongConnect(i, components);
+            }
+        }
+        return components;
+    }
+
+    void StrongConnect(size_t v, std::vector<std::vector<size_t>>& components)
+    {
+        tarjanIndex[v] = tarjanCounter;
+        tarjanLow[v] = tarjanCounter;
+        ++tarjanCounter;
+        stack.emplace_back(v);
+        onStack[v] = true;
+        for (auto w : callees[v]) {
+            if (tarjanIndex[w] == kUnvisited) {
+                StrongConnect(w, components);
+                tarjanLow[v] = std::min(tarjanLow[v], tarjanLow[w]);
+            } else if (onStack[w]) {
+                tarjanLow[v] = std::min(tarjanLow[v], tarjanIndex[w]);
+            }
+        }
+        if (tarjanLow[v] != tarjanIndex[v]) {
+            return;
+        }
+        std::vector<size_t> component;
+        while (true) {
+            auto w = stack.back();
+            stack.pop_back();
+            onStack[w] = false;
+            component.emplace_back(w);
+            if (w == v) {
+                break;
+            }
+        }
+        // Declaration order inside a component keeps diagnostics reproducible.
+        std::sort(component.begin(), component.end());
+        components.emplace_back(std::move(component));
+    }
+
+    /// Kleene iteration to the least fixed point. Members outside a cycle stabilize in one pass.
+    void SolveComponent(const std::vector<size_t>& component)
+    {
+        CollectingMissHandler handler;
+        CapabilityChecker checker(typeManager, importManager, handler, inferred);
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (auto i : component) {
+                auto decl = order[i];
+                checker.CollectResidualDemands(*decl, decl);
+                auto residual = handler.Take();
+                if (MergeInto(inferred[decl], residual)) {
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    /// Adds entries not already covered by the list; returns whether it grew.
+    bool MergeInto(std::vector<Ptr<Ty>>& list, const std::vector<Ptr<Ty>>& additions)
+    {
+        bool grew = false;
+        for (auto addition : additions) {
+            bool covered = std::any_of(list.begin(), list.end(),
+                [this, addition](Ptr<Ty> present) { return typeManager.IsSubtype(addition, present); });
+            if (!covered) {
+                list.emplace_back(addition);
+                grew = true;
+            }
+        }
+        return grew;
+    }
+
+    static constexpr size_t kUnvisited = static_cast<size_t>(-1);
+
+    TypeManager& typeManager;
+    const ImportManager& importManager;
+    DiagnosticEngine& diag;
+    std::vector<Ptr<FuncDecl>> order;
+    std::unordered_map<Ptr<const Decl>, size_t> index;
+    std::vector<std::set<size_t>> callees;
+    std::unordered_set<size_t> reportedPolymorphic;
+    Sema::InferredCapabilities inferred;
+    std::vector<size_t> tarjanIndex;
+    std::vector<size_t> tarjanLow;
+    std::vector<bool> onStack;
+    std::vector<size_t> stack;
+    size_t tarjanCounter{0};
 };
 } // namespace
 
@@ -462,9 +807,15 @@ void ReportCapabilityMissHandler::HandleMiss(const CapabilityDemand& demand)
     builder.AddMainHintArguments(demand.requiredBy);
 }
 
-void CheckCapabilities(
-    TypeManager& typeManager, const ImportManager& importManager, AST::Package& pkg, CapabilityMissHandler& missHandler)
+InferredCapabilities InferCapabilities(
+    TypeManager& typeManager, const ImportManager& importManager, AST::Package& pkg, DiagnosticEngine& diag)
 {
-    CapabilityChecker(typeManager, importManager, missHandler).CheckPackage(pkg);
+    return CapabilityInferencer(typeManager, importManager, diag).Infer(pkg);
+}
+
+void CheckCapabilities(TypeManager& typeManager, const ImportManager& importManager, AST::Package& pkg,
+    CapabilityMissHandler& missHandler, const InferredCapabilities& inferred)
+{
+    CapabilityChecker(typeManager, importManager, missHandler, inferred).CheckPackage(pkg);
 }
 } // namespace Cangjie::Sema
