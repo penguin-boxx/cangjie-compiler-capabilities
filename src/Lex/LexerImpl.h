@@ -149,8 +149,9 @@ private:
     const char* pInputEnd{nullptr}; // point to end of input file
     const char* pCurrent{nullptr};  // point to the current character
     const char* pResetCurrent{nullptr};
-    int32_t currentChar{-1}; // currently processing character
-    bool ehEnabled{false};   // EH keywords enabled flag (replaces dynamic tokenMap modification)
+    int32_t currentChar{-1};  // currently processing character
+    bool ehEnabled{false};    // EH keywords enabled flag (replaces dynamic tokenMap modification)
+    bool chexcEnabled{false}; // checked-exceptions keyword (`throws`) enabled flag
     unsigned lineResetOffsetsFromBase{0};
     TokenKind tokenKind{TokenKind::ILLEGAL};
     Position pos;
@@ -191,7 +192,7 @@ private:
     std::vector<Token> collectTokens;
     std::set<Token> tokenStream; // use set because ParseModifiers before import may cause the tokens of the first decl
                                  // to be Scan()'ed multiple times.
-    mutable bool success{true};                                     /// Used for diagnostic.
+    mutable bool success{true};  /// Used for diagnostic.
     mutable std::vector<std::pair<const char*, bool>> stringStarts; /// Used for diagnostic, string start position.
     mutable std::vector<const char*> interpolations; /// Used for diagnostic, string interpolation position.
     /// Get an UTF-8 character, skipping spaces.

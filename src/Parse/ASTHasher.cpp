@@ -12,15 +12,15 @@
 #include "cangjie/Parse/ASTHasher.h"
 
 #ifndef NDEBUG
-#include <string_view>
 #include <csignal>
+#include <string_view>
 #endif
 
+#include "cangjie/AST/ASTCasting.h"
 #include "cangjie/AST/Node.h"
+#include "cangjie/AST/Utils.h"
 #include "cangjie/AST/Walker.h"
 #include "cangjie/IncrementalCompilation/Utils.h"
-#include "cangjie/AST/ASTCasting.h"
-#include "cangjie/AST/Utils.h"
 #include "cangjie/Utils/SipHash.h"
 
 static constexpr int ALL = 0;
@@ -336,7 +336,14 @@ struct ASTHasherImpl {
     template <int whatTypeToHash> void HashFuncBody(const FuncBody& funcBody)
     {
         HashNode<whatTypeToHash>(funcBody);
-        SUPERHash<whatTypeToHash>(funcBody.paramLists, funcBody.retType, funcBody.body, funcBody.generic);
+        SUPERHash<whatTypeToHash>(
+            funcBody.paramLists, funcBody.retType, funcBody.throwsClause, funcBody.body, funcBody.generic);
+    }
+
+    template <int whatTypeToHash> void HashThrowsClause(const ThrowsClause& tc)
+    {
+        HashNode<whatTypeToHash>(tc);
+        SUPERHash<whatTypeToHash>(tc.throwsPos, tc.capTypes);
     }
 
     template <int whatTypeToHash> void HashFuncParamList(const FuncParamList& fpl)
@@ -650,7 +657,7 @@ struct ASTHasherImpl {
     template <int whatTypeToHash> void HashFuncType(const FuncType& ft)
     {
         HashType<whatTypeToHash>(ft);
-        SUPERHash<whatTypeToHash>(ft.paramTypes, ft.retType, ft.isC);
+        SUPERHash<whatTypeToHash>(ft.paramTypes, ft.throwsClause, ft.retType, ft.isC);
     }
     template <int whatTypeToHash> void HashOptionType(const OptionType& ot)
     {
@@ -1087,6 +1094,8 @@ struct ASTHasherImpl {
         SUPERHash<NON_POSITION>(decl.generic);
         if (auto func = DynamicCast<FuncDecl*>(&decl)) {
             SUPERHash<NON_POSITION>(func->funcBody->paramLists[0]->params);
+            // The checked-exception `throws` clause (experimental) is part of the API surface.
+            SUPERHash<NON_POSITION>(func->funcBody->throwsClause);
             if (func->funcBody->retType) {
                 SUPERHash<NON_POSITION>(func->funcBody->retType);
             } else {

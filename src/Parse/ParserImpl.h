@@ -13,9 +13,9 @@
 #ifndef CANGJIE_PARSE_PARSERIMPL_H
 #define CANGJIE_PARSE_PARSERIMPL_H
 
-#include "cangjie/Parse/Parser.h"
 #include "MPParserImpl.h"
 #include "NativeFFI/FFIParserImpl.h"
+#include "cangjie/Parse/Parser.h"
 
 namespace Cangjie {
 using namespace AST;
@@ -241,6 +241,7 @@ private:
     bool parseDeclFile{false};
 
     bool enableEH{false};
+    bool enableChexc{false};
     Triple::BackendType backend{Triple::BackendType::CJNATIVE};
     bool calculateLineNum{false};
     // we store line number info from all tokens
@@ -586,6 +587,14 @@ private:
         const Position& lParenPos, const Position& rParenPos, OwnedPtr<AST::Type> type);
     OwnedPtr<AST::FuncType> ParseFuncType(
         std::vector<OwnedPtr<AST::Type>> types, const Position& lParenPos, const Position& rParenPos);
+    /**
+     * Parse a checked-exception `throws` clause (experimental, requires the THROWS token which only
+     * exists with '--enable-chexc'). Grammar:
+     *   declarations (@p isDeclClause true): `throws (T {, T})` | `throws ()` | `throws T {, T}`
+     *   function types (@p isDeclClause false): `throws (T {, T})` | `throws ()` | `throws T`
+     * The `...` marker is parsed but rejected with a diagnostic.
+     */
+    OwnedPtr<AST::ThrowsClause> ParseThrowsClause(bool isDeclClause);
     OwnedPtr<AST::Type> ParsePrefixType();
     OwnedPtr<AST::GenericParamDecl> ParseGenericParamDecl();
     OwnedPtr<AST::Generic> ParseGeneric();

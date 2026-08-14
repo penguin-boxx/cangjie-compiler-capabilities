@@ -26,8 +26,8 @@
 #include "cangjie/Driver/TempFileInfo.h"
 #include "cangjie/Option/OptionTable.h"
 #include "cangjie/Utils/FileUtil.h"
-#include "cangjie/Utils/Utils.h"
 #include "cangjie/Utils/Semaphore.h"
+#include "cangjie/Utils/Utils.h"
 
 namespace Cangjie {
 
@@ -592,6 +592,8 @@ public:
     bool exportForTest = false; /** Export some additional kinds of declaration specifically for using them in tests */
 
     bool enableEH = false; /** Whether support for effect handlers is enabled */
+
+    bool enableChexc = false; /** Whether support for checked exceptions is enabled */
 
     MockMode mock = MockMode::DEFAULT; /**< Whether enable mocking. */
 

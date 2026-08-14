@@ -109,6 +109,18 @@ bool Parser::IsEHEnabled() const
     return impl->enableEH;
 }
 
+Parser& Parser::SetChexcEnabled(bool enabled)
+{
+    impl->enableChexc = enabled;
+    impl->lexer->SetChexcEnabled(enabled);
+    return *this;
+}
+
+bool Parser::IsChexcEnabled() const
+{
+    return impl->enableChexc;
+}
+
 TokenVecMap Parser::GetCommentsMap() const
 {
     return impl->commentsMap;
@@ -125,6 +137,8 @@ void Parser::SetCompileOptions(const GlobalOptions& opts)
     // keywords, so we disable them from the parser unless the user
     // explicitly asks to compile with effect handler support
     SetEHEnabled(opts.enableEH);
+    // Same for the checked-exceptions `throws` keyword.
+    SetChexcEnabled(opts.enableChexc);
 }
 
 bool Parser::Skip(TokenKind kind)

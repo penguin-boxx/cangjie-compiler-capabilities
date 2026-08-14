@@ -67,6 +67,7 @@ private:
     static OwnedPtr<QualifiedType> CloneQualifiedType(const QualifiedType& node, const VisitFunc& visitor);
     static OwnedPtr<ParenType> CloneParenType(const ParenType& node, const VisitFunc& visitor);
     static OwnedPtr<OptionType> CloneOptionType(const OptionType& node, const VisitFunc& visitor);
+    static OwnedPtr<ThrowsClause> CloneThrowsClause(const ThrowsClause& node, const VisitFunc& visitor);
     static OwnedPtr<FuncType> CloneFuncType(const FuncType& node, const VisitFunc& visitor);
     static OwnedPtr<TupleType> CloneTupleType(const TupleType& node, const VisitFunc& visitor);
     static OwnedPtr<ConstantType> CloneConstantType(const ConstantType& node, const VisitFunc& visitor);

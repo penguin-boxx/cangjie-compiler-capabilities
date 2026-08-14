@@ -190,8 +190,21 @@ template <class NodeT> VisitAction WalkerT<NodeT>::Walk(Ptr<NodeT> curNode) cons
                 if (Walk(fb->retType.get()) == VisitAction::STOP_NOW) {
                     return VisitAction::STOP_NOW;
                 }
+                if (Walk(fb->throwsClause.get()) == VisitAction::STOP_NOW) {
+                    return VisitAction::STOP_NOW;
+                }
                 if (Walk(fb->body.get()) == VisitAction::STOP_NOW) {
                     return VisitAction::STOP_NOW;
+                }
+                action = VisitAction::WALK_CHILDREN;
+                break;
+            }
+            case ASTKind::THROWS_CLAUSE: {
+                auto tc = StaticAs<ASTKind::THROWS_CLAUSE>(curNode);
+                for (auto& capType : tc->capTypes) {
+                    if (Walk(capType.get()) == VisitAction::STOP_NOW) {
+                        return VisitAction::STOP_NOW;
+                    }
                 }
                 action = VisitAction::WALK_CHILDREN;
                 break;
@@ -964,6 +977,9 @@ template <class NodeT> VisitAction WalkerT<NodeT>::Walk(Ptr<NodeT> curNode) cons
                     if (Walk(paramType.get()) == VisitAction::STOP_NOW) {
                         return VisitAction::STOP_NOW;
                     }
+                }
+                if (Walk(ft->throwsClause.get()) == VisitAction::STOP_NOW) {
+                    return VisitAction::STOP_NOW;
                 }
                 if (Walk(ft->retType.get()) == VisitAction::STOP_NOW) {
                     return VisitAction::STOP_NOW;
