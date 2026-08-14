@@ -121,6 +121,11 @@ private:
 
     void CheckMembers(Decl& decl)
     {
+        // A capturing class or struct stores the listed capabilities at construction, so its own
+        // clause supplies them to every member body (proposal 3.9 rules 3 and 4; until Modal
+        // CangJie lands, every constructor captures and every body is covered). Rule 5: a
+        // subclass does not see its superclass's captures — only the class's own clause counts.
+        classCaptures = TypeCheckUtil::GetDeclCapturesCapTys(decl);
         // An instance field initializer has no scope of its own: its demands must be satisfiable
         // in the capability scope of EVERY constructor (proposal 3.3). With no explicit
         // constructor the implicit one supplies nothing.
@@ -171,6 +176,7 @@ private:
                     break;
             }
         }
+        classCaptures.clear();
     }
 
     void CheckCallable(FuncDecl& fd)
@@ -180,10 +186,13 @@ private:
         }
         CJC_ASSERT(supplies.empty());
         rootSupply = nullptr;
-        // The FUNC_BODY visit pushes the declaration's clause scope; the walker visits the
-        // parameter default values before the body, matching "as if it appeared at the
-        // beginning of the body" (proposal 3.3).
+        // The enclosing class's captured capabilities, if any, are in scope throughout the
+        // member (proposal 3.9); the FUNC_BODY visit then pushes the declaration's own clause
+        // scope. The walker visits parameter default values before the body, matching "as if it
+        // appeared at the beginning of the body" (proposal 3.3).
+        PushClassCaptures();
         WalkScoped(fd.funcBody.get());
+        PopClassCaptures();
         CJC_ASSERT(supplies.empty());
     }
 
@@ -194,9 +203,25 @@ private:
         }
         CJC_ASSERT(supplies.empty());
         rootSupply = std::move(root);
+        PushClassCaptures();
         WalkScoped(vd.initializer.get());
+        PopClassCaptures();
         rootSupply = nullptr;
         CJC_ASSERT(supplies.empty());
+    }
+
+    void PushClassCaptures()
+    {
+        if (!classCaptures.empty()) {
+            supplies.emplace_back(classCaptures);
+        }
+    }
+
+    void PopClassCaptures()
+    {
+        if (!classCaptures.empty()) {
+            supplies.pop_back();
+        }
     }
 
     void WalkScoped(Ptr<Node> root)
@@ -344,6 +369,34 @@ private:
                 Demand(cap, ce, DescribeCallee(ce));
             }
         }
+        DemandConstructedCaptures(ce);
+    }
+
+    void DemandConstructedCaptures(CallExpr& ce)
+    {
+        // Constructing an instance of a capturing class or struct requires its captured
+        // capabilities at the construction site (proposal 3.9 rule 4). This covers 'C(...)',
+        // delegating 'this(...)' calls, and 'super(...)' calls, which resolve to the
+        // superclass constructor and therefore demand the superclass's captures (rule 5).
+        auto ctor = ce.resolvedFunction;
+        if (!ctor || !ctor->TestAttr(Attribute::CONSTRUCTOR) || !ctor->outerDecl) {
+            return;
+        }
+        auto captures = TypeCheckUtil::GetDeclCapturesCapTys(*ctor->outerDecl);
+        if (captures.empty()) {
+            return;
+        }
+        // A generic capturing class captures at the instantiated types: 'C<Int64>()' of
+        // 'class C<T> captures GenericException<T>' requires 'GenericException<Int64>'.
+        auto declaredTy = ctor->outerDecl->GetTy();
+        auto instantiated = Ty::IsTyCorrect(ce.GetTy()) ? ce.GetTy() : declaredTy;
+        auto typeMapping = TypeCheckUtil::GenerateTypeMappingByTy(declaredTy, instantiated);
+        for (auto cap : captures) {
+            auto demanded = typeMapping.empty() ? cap : typeManager.GetInstantiatedTy(cap, typeMapping);
+            if (Ty::IsTyCorrect(demanded)) {
+                Demand(demanded, ce, DescribeCallee(ce));
+            }
+        }
     }
 
     std::string DescribeCallee(const CallExpr& ce) const
@@ -369,6 +422,12 @@ private:
 
     void Demand(Ptr<Ty> exceptionTy, const Node& site, const std::string& requiredBy)
     {
+        // Throwing an unchecked exception never requires a capability (proposal 6.4). Call-site
+        // demands are filtered here too: a capability parameter whose type instantiates to an
+        // unchecked exception type is trivially satisfied (proposal 3.2 rule 5).
+        if (TypeCheckUtil::IsUncheckedExceptionTy(typeManager, importManager, exceptionTy)) {
+            return;
+        }
         // Scopes are searched from the innermost enclosing one outwards; within one scope the
         // first suitable entry in textual order supplies the capability (proposal 3.3).
         for (auto scope = supplies.rbegin(); scope != supplies.rend(); ++scope) {
@@ -387,6 +446,8 @@ private:
     Sema::CapabilityMissHandler& missHandler;
     std::vector<SupplyScope> supplies;
     RootSupply rootSupply;
+    // Capabilities captured by the class or struct whose members are being checked (proposal 3.9).
+    SupplyScope classCaptures;
 };
 } // namespace
 

@@ -23,8 +23,8 @@
 #include "cangjie/AST/Match.h"
 #include "cangjie/AST/Node.h"
 #include "cangjie/AST/Utils.h"
-#include "cangjie/Sema/TypeManager.h"
 #include "cangjie/Sema/TestManager.h"
+#include "cangjie/Sema/TypeManager.h"
 
 using namespace Cangjie;
 using namespace AST;
@@ -126,6 +126,8 @@ void TypeChecker::TypeCheckerImpl::CheckClassDecl(ASTContext& ctx, ClassDecl& cd
             CheckThreadContextInheritance(cd, *rt);
         }
     }
+    // Checked exceptions (experimental): validate the 'captures' clause (proposal 3.9).
+    ChkCapturesClauseOfDecl(ctx, cd);
     TypeCheckCompositeBody(ctx, cd, cd.body->decls);
     CheckRecursiveConstructorCall(cd.body->decls);
     if (cd.IsJavaMirror() || cd.IsJavaImpl()) {

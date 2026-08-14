@@ -271,6 +271,9 @@ OwnedPtr<Decl> ASTCloner::CloneStructDecl(const StructDecl& sd, const VisitFunc&
     for (auto& it : sd.inheritedTypes) {
         ret->inheritedTypes.push_back(CloneType(it.get(), visitor));
     }
+    if (sd.capturesClause) {
+        ret->capturesClause = CloneThrowsClause(*sd.capturesClause, visitor);
+    }
     ret->body = CloneNode(sd.body.get(), visitor);
     if (sd.generic) {
         ret->generic = CloneGeneric(*sd.generic, visitor);
@@ -285,6 +288,9 @@ OwnedPtr<Decl> ASTCloner::CloneClassDecl(const ClassDecl& cd, const VisitFunc& v
     auto ret = MakeOwned<ClassDecl>();
     for (auto& it : cd.inheritedTypes) {
         ret->inheritedTypes.push_back(CloneType(it.get(), visitor));
+    }
+    if (cd.capturesClause) {
+        ret->capturesClause = CloneThrowsClause(*cd.capturesClause, visitor);
     }
     ret->body = CloneNode(cd.body.get(), visitor);
     if (cd.generic) {

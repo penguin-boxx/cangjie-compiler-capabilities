@@ -320,6 +320,9 @@ template <class NodeT> VisitAction WalkerT<NodeT>::Walk(Ptr<NodeT> curNode) cons
                         return VisitAction::STOP_NOW;
                     }
                 }
+                if (Walk(cd->capturesClause.get()) == VisitAction::STOP_NOW) {
+                    return VisitAction::STOP_NOW;
+                }
                 if (Walk(cd->body.get()) == VisitAction::STOP_NOW) {
                     return VisitAction::STOP_NOW;
                 }
@@ -384,6 +387,9 @@ template <class NodeT> VisitAction WalkerT<NodeT>::Walk(Ptr<NodeT> curNode) cons
                     if (Walk(it.get()) == VisitAction::STOP_NOW) {
                         return VisitAction::STOP_NOW;
                     }
+                }
+                if (Walk(sd->capturesClause.get()) == VisitAction::STOP_NOW) {
+                    return VisitAction::STOP_NOW;
                 }
                 if (Walk(sd->body.get()) == VisitAction::STOP_NOW) {
                     return VisitAction::STOP_NOW;

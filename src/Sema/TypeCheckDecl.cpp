@@ -571,6 +571,8 @@ void TypeChecker::TypeCheckerImpl::CheckStructDecl(ASTContext& ctx, StructDecl& 
             diag.DiagnoseRefactor(DiagKindRefactor::sema_cstruct_cannot_impl_interfaces, MakeRange(sd.identifier));
         }
     }
+    // Checked exceptions (experimental): validate the 'captures' clause (proposal 3.9).
+    ChkCapturesClauseOfDecl(ctx, sd);
     CJC_NULLPTR_CHECK(sd.body);
     TypeCheckCompositeBody(ctx, sd, sd.body->decls);
     CheckRecursiveConstructorCall(sd.body->decls);
