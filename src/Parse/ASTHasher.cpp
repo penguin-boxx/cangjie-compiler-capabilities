@@ -12,15 +12,15 @@
 #include "cangjie/Parse/ASTHasher.h"
 
 #ifndef NDEBUG
-#include <string_view>
 #include <csignal>
+#include <string_view>
 #endif
 
+#include "cangjie/AST/ASTCasting.h"
 #include "cangjie/AST/Node.h"
+#include "cangjie/AST/Utils.h"
 #include "cangjie/AST/Walker.h"
 #include "cangjie/IncrementalCompilation/Utils.h"
-#include "cangjie/AST/ASTCasting.h"
-#include "cangjie/AST/Utils.h"
 #include "cangjie/Utils/SipHash.h"
 
 static constexpr int ALL = 0;
@@ -73,7 +73,7 @@ struct [[maybe_unused]] DebugWhen {
     }
 };
 } // namespace
-}
+} // namespace Cangjie::AST
 #define PRINTV PrintDebug(value, __LINE__)
 #define PRINTAV PrintDebug(a.value, __LINE__)
 #endif
@@ -120,7 +120,7 @@ std::string GetTrimmedPath(AST::File* file)
     }
     return TrimPackagePath(path);
 }
-}
+} // namespace Cangjie::IncrementalCompilation
 
 namespace Cangjie::AST {
 using namespace Cangjie::IncrementalCompilation;
@@ -273,9 +273,8 @@ struct ASTHasherImpl {
         // attrs below are set before sema
         auto nonSemaAttr = {Attribute::ABSTRACT, Attribute::CONSTRUCTOR, Attribute::DEFAULT,
             Attribute::ENUM_CONSTRUCTOR, Attribute::INTERNAL, Attribute::FOREIGN, Attribute::COMMON,
-            Attribute::SPECIFIC, Attribute::GENERIC, Attribute::GLOBAL,
-            Attribute::INTRINSIC, Attribute::JAVA_APP, Attribute::JAVA_MIRROR, Attribute::OBJ_C_MIRROR,
-            Attribute::OBJ_C_MIRROR_SUBTYPE, Attribute::MACRO_FUNC,
+            Attribute::SPECIFIC, Attribute::GENERIC, Attribute::GLOBAL, Attribute::INTRINSIC, Attribute::JAVA_APP,
+            Attribute::JAVA_MIRROR, Attribute::OBJ_C_MIRROR, Attribute::OBJ_C_MIRROR_SUBTYPE, Attribute::MACRO_FUNC,
             Attribute::MUT, Attribute::NUMERIC_OVERFLOW, Attribute::OPERATOR, Attribute::PRIVATE, Attribute::PUBLIC,
             Attribute::PROTECTED, Attribute::STATIC, Attribute::TOOL_ADD, Attribute::UNSAFE};
 
@@ -311,8 +310,8 @@ struct ASTHasherImpl {
         HashNode<whatTypeToHash>(anno);
         // ignore annotation argument and expression positions
         SUPERHash<NON_POSITION>(static_cast<int64_t>(anno.kind), anno.identifier.Val(), anno.args,
-                        static_cast<int64_t>(anno.overflowStrategy), anno.definedPackage, anno.condExpr,
-            anno.isCompileTimeVisible, anno.attrCommas);
+            static_cast<int64_t>(anno.overflowStrategy), anno.definedPackage, anno.condExpr, anno.isCompileTimeVisible,
+            anno.attrCommas);
         for (auto& att : anno.attrs) {
             CombineHash(att);
         }
@@ -337,7 +336,14 @@ struct ASTHasherImpl {
     template <int whatTypeToHash> void HashFuncBody(const FuncBody& funcBody)
     {
         HashNode<whatTypeToHash>(funcBody);
-        SUPERHash<whatTypeToHash>(funcBody.paramLists, funcBody.retType, funcBody.body, funcBody.generic);
+        SUPERHash<whatTypeToHash>(
+            funcBody.paramLists, funcBody.retType, funcBody.throwsClause, funcBody.body, funcBody.generic);
+    }
+
+    template <int whatTypeToHash> void HashThrowsClause(const ThrowsClause& tc)
+    {
+        HashNode<whatTypeToHash>(tc);
+        SUPERHash<whatTypeToHash>(tc.throwsPos, tc.capTypes);
     }
 
     template <int whatTypeToHash> void HashFuncParamList(const FuncParamList& fpl)
@@ -362,8 +368,7 @@ struct ASTHasherImpl {
         HashNode<whatTypeToHash>(is);
         auto& im = is.content;
         if (im.kind != ImportKind::IMPORT_MULTI) {
-            SUPERHash<whatTypeToHash>(
-                static_cast<uint8_t>(im.kind), im.prefixPaths, im.identifier.Val(), im.aliasName);
+            SUPERHash<whatTypeToHash>(static_cast<uint8_t>(im.kind), im.prefixPaths, im.identifier.Val(), im.aliasName);
         } else {
             SUPERHash<whatTypeToHash>(static_cast<uint8_t>(im.kind), im.prefixPaths, im.leftCurlPos, im.rightCurlPos);
             for (const auto& item : im.items) {
@@ -527,8 +532,7 @@ struct ASTHasherImpl {
     template <int whatTypeToHash> void HashRefExpr(const RefExpr& re)
     {
         HashExpr<whatTypeToHash>(re);
-        SUPERHash<whatTypeToHash>(
-            re.ref.identifier.Val(), re.typeArguments, re.isThis, re.isSuper, re.isQuoteDollar);
+        SUPERHash<whatTypeToHash>(re.ref.identifier.Val(), re.typeArguments, re.isThis, re.isSuper, re.isQuoteDollar);
         if (auto refTarget = re.ref.target) {
             SUPERHash<whatTypeToHash>(refTarget->rawMangleName);
             CJC_ASSERT(refTarget->GetTy());
@@ -653,7 +657,7 @@ struct ASTHasherImpl {
     template <int whatTypeToHash> void HashFuncType(const FuncType& ft)
     {
         HashType<whatTypeToHash>(ft);
-        SUPERHash<whatTypeToHash>(ft.paramTypes, ft.retType, ft.isC);
+        SUPERHash<whatTypeToHash>(ft.paramTypes, ft.throwsClause, ft.retType, ft.isC);
     }
     template <int whatTypeToHash> void HashOptionType(const OptionType& ot)
     {
@@ -967,13 +971,13 @@ struct ASTHasherImpl {
                 }
             }
             if (Utils::In(
-                mod.modifier, {TokenKind::PUBLIC, TokenKind::PROTECTED, TokenKind::PRIVATE, TokenKind::INTERNAL})) {
+                    mod.modifier, {TokenKind::PUBLIC, TokenKind::PROTECTED, TokenKind::PRIVATE, TokenKind::INTERNAL})) {
                 hashVisibilityModifier = true;
             }
         }
         // All members in interface needs to add the 'public'.
-        if (kinds.count(TokenKind::PUBLIC) != 0 &&
-            decl.outerDecl && decl.outerDecl->astKind == ASTKind::INTERFACE_DECL) {
+        if (kinds.count(TokenKind::PUBLIC) != 0 && decl.outerDecl &&
+            decl.outerDecl->astKind == ASTKind::INTERFACE_DECL) {
             hashVisibilityModifier = true;
             mods.push_back(static_cast<std::underlying_type_t<TokenKind>>(TokenKind::PUBLIC));
         }
@@ -999,8 +1003,7 @@ struct ASTHasherImpl {
         if (!decl.outerDecl) {
             return;
         }
-        if (auto outer = dynamic_cast<InheritableDecl*>(decl.outerDecl.get());
-            !outer || !outer->IsOpen()) {
+        if (auto outer = dynamic_cast<InheritableDecl*>(decl.outerDecl.get()); !outer || !outer->IsOpen()) {
             return;
         }
         HashSpecificModifiers(decl, {TokenKind::OPEN, TokenKind::ABSTRACT});
@@ -1091,6 +1094,8 @@ struct ASTHasherImpl {
         SUPERHash<NON_POSITION>(decl.generic);
         if (auto func = DynamicCast<FuncDecl*>(&decl)) {
             SUPERHash<NON_POSITION>(func->funcBody->paramLists[0]->params);
+            // The checked-exception `throws` clause (experimental) is part of the API surface.
+            SUPERHash<NON_POSITION>(func->funcBody->throwsClause);
             if (func->funcBody->retType) {
                 SUPERHash<NON_POSITION>(func->funcBody->retType);
             } else {
@@ -1114,12 +1119,10 @@ struct ASTHasherImpl {
 // representation (which most specifics satisfy). However, this behaviour is nowhere specified in the C++ standard
 // and not adapted here.
 #define ASTKIND(KIND, VALUE, NODE, SIZE)                                                                               \
-    template <class, int v, class = void> struct HasHash##NODE : std::false_type {                                     \
-    };                                                                                                                 \
+    template <class, int v, class = void> struct HasHash##NODE : std::false_type {};                                   \
     template <class T, int v>                                                                                          \
     struct HasHash##NODE<T, v,                                                                                         \
-        std::void_t<decltype(static_cast<void (T::*)(const NODE&)>(&T::template Hash##NODE<0>))>> : std::true_type {   \
-    };                                                                                                                 \
+        std::void_t<decltype(static_cast<void (T::*)(const NODE&)>(&T::template Hash##NODE<0>))>> : std::true_type {}; \
     template <class T, int v> constexpr bool hasHash##NODE##Value = HasHash##NODE<T, v>::value;                        \
     template <class T, int v> constexpr void (T::*GetHash##NODE##Fun())(const NODE&)                                   \
     {                                                                                                                  \
@@ -1141,17 +1144,17 @@ struct ASTHasherImpl {
 #include "cangjie/AST/ASTKind.inc"
 #undef ASTKIND
 
-void (*ASTHasherImpl::hashFuncMap[nodeKind])(ASTHasherImpl&, Ptr<const Node>) {
+void (*ASTHasherImpl::hashFuncMap[nodeKind])(ASTHasherImpl&, Ptr<const Node>){
 #define ASTKIND(KIND, VALUE, NODE, SIZE) GetHash##NODE##OrNull<ASTHasherImpl, 0>(),
 #include "cangjie/AST/ASTKind.inc"
 #undef ASTKIND
 };
-void (*ASTHasherImpl::hashFuncMapOnlyPosition[nodeKind])(ASTHasherImpl&, Ptr<const Node>) {
+void (*ASTHasherImpl::hashFuncMapOnlyPosition[nodeKind])(ASTHasherImpl&, Ptr<const Node>){
 #define ASTKIND(KIND, VALUE, NODE, SIZE) GetHash##NODE##OrNull<ASTHasherImpl, 1>(),
 #include "cangjie/AST/ASTKind.inc"
 #undef ASTKIND
 };
-void (*ASTHasherImpl::hashFuncMapNonPosition[nodeKind])(ASTHasherImpl&, Ptr<const Node>) {
+void (*ASTHasherImpl::hashFuncMapNonPosition[nodeKind])(ASTHasherImpl&, Ptr<const Node>){
 #define ASTKIND(KIND, VALUE, NODE, SIZE) GetHash##NODE##OrNull<ASTHasherImpl, 2>(),
 #include "cangjie/AST/ASTKind.inc"
 #undef ASTKIND
@@ -1236,8 +1239,9 @@ ASTHasher::hash_type ASTHasher::HashMemberAPIs(std::vector<Ptr<const Decl>>&& me
         [](const auto& a, const auto& b) { return a->rawMangleName < b->rawMangleName; });
     for (auto memberAPI : memberAPIs) {
         hasher.HashMemberSignature(*memberAPI);
-        hasher.HashSpecificModifiers(*memberAPI, {TokenKind::PUBLIC, TokenKind::PROTECTED, TokenKind::PRIVATE,
-            TokenKind::INTERNAL, TokenKind::MUT, TokenKind::STATIC});
+        hasher.HashSpecificModifiers(*memberAPI,
+            {TokenKind::PUBLIC, TokenKind::PROTECTED, TokenKind::PRIVATE, TokenKind::INTERNAL, TokenKind::MUT,
+                TokenKind::STATIC});
     }
     return hasher.value;
 }
@@ -1257,7 +1261,7 @@ static std::vector<Ptr<const Decl>> GetVisibleAPIs(const std::vector<Ptr<Decl>>&
     for (auto member : allMembers) {
         if (auto memberFunc = DynamicCast<const FuncDecl*>(member)) {
             if (memberFunc->TestAnyAttr(Attribute::OPEN, Attribute::ABSTRACT, Attribute::CONSTRUCTOR,
-                Attribute::ENUM_CONSTRUCTOR, Attribute::PRIMARY_CONSTRUCTOR)) {
+                    Attribute::ENUM_CONSTRUCTOR, Attribute::PRIMARY_CONSTRUCTOR)) {
                 continue;
             }
             if (memberFunc->IsFinalizer()) {
@@ -1367,8 +1371,9 @@ ASTHasher::hash_type ASTHasher::BodyHash(const Decl& decl, const std::pair<bool,
             [](const auto& a, const auto& b) { return a->rawMangleName < b->rawMangleName; });
         for (auto visibleAPI : visibleAPIs) {
             a.HashMemberSignature(*visibleAPI);
-            a.HashSpecificModifiers(*visibleAPI, {TokenKind::PUBLIC, TokenKind::PROTECTED, TokenKind::INTERNAL,
-                TokenKind::PRIVATE, TokenKind::MUT, TokenKind::STATIC});
+            a.HashSpecificModifiers(*visibleAPI,
+                {TokenKind::PUBLIC, TokenKind::PROTECTED, TokenKind::INTERNAL, TokenKind::PRIVATE, TokenKind::MUT,
+                    TokenKind::STATIC});
         }
     }
 

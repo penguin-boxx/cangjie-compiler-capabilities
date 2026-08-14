@@ -26,8 +26,8 @@
 #include "cangjie/Driver/TempFileInfo.h"
 #include "cangjie/Option/OptionTable.h"
 #include "cangjie/Utils/FileUtil.h"
+#include "cangjie/Utils/Semaphore.h"
 #include "cangjie/Utils/Utils.h"
-#include  "cangjie/Utils/Semaphore.h"
 
 namespace Cangjie {
 
@@ -113,7 +113,7 @@ enum class OSType : uint8_t {
     WINDOWS,
     LINUX,
     DARWIN, // MacOS
-    IOS, // iOS
+    IOS,    // iOS
     UNKNOWN,
 };
 
@@ -131,8 +131,8 @@ enum class Environment : uint8_t {
     NOT_AVAILABLE,
 };
 
-inline static const std::string DEFALUT_ANDROID_API {"31"};
-inline static const std::string MIN_ANDROID_API {"26"};
+inline static const std::string DEFALUT_ANDROID_API{"31"};
+inline static const std::string MIN_ANDROID_API{"26"};
 
 struct Info {
     ArchType arch;
@@ -593,6 +593,8 @@ public:
 
     bool enableEH = false; /** Whether support for effect handlers is enabled */
 
+    bool enableChexc = false; /** Whether support for checked exceptions is enabled */
+
     MockMode mock = MockMode::DEFAULT; /**< Whether enable mocking. */
 
     DiagFormat diagFormat = DiagFormat::DEFAULT; /** Whether output diagnostic with color*/
@@ -623,14 +625,10 @@ public:
 
     std::string optPassOptions = ""; /**< customized opt pass options from user.*/
 
-    enum class OutputMode : uint8_t {
-        EXECUTABLE, STATIC_LIB, SHARED_LIB, CHIR, OBJ
-    };
+    enum class OutputMode : uint8_t { EXECUTABLE, STATIC_LIB, SHARED_LIB, CHIR, OBJ };
     OutputMode outputMode = OutputMode::EXECUTABLE;
 
-    enum class CompileTarget : uint8_t {
-        EXECUTABLE, STATIC_LIB, SHARED_LIB, DEFAULT
-    };
+    enum class CompileTarget : uint8_t { EXECUTABLE, STATIC_LIB, SHARED_LIB, DEFAULT };
     CompileTarget compileTarget = CompileTarget::DEFAULT;
 
     bool enableFuncSections = false;
@@ -766,8 +764,8 @@ public:
          */
         bool IsSancovEnabled() const
         {
-            return traceCmp || traceMemCmp || tracePCGuard ||
-                inline8bitCounters || inlineBoolFlag || pcTable || stackDepth;
+            return traceCmp || traceMemCmp || tracePCGuard || inline8bitCounters || inlineBoolFlag || pcTable ||
+                stackDepth;
         }
 
         /**
@@ -846,7 +844,7 @@ public:
     bool dumpAST = false;
     bool dumpCHIR = false;
     bool dumpIR = false;
-    bool dumpAll = false; // dump all of AST, CHIR, IR
+    bool dumpAll = false;      // dump all of AST, CHIR, IR
     bool dumpToScreen = false; // dump to screen instead of file
     bool chirDeserialize = false;
     std::string chirDeserializePath;
@@ -874,12 +872,7 @@ public:
 
     bool cjdbMode = false; /** whether the option used in cjdb */
 
-    enum class SanitizerType : uint8_t {
-        NONE,
-        ADDRESS,
-        THREAD,
-        HWADDRESS
-    };
+    enum class SanitizerType : uint8_t { NONE, ADDRESS, THREAD, HWADDRESS };
 
     SanitizerType sanitizerType = SanitizerType::NONE;
 
@@ -888,7 +881,7 @@ public:
     std::optional<std::size_t> jobs; /* parallel compile jobs. */
     std::optional<std::size_t> aggressiveParallelCompile = std::nullopt;
     bool aggressiveParallelCompileWithoutArg = false;
-    std::vector<std::string> bitcodeFilesName; /** < the name of packageMoudle.bc. */
+    std::vector<std::string> bitcodeFilesName;     /** < the name of packageMoudle.bc. */
     std::vector<std::string> symbolsNeedLocalized; /** < Symbols that need to be localized in the compiled binary. */
 
     /**

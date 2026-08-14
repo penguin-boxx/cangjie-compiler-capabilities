@@ -73,6 +73,11 @@ void Lexer::SetEHEnabled(bool enabled) const
     impl->ehEnabled = enabled;
 }
 
+void Lexer::SetChexcEnabled(bool enabled) const
+{
+    impl->chexcEnabled = enabled;
+}
+
 const std::vector<StringPart>& Lexer::GetStrParts(const Token& t)
 {
     return impl->GetStrParts(t);

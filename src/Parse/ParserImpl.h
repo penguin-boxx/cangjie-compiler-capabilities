@@ -13,9 +13,9 @@
 #ifndef CANGJIE_PARSE_PARSERIMPL_H
 #define CANGJIE_PARSE_PARSERIMPL_H
 
-#include "cangjie/Parse/Parser.h"
 #include "MPParserImpl.h"
 #include "NativeFFI/FFIParserImpl.h"
+#include "cangjie/Parse/Parser.h"
 
 namespace Cangjie {
 using namespace AST;
@@ -241,6 +241,7 @@ private:
     bool parseDeclFile{false};
 
     bool enableEH{false};
+    bool enableChexc{false};
     Triple::BackendType backend{Triple::BackendType::CJNATIVE};
     bool calculateLineNum{false};
     // we store line number info from all tokens
@@ -586,6 +587,14 @@ private:
         const Position& lParenPos, const Position& rParenPos, OwnedPtr<AST::Type> type);
     OwnedPtr<AST::FuncType> ParseFuncType(
         std::vector<OwnedPtr<AST::Type>> types, const Position& lParenPos, const Position& rParenPos);
+    /**
+     * Parse a checked-exception `throws` clause (experimental, requires the THROWS token which only
+     * exists with '--enable-chexc'). Grammar:
+     *   declarations (@p isDeclClause true): `throws (T {, T})` | `throws ()` | `throws T {, T}`
+     *   function types (@p isDeclClause false): `throws (T {, T})` | `throws ()` | `throws T`
+     * The `...` marker is parsed but rejected with a diagnostic.
+     */
+    OwnedPtr<AST::ThrowsClause> ParseThrowsClause(bool isDeclClause);
     OwnedPtr<AST::Type> ParsePrefixType();
     OwnedPtr<AST::GenericParamDecl> ParseGenericParamDecl();
     OwnedPtr<AST::Generic> ParseGeneric();
@@ -757,8 +766,7 @@ private:
         const std::set<AST::Attribute>& attributes = {}, bool isVar = false, bool inDecl = false);
     OwnedPtr<AST::SpawnExpr> ParseSpawnExpr();
     OwnedPtr<AST::SynchronizedExpr> ParseSynchronizedExpr();
-    void ParseTopLvlFeatures(OwnedPtr<FeaturesDirective>& ftrDirective,
-        PtrVector<Annotation>& annos);
+    void ParseTopLvlFeatures(OwnedPtr<FeaturesDirective>& ftrDirective, PtrVector<Annotation>& annos);
     void ParseFeatureDirective(OwnedPtr<FeaturesDirective>& features);
     void ParseFeaturesSet(OwnedPtr<FeaturesSet>& features);
     void ParseFeatureId(OwnedPtr<FeaturesSet>& features);
@@ -889,11 +897,11 @@ private:
     void DiagExpectedDeclaration(ScopeKind scopeKind);
     void DiagExpectedDeclaration(const Position& pos, const std::string& str);
     /**
-        * Suggest keywords for expected declaration.
-        * @param keywords keywords to suggest
-        * @param minLevDis minimum Levenshtein distance to suggest
-        * @param scopeKind scope kind to determine which keywords to suggest
-    */
+     * Suggest keywords for expected declaration.
+     * @param keywords keywords to suggest
+     * @param minLevDis minimum Levenshtein distance to suggest
+     * @param scopeKind scope kind to determine which keywords to suggest
+     */
     void DiagAndSuggestKeywordForExpectedDeclaration(
         const std::vector<std::string>& keywords, size_t minLevDis = 1, ScopeKind scopeKind = ScopeKind::TOPLEVEL);
     void DiagUnExpectedModifierOnDeclaration(const AST::Decl& vd);
@@ -1012,15 +1020,15 @@ private:
     void DiagExpectedIdentifierMacroExpandDecl(Ptr<AST::Node> node);
     void DiagExpectedIdentifierMacroExpandExpr(Ptr<AST::Node> node);
     void CheckLeftExpression(const Token& preT, const OwnedPtr<AST::Expr>& base, const Token& tok);
-    void CheckWildcardInExpr(const OwnedPtr<AST::Expr> &root);
+    void CheckWildcardInExpr(const OwnedPtr<AST::Expr>& root);
     void CheckVarDeclModifiers(
         std::set<AST::Modifier> modifiers, Ptr<AST::VarDecl> varDecl, ScopeKind scopeKind, const Token& keyToken);
     void DiagAnnotationExpectsOneArgument(const AST::Annotation& node, const std::string& annotationName);
-    void DiagAnnotationExpectsOneArgument(const AST::Annotation& node, const std::string& annotationName,
-        const std::string& argInfo);
+    void DiagAnnotationExpectsOneArgument(
+        const AST::Annotation& node, const std::string& annotationName, const std::string& argInfo);
     void DiagAnnotationMoreThanOneArgs(const AST::Annotation& node, const std::string& annotationName);
-    void DiagAnnotationMoreThanOneArgs(const AST::Annotation& node, const std::string& annotationName,
-        const std::string& argInfo);
+    void DiagAnnotationMoreThanOneArgs(
+        const AST::Annotation& node, const std::string& annotationName, const std::string& argInfo);
     void DiagAnnotationShouldNotHaveArgs(const Annotation& node, const std::string& annotationName);
 
     // Cangjie Native & Java/ObjC FFI
@@ -1030,9 +1038,7 @@ private:
     void CheckConstructorBody(AST::FuncDecl& ctor, ScopeKind scopeKind, bool inMacro = false);
     void SetMemberParentInheritableDecl(AST::InheritableDecl& ret, const OwnedPtr<AST::Decl>& decl) const;
     void FFICheckClassLikeFuncBody(
-        FuncDecl& decl,
-        DiagKindRefactor functionMustHaveReturnType,
-        DiagKindRefactor functionCanNotHaveBody);
+        FuncDecl& decl, DiagKindRefactor functionMustHaveReturnType, DiagKindRefactor functionCanNotHaveBody);
     void CheckClassLikePropAbstractness(AST::PropDecl& prop);
     void CheckClassLikeFuncBodyAbstractness(AST::FuncDecl& decl);
     void CheckJavaInteropMember(Decl& decl);

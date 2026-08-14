@@ -151,8 +151,7 @@ OwnedPtr<AST::Type> ParserImpl::ParseTupleType(
     return tupleType;
 }
 
-OwnedPtr<Type> ParserImpl::ParseTypeParameterInTupleType(
-    std::unordered_map<std::string, Position>& typeNameMap)
+OwnedPtr<Type> ParserImpl::ParseTypeParameterInTupleType(std::unordered_map<std::string, Position>& typeNameMap)
 {
     while (Skip(TokenKind::NL)) {
     }
@@ -194,12 +193,13 @@ OwnedPtr<AST::Type> ParserImpl::ParseTypeWithParen()
                 return;
             }
             types.emplace_back(ParseTypeParameterInTupleType(typeNameMap));
-        }, TokenKind::RPAREN);
+        },
+        TokenKind::RPAREN);
     // in a parameter type list, either all parameters must be named, or none of them; mixed is not allowed
-    if (std::any_of(types.begin(), types.end(),
-        [](const OwnedPtr<Type>& type) { return type->typeParameterName.empty(); }) &&
-        std::any_of(types.begin(), types.end(),
-        [](const OwnedPtr<Type>& type) { return !type->typeParameterName.empty(); })) {
+    if (std::any_of(
+            types.begin(), types.end(), [](const OwnedPtr<Type>& type) { return type->typeParameterName.empty(); }) &&
+        std::any_of(
+            types.begin(), types.end(), [](const OwnedPtr<Type>& type) { return !type->typeParameterName.empty(); })) {
         ParseDiagnoseRefactor(
             DiagKindRefactor::parse_all_parameters_must_be_named, MakeRange(types.front()->begin, types.back()->end));
     }
@@ -210,6 +210,20 @@ OwnedPtr<AST::Type> ParserImpl::ParseTypeWithParen()
     Position rParenPos = lastToken.Begin();
     if (Skip(TokenKind::ARROW)) {
         return ParseFuncType(std::move(types), lParenPos, rParenPos);
+    }
+    // Checked exceptions (experimental): a contextual `throws` after ')' also selects the
+    // function-type path, e.g. `(A) throws (E1, E2) -> R`. The clause must be followed by '->'.
+    if (Seeing(TokenKind::THROWS)) {
+        auto throwsClause = ParseThrowsClause(false);
+        if (!Skip(TokenKind::ARROW)) {
+            ParseDiagnoseRefactor(DiagKindRefactor::parse_expected_arrow_after_throws_clause, lookahead.Begin());
+            auto invalid = MakeOwned<InvalidType>(lookahead.Begin());
+            invalid->EnableAttr(Attribute::IS_BROKEN);
+            return invalid;
+        }
+        auto ft = ParseFuncType(std::move(types), lParenPos, rParenPos);
+        ft->throwsClause = std::move(throwsClause);
+        return ft;
     }
     // This is a paren type.
     if (types.size() == 1) {
@@ -228,9 +242,8 @@ OwnedPtr<ParenType> ParserImpl::ParseParenType(
     const Position& lParenPos, const Position& rParenPos, OwnedPtr<Type> type)
 {
     if (!type->typeParameterName.empty()) {
-        auto builder =
-            ParseDiagnoseRefactor(DiagKindRefactor::parse_only_tuple_and_func_type_allow_type_parameter_name,
-                MakeRange(type->begin, type->begin + type->typeParameterName.size()), type->typeParameterName);
+        auto builder = ParseDiagnoseRefactor(DiagKindRefactor::parse_only_tuple_and_func_type_allow_type_parameter_name,
+            MakeRange(type->begin, type->begin + type->typeParameterName.size()), type->typeParameterName);
         builder.AddNote("only tuple type and function type support type parameter name");
     }
     OwnedPtr<ParenType> pt = MakeOwned<ParenType>();
@@ -255,6 +268,84 @@ OwnedPtr<FuncType> ParserImpl::ParseFuncType(
     ft->end = ft->retType->end;
     ft->paramTypes = std::move(types);
     return ft;
+}
+
+OwnedPtr<AST::ThrowsClause> ParserImpl::ParseThrowsClause(bool isDeclClause)
+{
+    CJC_ASSERT(Seeing(TokenKind::THROWS));
+    auto clause = MakeOwned<ThrowsClause>();
+    ChainScope cs(*this, clause.get());
+    Next(); // Consume `throws`.
+    clause->throwsPos = lastToken.Begin();
+    clause->begin = clause->throwsPos;
+    clause->end = lastToken.End();
+    auto diagnoseEllipsis = [this, isDeclClause]() {
+        // `...` (proposal §6.3.5) is parsed but rejected: never legal in function types, not
+        // supported yet on declarations.
+        ParseDiagnoseRefactor(isDeclClause ? DiagKindRefactor::parse_ellipsis_in_throws_clause_unsupported
+                                           : DiagKindRefactor::parse_ellipsis_in_func_type_throws_clause,
+            MakeRange(lookahead.Begin(), lookahead.End()));
+        Next(); // Consume `...` and continue parsing.
+    };
+    if (Skip(TokenKind::LPAREN)) {
+        // Parenthesized (possibly empty) capability list: `throws (T {, T})` or `throws ()`.
+        // After `throws`, '(' always opens the list, never a paren/tuple/function type.
+        clause->leftParenPos = lastToken.Begin();
+        ParseZeroOrMoreSepTrailing(
+            [&clause](const Position& commaPos) { clause->commaPosVector.emplace_back(commaPos); },
+            [this, &clause, &diagnoseEllipsis]() {
+                while (Skip(TokenKind::NL)) {
+                }
+                if (Seeing(TokenKind::RPAREN) && !clause->capTypes.empty()) {
+                    return;
+                }
+                if (Seeing(TokenKind::ELLIPSIS)) {
+                    diagnoseEllipsis();
+                    return;
+                }
+                (void)clause->capTypes.emplace_back(ParseType());
+            },
+            TokenKind::RPAREN);
+        if (!Skip(TokenKind::RPAREN)) {
+            DiagExpectedRightDelimiter("(", clause->leftParenPos);
+            clause->EnableAttr(Attribute::IS_BROKEN);
+            return clause;
+        }
+        clause->rightParenPos = lastToken.Begin();
+        clause->end = lastToken.End();
+        return clause;
+    }
+    if (Seeing(TokenKind::ELLIPSIS)) {
+        diagnoseEllipsis();
+        clause->end = lastToken.End();
+        return clause;
+    }
+    if (!SeeingAny(GetTypeFirst()) && !SeeingContextualKeyword()) {
+        ParseDiagnoseRefactor(
+            DiagKindRefactor::parse_expected_exception_type_after_throws, lookahead, ConvertToken(lookahead));
+        clause->EnableAttr(Attribute::IS_BROKEN);
+        return clause;
+    }
+    if (isDeclClause) {
+        // Bare comma-separated list on declarations: `throws E1, E2`.
+        while (true) {
+            if (Seeing(TokenKind::ELLIPSIS)) {
+                diagnoseEllipsis();
+            } else {
+                (void)clause->capTypes.emplace_back(ParseType());
+            }
+            if (!Skip(TokenKind::COMMA)) {
+                break;
+            }
+            clause->commaPosVector.emplace_back(lastToken.Begin());
+        }
+    } else {
+        // Single-type sugar in function types: `throws E -> R`. Commas belong to the
+        // enclosing construct, and the type must stop before the function type's '->'.
+        (void)clause->capTypes.emplace_back(ParsePrefixType());
+    }
+    clause->end = clause->capTypes.empty() ? lastToken.End() : clause->capTypes.back()->end;
+    return clause;
 }
 
 // Parse the syntactic sugar of option types.
@@ -298,12 +389,12 @@ OwnedPtr<AST::Type> ParserImpl::ParseType()
 {
     auto postType = ParsePrefixType();
     if (Seeing(TokenKind::ARROW)) {
-            if (postType->astKind == ASTKind::FUNC_TYPE) {
-                DiagRedundantArrowAfterFunc(*postType);
-                ConsumeUntilAny({TokenKind::RCURL, TokenKind::NL}, false);
-            } else {
-                DiagParseExpectedParenthis(postType);
-            }
+        if (postType->astKind == ASTKind::FUNC_TYPE) {
+            DiagRedundantArrowAfterFunc(*postType);
+            ConsumeUntilAny({TokenKind::RCURL, TokenKind::NL}, false);
+        } else {
+            DiagParseExpectedParenthis(postType);
+        }
     }
     return postType;
 }
@@ -349,7 +440,8 @@ std::pair<bool, std::vector<OwnedPtr<AST::Type>>> ParserImpl::ParseTypeArguments
             if (type && !type->TestAttr(Attribute::IS_BROKEN)) {
                 ret.emplace_back(std::move(type));
             }
-        }, TokenKind::GT);
+        },
+        TokenKind::GT);
     if (!Skip(TokenKind::GT) && !ret.empty()) {
         DiagExpectedRightDelimiter("<", leftAnglePos);
         ret.clear();

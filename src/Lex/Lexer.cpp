@@ -60,7 +60,7 @@ bool IsContextualKeyword(std::string_view s)
     }
     return names.count(s) == 1;
 }
-}
+} // namespace Cangjie
 
 bool LexerImpl::IsCurrentCharLineTerminator() const
 {
@@ -310,6 +310,7 @@ TokenKind LexerImpl::LookupKeyword(const std::string& literal)
         map[TOKENS[static_cast<unsigned char>(TokenKind::RESUME)]] = TokenKind::RESUME;
         map[TOKENS[static_cast<unsigned char>(TokenKind::THROWING)]] = TokenKind::THROWING;
         map[TOKENS[static_cast<unsigned char>(TokenKind::HANDLE)]] = TokenKind::HANDLE;
+        map[TOKENS[static_cast<unsigned char>(TokenKind::THROWS)]] = TokenKind::THROWS;
         return map;
     }();
     auto it = tokenMap.find(literal);
@@ -317,6 +318,9 @@ TokenKind LexerImpl::LookupKeyword(const std::string& literal)
     if (!ehEnabled &&
         (kind == TokenKind::PERFORM || kind == TokenKind::RESUME || kind == TokenKind::THROWING ||
             kind == TokenKind::HANDLE)) {
+        return TokenKind::IDENTIFIER;
+    }
+    if (!chexcEnabled && kind == TokenKind::THROWS) {
         return TokenKind::IDENTIFIER;
     }
     return kind;
@@ -387,7 +391,7 @@ bool LexerImpl::ProcessDigits(const int& base, bool& hasDigit, const char* reaso
 {
     bool hasTypeSuffix = false;
     int max = base + static_cast<int>('0');
-    for (int i{0}; ; ++i) {
+    for (int i{0};; ++i) {
         if (i == 0 && isFloat && IsDigit(currentChar)) {
             *isFloat = true;
             tokenKind = TokenKind::FLOAT_LITERAL;
@@ -597,8 +601,9 @@ void LexerImpl::ProcessNumberFloatSuffix(const char& prefix, bool isFloat, bool 
         }
         currentChar = static_cast<int>(cp);
     }
-    if (((!isFloat && hasSuffix) || (suffixBegin != pNext && !IsAdjacent(suffixBegin, pNext)
-        && (isFloat || !hasDot))) && success) {
+    if (((!isFloat && hasSuffix) ||
+            (suffixBegin != pNext && !IsAdjacent(suffixBegin, pNext) && (isFloat || !hasDot))) &&
+        success) {
         auto errPoint = isFloat ? suffixBegin : nonDigitStart;
         auto args = std::string{errPoint, pCurrent};
         /// the suffix is empty, add dot to prevent empty string in diag message
@@ -1688,7 +1693,7 @@ void LexerImpl::ScanSymbolQuest()
         ReadUTF8Char();
     }
 }
- 
+
 void LexerImpl::ScanSymbolColon()
 {
     ReadUTF8Char();
