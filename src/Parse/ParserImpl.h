@@ -595,6 +595,18 @@ private:
      * The `...` marker is parsed but rejected with a diagnostic.
      */
     OwnedPtr<AST::ThrowsClause> ParseThrowsClause(bool isDeclClause);
+    /**
+     * Parse a checked-exception `captures` clause on a class or struct header (experimental,
+     * requires the CAPTURES token which only exists with '--enable-chexc'; proposal 3.9).
+     * Grammar: `captures T {, T}` (bare list only). Reuses the ThrowsClause node shape.
+     */
+    OwnedPtr<AST::ThrowsClause> ParseCapturesClause();
+    /**
+     * If the lookahead is `captures`, parse the clause into @p decl (diagnosing duplicates).
+     * Called at each admissible clause position of a class/struct header: its position relative
+     * to the superclass list and `where` block is arbitrary (proposal 3.9).
+     */
+    void TryParseCapturesClause(AST::InheritableDecl& decl);
     OwnedPtr<AST::Type> ParsePrefixType();
     OwnedPtr<AST::GenericParamDecl> ParseGenericParamDecl();
     OwnedPtr<AST::Generic> ParseGeneric();

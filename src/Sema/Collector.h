@@ -64,6 +64,7 @@ private:
     void CollectAnnotations(ASTContext& ctx, const std::vector<OwnedPtr<AST::Annotation>>& annotations, bool buildTrie);
     void CollectGeneric(ASTContext& ctx, AST::Decl& outerDecl, const AST::Generic& generic, bool buildTrie);
     void CollectClassDecl(ASTContext& ctx, AST::ClassDecl& cd, bool buildTrie);
+    void CollectCapturesClause(ASTContext& ctx, const AST::InheritableDecl& decl, bool buildTrie);
     void CollectClassBody(ASTContext& ctx, const AST::ClassBody& cb, bool buildTrie);
     void CollectInterfaceDecl(ASTContext& ctx, AST::InterfaceDecl& id, bool buildTrie);
     void CollectInterfaceBody(ASTContext& ctx, const AST::InterfaceBody& ib, bool buildTrie);

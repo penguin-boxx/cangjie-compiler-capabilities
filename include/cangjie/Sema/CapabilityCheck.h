@@ -68,8 +68,8 @@ private:
  * typed AST (after sema type check, before desugar destroys 'TryExpr' structure). The pass
  * never mutates types; every unsatisfied demand is passed to @p missHandler.
  */
-void CheckCapabilities(
-    TypeManager& typeManager, const ImportManager& importManager, AST::Package& pkg, CapabilityMissHandler& missHandler);
+void CheckCapabilities(TypeManager& typeManager, const ImportManager& importManager, AST::Package& pkg,
+    CapabilityMissHandler& missHandler);
 } // namespace Sema
 } // namespace Cangjie
 

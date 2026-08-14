@@ -188,7 +188,8 @@ void TypeChecker::TypeCheckerImpl::ReplaceFuncRetTyWithThis(FuncBody& fb, Ptr<Ty
     }
 }
 
-void TypeChecker::TypeCheckerImpl::ChkThrowsClauseTypes(ASTContext& ctx, ThrowsClause& clause)
+void TypeChecker::TypeCheckerImpl::ChkThrowsClauseTypes(
+    ASTContext& ctx, ThrowsClause& clause, const std::string& clauseKeyword)
 {
     auto exception = importManager.GetCoreDecl<ClassDecl>(CLASS_EXCEPTION);
     for (auto& capType : clause.capTypes) {
@@ -202,7 +203,38 @@ void TypeChecker::TypeCheckerImpl::ChkThrowsClauseTypes(ASTContext& ctx, ThrowsC
             (capTy->IsClass() || capTy->IsGeneric()) && exception && typeManager.IsSubtype(capTy, exception->GetTy());
         if (!isExceptionSubtype) {
             diag.DiagnoseRefactor(
-                DiagKindRefactor::sema_chexc_clause_type_not_exception, *capType, capType->ToString());
+                DiagKindRefactor::sema_chexc_clause_type_not_exception, *capType, capType->ToString(), clauseKeyword);
+        } else if (!capTy->IsGeneric() && TypeCheckUtil::IsUncheckedExceptionTy(typeManager, importManager, capTy)) {
+            // Proposal 3.2 rule 5: a concrete unchecked exception type never needs a capability,
+            // so listing it is misleading and rejected. Type parameters are exempt: a requirement
+            // instantiating to an unchecked type is trivially satisfied instead (proposal 6.4).
+            diag.DiagnoseRefactor(
+                DiagKindRefactor::sema_chexc_unchecked_type_in_clause, *capType, capType->ToString(), clauseKeyword);
+        }
+    }
+}
+
+void TypeChecker::TypeCheckerImpl::ChkCapturesClauseOfDecl(ASTContext& ctx, InheritableDecl& decl)
+{
+    if (!decl.capturesClause) {
+        return;
+    }
+    // Elaborate the clause's types (collected in the declaration's scope, so they may refer to
+    // its generic parameters), then validate them exactly like 'throws' entries.
+    for (auto& capType : decl.capturesClause->capTypes) {
+        CJC_NULLPTR_CHECK(capType);
+        Synthesize({ctx, SynPos::NONE}, capType.get());
+    }
+    ChkThrowsClauseTypes(ctx, *decl.capturesClause, "captures");
+    // A capturing class/struct cannot use a primary constructor (author ruling, forward
+    // compatible with Modal CangJie where primary constructors are always '~local'); it
+    // declares explicit 'init' constructors instead.
+    for (auto& member : decl.GetMemberDecls()) {
+        CJC_NULLPTR_CHECK(member);
+        if (member->astKind == ASTKind::PRIMARY_CTOR_DECL) {
+            auto typeName = decl.astKind == ASTKind::CLASS_DECL ? "class" : "struct";
+            diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_primary_ctor_on_capturing,
+                MakeRangeForDeclIdentifier(*member), typeName, decl.identifier.Val());
         }
     }
 }

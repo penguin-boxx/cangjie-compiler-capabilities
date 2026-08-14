@@ -184,6 +184,18 @@ std::vector<Ptr<AST::Ty>> GetFuncBodyParamTys(const AST::FuncBody& fb);
  */
 std::vector<Ptr<AST::Ty>> GetFuncBodyCapTys(const AST::FuncBody& fb);
 /**
+ * Checked exceptions: get the exception capability tys of @p decl 's elaborated 'captures'
+ * clause (proposal 3.9). Empty when @p decl is not a class/struct or has no clause; entries
+ * whose types failed elaboration are skipped.
+ */
+std::vector<Ptr<AST::Ty>> GetDeclCapturesCapTys(const AST::Decl& decl);
+/**
+ * Checked exceptions: whether @p ty is an unchecked exception type, i.e. a subtype of the core
+ * 'UncheckedException' class (proposal 6.4). Tolerant of the class's absence (bootstrapping
+ * with an std.core that predates it): every exception type is checked then.
+ */
+bool IsUncheckedExceptionTy(TypeManager& typeManager, const ImportManager& importManager, Ptr<AST::Ty> ty);
+/**
  * Check whether src is an override or implementation of target.
  */
 bool IsOverrideOrShadow(TypeManager& typeManager, const AST::FuncDecl& src, const AST::FuncDecl& target,

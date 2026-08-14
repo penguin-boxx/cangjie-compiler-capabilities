@@ -311,6 +311,7 @@ TokenKind LexerImpl::LookupKeyword(const std::string& literal)
         map[TOKENS[static_cast<unsigned char>(TokenKind::THROWING)]] = TokenKind::THROWING;
         map[TOKENS[static_cast<unsigned char>(TokenKind::HANDLE)]] = TokenKind::HANDLE;
         map[TOKENS[static_cast<unsigned char>(TokenKind::THROWS)]] = TokenKind::THROWS;
+        map[TOKENS[static_cast<unsigned char>(TokenKind::CAPTURES)]] = TokenKind::CAPTURES;
         return map;
     }();
     auto it = tokenMap.find(literal);
@@ -320,7 +321,7 @@ TokenKind LexerImpl::LookupKeyword(const std::string& literal)
             kind == TokenKind::HANDLE)) {
         return TokenKind::IDENTIFIER;
     }
-    if (!chexcEnabled && kind == TokenKind::THROWS) {
+    if (!chexcEnabled && (kind == TokenKind::THROWS || kind == TokenKind::CAPTURES)) {
         return TokenKind::IDENTIFIER;
     }
     return kind;

@@ -23,8 +23,8 @@
 #include "cangjie/AST/Match.h"
 #include "cangjie/AST/Node.h"
 #include "cangjie/AST/Utils.h"
-#include "cangjie/Sema/TypeManager.h"
 #include "cangjie/Sema/TestManager.h"
+#include "cangjie/Sema/TypeManager.h"
 
 using namespace Cangjie;
 using namespace AST;
@@ -79,9 +79,7 @@ void TypeChecker::TypeCheckerImpl::CheckSealedInheritance(const Decl& child, con
 void TypeChecker::TypeCheckerImpl::CheckThreadContextInheritance(const Decl& decl, const Type& parent)
 {
     static std::unordered_map<std::string, std::string> whitelist = {
-        {"ThreadContext", "std.core"},
-        {"MainThreadContext", "ohos.base"}
-    };
+        {"ThreadContext", "std.core"}, {"MainThreadContext", "ohos.base"}};
     // Manage all derived type of `ThreadContext` or `SchedulerNativeHandle` which from package `core` with whitelist.
     auto target = parent.GetTarget();
     if (target == nullptr || target->fullPackageName != "std.core" || target->identifier != "ThreadContext") {
@@ -128,6 +126,8 @@ void TypeChecker::TypeCheckerImpl::CheckClassDecl(ASTContext& ctx, ClassDecl& cd
             CheckThreadContextInheritance(cd, *rt);
         }
     }
+    // Checked exceptions (experimental): validate the 'captures' clause (proposal 3.9).
+    ChkCapturesClauseOfDecl(ctx, cd);
     TypeCheckCompositeBody(ctx, cd, cd.body->decls);
     CheckRecursiveConstructorCall(cd.body->decls);
     if (cd.IsJavaMirror() || cd.IsJavaImpl()) {
@@ -155,8 +155,7 @@ void TypeChecker::TypeCheckerImpl::CheckAndAddSubDecls(
         // Check at the first.
         superClass->subDecls.insert(&cd);
         if ((!superClass->TestAttr(Attribute::ABSTRACT) && !superClass->TestAttr(Attribute::OPEN)) ||
-            TestManager::IsDeclOpenToMock(*superClass)
-        ) {
+            TestManager::IsDeclOpenToMock(*superClass)) {
             diag.Diagnose(type, DiagKind::sema_non_inheritable_super_class, superClass->identifier.Val());
         }
         hasSuperClass = true;
@@ -203,8 +202,7 @@ bool TypeChecker::TypeCheckerImpl::AddJObjectSuperClassJavaInterop(ASTContext& c
     if (ctx.fullPackageName == INTEROP_JAVA_LANG_PACKAGE && cd.identifier == INTEROP_JOBJECT_NAME) {
         return false;
     }
-    if (auto objectDecl = importManager.GetImportedDecl(
-        INTEROP_JAVA_LANG_PACKAGE, INTEROP_JOBJECT_NAME)) {
+    if (auto objectDecl = importManager.GetImportedDecl(INTEROP_JAVA_LANG_PACKAGE, INTEROP_JOBJECT_NAME)) {
         CJC_ASSERT(objectDecl->astKind == ASTKind::CLASS_DECL);
         auto tmp = MakeOwned<RefType>();
         tmp->EnableAttr(AST::Attribute::COMPILER_ADD);
@@ -215,7 +213,7 @@ bool TypeChecker::TypeCheckerImpl::AddJObjectSuperClassJavaInterop(ASTContext& c
         cd.inheritedTypes.insert(cd.inheritedTypes.begin(), std::move(tmp));
     } else {
         ctx.diag.DiagnoseRefactor(DiagKindRefactor::sema_member_not_imported, cd.identifier.Begin(),
-                                  INTEROP_JAVA_LANG_PACKAGE + "." + INTEROP_JOBJECT_NAME);
+            INTEROP_JAVA_LANG_PACKAGE + "." + INTEROP_JOBJECT_NAME);
     }
     return true;
 }

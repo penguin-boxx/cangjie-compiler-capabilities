@@ -1209,6 +1209,9 @@ ASTHasher::hash_type ASTHasher::SigHash(const Decl& decl)
         for (auto& parent : SortParentTypes(*type)) {
             (void)a.Hash<NON_POSITION>(parent);
         }
+        // The checked-exception `captures` clause (experimental) changes what every constructor
+        // of the type requires at its call sites, so it is part of the type's signature.
+        a.SUPERHash<NON_POSITION>(type->capturesClause);
     }
     return a.value;
 }

@@ -130,10 +130,24 @@ void Collector::CollectClassDecl(ASTContext& ctx, ClassDecl& cd, bool buildTrie)
     for (auto& type : cd.inheritedTypes) {
         BuildSymbolTable(ctx, type.get(), buildTrie);
     }
+    CollectCapturesClause(ctx, cd, buildTrie);
     auto bodyNodeInfo = NodeInfo(*cd.body, "", ctx.currentScopeLevel, scopeManager.CalcScopeGateName(ctx));
     AddSymbol(ctx, bodyNodeInfo, buildTrie);
     BuildSymbolTable(ctx, cd.body.get(), buildTrie);
     scopeManager.FinalizeScope(ctx);
+}
+
+void Collector::CollectCapturesClause(ASTContext& ctx, const InheritableDecl& decl, bool buildTrie)
+{
+    // Checked exceptions (experimental): the 'captures' clause types may reference the
+    // declaration's generic parameters, so they are collected inside its scope, like the
+    // capability types of a 'throws' clause (proposal 3.9).
+    if (!decl.capturesClause) {
+        return;
+    }
+    for (auto& capType : decl.capturesClause->capTypes) {
+        BuildSymbolTable(ctx, capType.get(), buildTrie);
+    }
 }
 
 void Collector::CollectClassBody(ASTContext& ctx, const ClassBody& cb, bool buildTrie)
@@ -230,6 +244,7 @@ void Collector::CollectStructDecl(ASTContext& ctx, StructDecl& sd, bool buildTri
     for (auto& type : sd.inheritedTypes) {
         BuildSymbolTable(ctx, type.get(), buildTrie);
     }
+    CollectCapturesClause(ctx, sd, buildTrie);
     if (sd.body == nullptr) {
         scopeManager.FinalizeScope(ctx);
         return;
