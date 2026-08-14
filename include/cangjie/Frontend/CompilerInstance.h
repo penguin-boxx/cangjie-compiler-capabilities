@@ -50,6 +50,7 @@ enum class CompileStage {
     MACRO_EXPAND,      /**< Expand macros. */
     AST_DIFF,          /**< Diff the AST to get incremental compilation scope. */
     SEMA,              /**< TypeCheck. */
+    CAPABILITY_CHECK,  /**< Checked-exception capability checking ('--enable-checked-exceptions'). */
     DESUGAR_AFTER_SEMA,
     GENERIC_INSTANTIATION, /**< GenericInstantiation. */
     OVERFLOW_STRATEGY,     /**< Overflow strategy. */
@@ -188,6 +189,13 @@ public:
      * Perform typecheck and other semantic check jobs.
      */
     virtual bool PerformSema();
+
+    /**
+     * Perform checked-exception capability checking (experimental, behind
+     * '--enable-checked-exceptions'). Runs on the typed AST after sema, before desugar
+     * destroys 'TryExpr' structure.
+     */
+    virtual bool PerformCapabilityCheck();
 
     /**
      * Perform desugar after sema.

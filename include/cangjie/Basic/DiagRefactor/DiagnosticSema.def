@@ -418,5 +418,11 @@ ERROR(sema_chexc_clause_on_cfunc, "a 'throws' clause is not allowed on %s", "'th
 ERROR(sema_chexc_override_missing_capability,
     "exception type '%s' in 'throws' clause of '%s' is not covered by the overridden or implemented declaration",
     "no exception type in the original declaration's 'throws' clause is a supertype of '%s'")
+ERROR(sema_chexc_missing_capability,
+    "Cannot find a capability for '%s' (of type 'CanThrow<%s>') in the current scope",
+    "required by %s")
+WARNING(sema_chexc_missing_capability_warn, CHEXC,
+    "Cannot find a capability for '%s' (of type 'CanThrow<%s>') in the current scope",
+    "required by %s")
 
 ERROR(sema_diag_end, "")
