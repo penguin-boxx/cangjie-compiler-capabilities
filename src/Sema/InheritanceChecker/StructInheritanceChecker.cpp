@@ -1329,6 +1329,32 @@ void StructInheritanceChecker::CheckPropertyInheritance(const MemberSignature& p
             DiagKindRefactor::sema_property_must_implement_both, *childProp, childProp->identifier.Val());
     }
     CheckAccessVisibility(*parentDecl, child, child);
+    CheckPropertyThrowsClauses(*parentProp, *childProp);
+}
+
+/**
+ * Proposal 3.8 covers property accessors as well as methods, but accessors are not member
+ * signatures of their own, so they never reach the method override path. Pair them up here.
+ */
+void StructInheritanceChecker::CheckPropertyThrowsClauses(const PropDecl& parentProp, const PropDecl& childProp) const
+{
+    auto check = [this](const OwnedPtr<FuncDecl>& parentAccessor, const OwnedPtr<FuncDecl>& childAccessor) {
+        if (!parentAccessor || !childAccessor) {
+            return;
+        }
+        auto parentTy = DynamicCast<FuncTy*>(parentAccessor->GetTy());
+        auto childTy = DynamicCast<FuncTy*>(childAccessor->GetTy());
+        if (!parentTy || !childTy) {
+            return;
+        }
+        CheckThrowsClauseCompatible(*parentAccessor, *childAccessor, *parentTy, *childTy);
+    };
+    if (!parentProp.getters.empty() && !childProp.getters.empty()) {
+        check(parentProp.getters.front(), childProp.getters.front());
+    }
+    if (!parentProp.setters.empty() && !childProp.setters.empty()) {
+        check(parentProp.setters.front(), childProp.setters.front());
+    }
 }
 
 bool StructInheritanceChecker::CheckReturnOverrideByGeneric(const FuncTy& parentTy, const FuncTy& childTy) const

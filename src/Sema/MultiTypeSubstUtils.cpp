@@ -16,8 +16,7 @@ namespace Cangjie::TypeCheckUtil {
 using namespace AST;
 
 namespace {
-std::set<Ptr<Ty>> GetDirectMappingTys(
-    Ptr<TyVar> const tyVar, const MultiTypeSubst& mts)
+std::set<Ptr<Ty>> GetDirectMappingTys(Ptr<TyVar> const tyVar, const MultiTypeSubst& mts)
 {
     std::vector<Ptr<TyVar>> stack{tyVar};
     std::set<Ptr<Ty>> res;
@@ -205,12 +204,22 @@ std::unordered_set<Ptr<Ty>> GetAllGenericTys(Ptr<Ty> const ty)
         for (auto it : curTy->typeArgs) {
             q.emplace(it);
         }
+        // Checked exceptions: a functional type's capability list is deliberately outside
+        // typeArgs (so capabilities never reach code generation), but a type parameter
+        // reachable only through it still needs a substitution — otherwise the raw
+        // instantiation placeholder survives into capability checking, where it is neither
+        // demandable nor dischargeable. Capability lists still take no part in deciding type
+        // arguments (proposal 3.6); this only makes the resulting substitution complete.
+        if (auto funcTy = DynamicCast<FuncTy*>(curTy)) {
+            for (auto cap : funcTy->capTys) {
+                q.emplace(cap);
+            }
+        }
     }
     return res;
 }
 
-MultiTypeSubst ReduceMultiTypeSubst(TypeManager& tyMgr, const TyVars& tyVars,
-    const MultiTypeSubst& mts)
+MultiTypeSubst ReduceMultiTypeSubst(TypeManager& tyMgr, const TyVars& tyVars, const MultiTypeSubst& mts)
 {
     if (tyVars.empty()) {
         return {};

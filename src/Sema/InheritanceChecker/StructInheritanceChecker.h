@@ -80,6 +80,7 @@ private:
      * Checked exceptions (proposal 3.8): the override's 'throws' list must be pointwise subsumed
      * by the original's. Constructors are exempt.
      */
+    void CheckPropertyThrowsClauses(const AST::PropDecl& parentProp, const AST::PropDecl& childProp) const;
     void CheckThrowsClauseCompatible(const AST::FuncDecl& parentFunc, const AST::FuncDecl& childFunc,
         const FuncTy& parentTy, const FuncTy& childTy) const;
     void CheckMutModifierCompatible(const MemberSignature& parent, const Decl& child) const;
