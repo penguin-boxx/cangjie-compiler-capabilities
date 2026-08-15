@@ -447,9 +447,14 @@ private:
         if (ce.resolvedFunction) {
             auto it = inferred.find(ce.resolvedFunction);
             if (it != inferred.end()) {
+                // The entries name the CALLEE's type parameters; the declared list on the callee
+                // expression was already substituted by type check, so these must be too, or a
+                // generic callee's requirement is demanded (and discharged) at the wrong type.
+                auto typeMapping = CalleeTypeMapping(ce);
                 for (auto cap : it->second) {
-                    if (!Utils::In(cap, demands)) {
-                        demands.emplace_back(cap);
+                    auto demanded = typeMapping.empty() ? cap : typeManager.GetInstantiatedTy(cap, typeMapping);
+                    if (Ty::IsTyCorrect(demanded) && !Utils::In(demanded, demands)) {
+                        demands.emplace_back(demanded);
                     }
                 }
             }
@@ -460,6 +465,27 @@ private:
             }
         }
         DemandConstructedCaptures(ce);
+    }
+
+    /// Substitution from the callee's own type parameters to this call site's type arguments:
+    /// the receiver's instantiation (for a member of a generic type) combined with the call's
+    /// explicit or inferred type arguments (for a generic function).
+    TypeSubst CalleeTypeMapping(const CallExpr& ce) const
+    {
+        TypeSubst mapping;
+        if (!ce.resolvedFunction) {
+            return mapping;
+        }
+        if (auto ma = DynamicCast<MemberAccess*>(ce.baseFunc.get());
+            ma && ma->baseExpr && ce.resolvedFunction->outerDecl && Ty::IsTyCorrect(ma->baseExpr->GetTy())) {
+            mapping =
+                TypeCheckUtil::GenerateTypeMappingByTy(ce.resolvedFunction->outerDecl->GetTy(), ma->baseExpr->GetTy());
+        }
+        if (auto nre = DynamicCast<NameReferenceExpr*>(ce.baseFunc.get()); nre && !nre->instTys.empty()) {
+            auto funcMapping = TypeCheckUtil::GenerateTypeMapping(*ce.resolvedFunction, nre->instTys);
+            mapping.insert(funcMapping.begin(), funcMapping.end());
+        }
+        return mapping;
     }
 
     void DemandConstructedCaptures(CallExpr& ce)
@@ -606,6 +632,15 @@ private:
         }
         // Interface members are contracts: their lists are written explicitly.
         if (fd.outerDecl && fd.outerDecl->astKind == ASTKind::INTERFACE_DECL) {
+            return false;
+        }
+        // A non-private static class member can be redefined by a subclass and is dispatched
+        // virtually, so proposal 3.8 applies to it — but override checking runs during type
+        // check, before inference, and would not see an inferred list. Requiring an explicit
+        // clause here keeps the two consistent; a post-inference re-check would let these be
+        // inferred too (see notes/audit-report.md MF8).
+        if (fd.TestAttr(Attribute::STATIC) && !fd.TestAttr(Attribute::PRIVATE) && fd.outerDecl &&
+            fd.outerDecl->astKind == ASTKind::CLASS_DECL) {
             return false;
         }
         auto& clause = fd.funcBody->throwsClause;
