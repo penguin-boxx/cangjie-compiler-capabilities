@@ -723,7 +723,7 @@ private:
         if (rootSupply && rootSupply(exceptionTy)) {
             return;
         }
-        missHandler.HandleMiss({exceptionTy, &site, requiredBy});
+        missHandler.HandleMiss({exceptionTy, &site, requiredBy, IsCommandTy(typeManager, importManager, exceptionTy)});
     }
 
     TypeManager& typeManager;
@@ -743,10 +743,6 @@ private:
 /// Collects residual demands instead of diagnosing them (proposal 6.3, the miss-handler seam).
 class CollectingMissHandler : public Sema::CapabilityMissHandler {
 public:
-    CollectingMissHandler(TypeManager& typeManager, const ImportManager& importManager)
-        : typeManager(typeManager), importManager(importManager)
-    {
-    }
     void HandleMiss(const Sema::CapabilityDemand& demand) override
     {
         if (!Ty::IsTyCorrect(demand.exceptionTy)) {
@@ -755,7 +751,7 @@ public:
         // Effect requirements are never inferred (proposal 9.1, policy table): they are semantic
         // contract and, under evidence passing, ABI. Dropping them here leaves them undischarged,
         // so the reporting pass diagnoses them instead of silently widening the declaration.
-        if (IsCommandTy(typeManager, importManager, demand.exceptionTy)) {
+        if (demand.isEffect) {
             return;
         }
         collected.emplace_back(demand.exceptionTy);
@@ -768,8 +764,6 @@ public:
     }
 
 private:
-    TypeManager& typeManager;
-    const ImportManager& importManager;
     std::vector<Ptr<Ty>> collected;
 };
 
@@ -1026,7 +1020,7 @@ private:
     /// Kleene iteration to the least fixed point. Members outside a cycle stabilize in one pass.
     void SolveComponent(const std::vector<size_t>& component)
     {
-        CollectingMissHandler handler(typeManager, importManager);
+        CollectingMissHandler handler;
         CapabilityChecker checker(typeManager, importManager, handler, assumed, inferred);
         bool changed = true;
         while (changed) {
@@ -1085,8 +1079,11 @@ void ReportCapabilityMissHandler::HandleMiss(const CapabilityDemand& demand)
 {
     CJC_NULLPTR_CHECK(demand.demandSite);
     auto tyName = Ty::ToString(demand.exceptionTy);
-    auto kind = asWarning ? DiagKindRefactor::sema_chexc_missing_capability_warn
-                          : DiagKindRefactor::sema_chexc_missing_capability;
+    // Effects (proposal 8.2): an effect capability is named 'Handler<C>', not 'CanThrow<E>'.
+    auto kind = demand.isEffect ? (asWarning ? DiagKindRefactor::sema_chexc_missing_handler_capability_warn
+                                             : DiagKindRefactor::sema_chexc_missing_handler_capability)
+                                : (asWarning ? DiagKindRefactor::sema_chexc_missing_capability_warn
+                                             : DiagKindRefactor::sema_chexc_missing_capability);
     auto builder = diag.DiagnoseRefactor(kind, *demand.demandSite, tyName, tyName);
     builder.AddMainHintArguments(demand.requiredBy);
 }

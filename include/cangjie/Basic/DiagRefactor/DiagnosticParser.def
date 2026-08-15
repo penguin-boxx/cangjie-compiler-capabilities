@@ -93,6 +93,8 @@ ERROR(parse_ellipsis_in_func_type_throws_clause,
     "'...' is not allowed in a function type's 'throws' clause", "a function type's capability list is always complete")
 ERROR(parse_ellipsis_in_throws_clause_unsupported, "'...' in a 'throws' clause is not supported yet")
 ERROR(parse_duplicate_throws_clause, "duplicate 'throws' clause")
+ERROR(parse_duplicate_performs_clause, "duplicate 'performs' clause")
+ERROR(parse_performs_clause_after_throws, "a 'performs' clause must precede the 'throws' clause")
 ERROR(parse_expected_exception_type_after_captures, "expected exception type after 'captures', found %s",
     "expected exception type here")
 ERROR(parse_duplicate_captures_clause, "duplicate 'captures' clause")
