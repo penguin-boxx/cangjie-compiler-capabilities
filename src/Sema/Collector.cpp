@@ -76,6 +76,16 @@ void Collector::CollectFileNode(ASTContext& ctx, File& file, bool buildTrie)
     AddSymbol(ctx, nodeInfo, buildTrie);
     for (auto& import : file.imports) {
         BuildSymbolTable(ctx, import.get(), buildTrie);
+        // Checked exceptions (proposal 5.2.2): the exception types of an '@AssumeThrows' import
+        // annotation are named in the file's top-level scope, which is the scope in effect here.
+        for (auto& anno : import->annotations) {
+            if (!anno || !anno->assumeThrows) {
+                continue;
+            }
+            for (auto& capType : anno->assumeThrows->capTypes) {
+                BuildSymbolTable(ctx, capType.get(), buildTrie);
+            }
+        }
     }
     // Must use three-stage for loop instead of iterator-style for loop because that function "__maininvoke" will be
     // generated during function declaration symbol collection.

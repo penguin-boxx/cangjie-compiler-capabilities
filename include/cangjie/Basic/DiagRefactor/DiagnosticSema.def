@@ -430,6 +430,9 @@ WARNING(sema_chexc_missing_capability_warn, CHEXC,
     "Cannot find a capability for '%s' (of type 'CanThrow<%s>') in the current scope",
     "required by %s")
 
+ERROR(sema_chexc_assume_throws_not_on_import, "'@AssumeThrows' is only allowed on an 'import'",
+    "an assumption applies to a whole imported package")
+
 ERROR(sema_chexc_polymorphic_recursion,
     "Cannot infer capability parameters for '%s': the recursion re-enters it at the growing "
     "instantiation '%s'",

@@ -814,6 +814,7 @@ private:
     void ParseAttributeAnnotation(AST::Annotation& anno);
     void ParseOverflowAnnotation(AST::Annotation& anno);
     void ParseWhenAnnotation(AST::Annotation& anno);
+    void ParseAssumeThrowsAnnotation(AST::Annotation& anno);
     void ParseAnnotationArguments(AST::Annotation& anno);
     void ValidateDeprecatedAnnotationArgument(const Ptr<AST::LitConstExpr> lce, const std::string& name,
         const AST::LitConstKind& expectedKind, bool& isArgumentFound);
