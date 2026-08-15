@@ -19,6 +19,7 @@
 
 #include "cangjie/AST/ASTCasting.h"
 #include "cangjie/Modules/ASTSerialization.h"
+#include "cangjie/Sema/CapabilityCheck.h"
 
 #include "ASTSerializeUtils.h"
 
@@ -68,10 +69,8 @@ public:
     void PreSaveFullExportDecls(AST::Package& package);
     void SaveOptions(bool debug, GlobalOptions::OptimizationLevel level);
     inline bool NeedToExportDecl(Ptr<const AST::Decl> decl);
-    void DFSCollectFilesDeclarations(Ptr<AST::File> file,
-        std::unordered_set<AST::File*>& alreadyVisitedFiles,
-        std::vector<Ptr<const AST::Decl>>& topLevelDeclsOrdered,
-        std::unordered_set<AST::Ty*>& usedTys);
+    void DFSCollectFilesDeclarations(Ptr<AST::File> file, std::unordered_set<AST::File*>& alreadyVisitedFiles,
+        std::vector<Ptr<const AST::Decl>>& topLevelDeclsOrdered, std::unordered_set<AST::Ty*>& usedTys);
     // Export external decls of a package AST to a buffer.
     void ExportAST(const AST::PackageDecl& package);
     void AST2FB(std::vector<uint8_t>& data, const AST::PackageDecl& package);
@@ -168,7 +167,7 @@ private:
             return (this->*saveFunc)(StaticCast<const DeclT&>(decl), declInfo);
         };
     }
-    std::unordered_map<AST::ASTKind, DeclWriterT> declWriterMap {
+    std::unordered_map<AST::ASTKind, DeclWriterT> declWriterMap{
         {AST::ASTKind::VAR_DECL, Proxy<AST::VarDecl>(&ASTWriterImpl::SaveVarDecl)},
         {AST::ASTKind::VAR_WITH_PATTERN_DECL, Proxy<AST::VarWithPatternDecl>(&ASTWriterImpl::SaveVarWithPatternDecl)},
         {AST::ASTKind::PROP_DECL, Proxy<AST::PropDecl>(&ASTWriterImpl::SavePropDecl)},
@@ -185,8 +184,8 @@ private:
     };
 
     bool PlannedToBeSerialized(Ptr<const AST::Decl> decl);
-    std::vector<TFullIdOffset> CollectInitializationDependencies(const AST::Decl& decl,
-        std::set<const AST::Decl*> visited);
+    std::vector<TFullIdOffset> CollectInitializationDependencies(
+        const AST::Decl& decl, std::set<const AST::Decl*> visited);
     TFuncBodyOffset SaveFuncBody(const AST::FuncBody& funcBody);
     // Save generic Information
     flatbuffers::Offset<PackageFormat::Generic> SaveGeneric(const AST::Decl& decl);
@@ -221,6 +220,52 @@ private:
             superInterfaceTypes.push_back(SaveType(typeManager.ObtainsAliasType(it.get())));
         }
         return builder.CreateVector<FormattedIndex>(superInterfaceTypes);
+    }
+    /**
+     * Checked exceptions (proposal 3.10.2 rule 1): the canonical normal form of a capability list
+     * — entries subsumed by another entry dropped, the remainder ordered by type name.
+     *
+     * Sound because a demand is per entry and satisfied by any supply the entry is a subtype of:
+     * with 'A <: B' in one list, any supply discharging B discharges A too, so {A,B} and {B}
+     * impose the same obligation. Normalising here keeps the EXPORTED metadata independent of the
+     * order the clause happened to be written in, so reordering a clause is not an ABI change.
+     * Ordering is by name rather than by pointer, which would vary run to run.
+     */
+    std::vector<Ptr<AST::Ty>> NormalizeCapTys(const std::vector<Ptr<AST::Ty>>& capTys)
+    {
+        std::vector<Ptr<AST::Ty>> kept;
+        for (auto cap : capTys) {
+            if (!AST::Ty::IsTyCorrect(cap)) {
+                continue;
+            }
+            // Keep the maximal entries. An entry equal to one already kept (mutual subtypes)
+            // is dropped by the same test, which is what deduplication needs.
+            bool subsumed = std::any_of(capTys.begin(), capTys.end(), [this, cap](Ptr<AST::Ty> other) {
+                return AST::Ty::IsTyCorrect(other) && other != cap && typeManager.IsSubtype(cap, other);
+            });
+            if (!subsumed && !Utils::In(cap, kept)) {
+                kept.emplace_back(cap);
+            }
+        }
+        std::stable_sort(kept.begin(), kept.end(),
+            [](Ptr<AST::Ty> a, Ptr<AST::Ty> b) { return AST::Ty::ToString(a) < AST::Ty::ToString(b); });
+        return kept;
+    }
+
+    /**
+     * Checked exceptions (proposal 3.9 with 3.10.2): save the 'captures' clause of a class or
+     * struct, which every construction site of the declaration must supply. Read from the
+     * elaborated clause, so a capability list alias (proposal 6.1) is already spliced in.
+     */
+    template <typename T> TVectorOffset<FormattedIndex> SaveCapturesCapTys(const T& decl)
+    {
+        std::vector<FormattedIndex> capTypes;
+        for (auto cap : NormalizeCapTys(Sema::GetCapturesCapTys(decl))) {
+            if (AST::Ty::IsTyCorrect(cap)) {
+                capTypes.push_back(SaveType(cap));
+            }
+        }
+        return builder.CreateVector<FormattedIndex>(capTypes);
     }
     void MarkImplicitExportOfImportSpec(AST::Package& package);
 

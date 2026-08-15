@@ -101,6 +101,16 @@ void CompleteInferredCapabilityTypes(TypeManager& typeManager, const InferredCap
  */
 void CheckCapabilities(TypeManager& typeManager, const ImportManager& importManager, AST::Package& pkg,
     CapabilityMissHandler& missHandler, const InferredCapabilities& inferred = {});
+
+/**
+ * The capability list of @p decl's 'captures' clause (proposal 3.9), with capability list aliases
+ * already spliced in (proposal 6.1); empty for a declaration that captures nothing.
+ *
+ * Exposed here for package serialization, which must write the clause into the .cjo so that
+ * construction sites in other packages demand it (proposal 3.10.2). The elaborated clause lives
+ * on the AST, which serialization cannot reach through the Sema-private headers.
+ */
+std::vector<Ptr<AST::Ty>> GetCapturesCapTys(const AST::Decl& decl);
 } // namespace Sema
 } // namespace Cangjie
 

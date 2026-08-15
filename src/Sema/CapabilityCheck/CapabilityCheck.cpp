@@ -1032,6 +1032,11 @@ void CompleteInferredCapabilityTypes(TypeManager& typeManager, const InferredCap
     }
 }
 
+std::vector<Ptr<Ty>> GetCapturesCapTys(const AST::Decl& decl)
+{
+    return TypeCheckUtil::GetDeclCapturesCapTys(decl);
+}
+
 InferredCapabilities InferCapabilities(
     TypeManager& typeManager, const ImportManager& importManager, AST::Package& pkg, DiagnosticEngine& diag)
 {

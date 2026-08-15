@@ -892,6 +892,37 @@ void ASTLoader::ASTLoaderImpl::LoadInheritableDeclAdvancedInfo(const PackageForm
             (void)id.annotations.emplace_back(std::move(ann));
         }
     }
+    // Checked exceptions (proposal 3.9 with 3.10.2): rebuild the 'captures' clause so that
+    // construction sites in this package demand the declaration's captured capabilities. Only the
+    // types matter downstream, which read them off the clause's nodes.
+    const flatbuffers::Vector<FormattedIndex>* capturesTypes = nullptr;
+    if (id.astKind == ASTKind::CLASS_DECL) {
+        capturesTypes = decl.info_as_ClassInfo()->capturesTypes();
+    } else if (id.astKind == ASTKind::STRUCT_DECL) {
+        capturesTypes = decl.info_as_StructInfo()->capturesTypes();
+    }
+    if (capturesTypes != nullptr && capturesTypes->size() > 0) {
+        auto clause = MakeOwned<ThrowsClause>();
+        for (uoffset_t i = 0; i < capturesTypes->size(); i++) {
+            auto capTy = LoadType(capturesTypes->Get(i));
+            if (!Ty::IsTyCorrect(capTy)) {
+                continue;
+            }
+            // A capability entry is always a class or generic type, and only its 'ty' is read
+            // downstream, so a reference node carrying that type is the whole requirement. The
+            // written list is already expanded, so no alias can appear here.
+            auto capType = MakeOwned<RefType>();
+            capType->SetTy(capTy);
+            capType->ref.identifier = capTy->name;
+            if (auto capDecl = Ty::GetDeclPtrOfTy(capTy)) {
+                capType->ref.target = capDecl;
+                capType->ref.identifier = capDecl->identifier.Val();
+            }
+            capType->EnableAttr(Attribute::IMPORTED, Attribute::COMPILER_ADD, Attribute::IS_CHECK_VISITED);
+            clause->capTypes.emplace_back(std::move(capType));
+        }
+        id.capturesClause = std::move(clause);
+    }
     auto body = id.astKind == ASTKind::CLASS_DECL ? decl.info_as_ClassInfo()->body()
         : id.astKind == ASTKind::INTERFACE_DECL   ? decl.info_as_InterfaceInfo()->body()
         : id.astKind == ASTKind::ENUM_DECL        ? decl.info_as_EnumInfo()->body()
@@ -930,7 +961,7 @@ OwnedPtr<Decl> ASTLoader::ASTLoaderImpl::LoadNominalDecl(const PackageFormat::De
         astDecl->DisableAttr(Attribute::JAVA_MIRROR, Attribute::JAVA_IMPL);
         if (astDecl->HasAnno(AnnotationKind::JAVA_MIRROR) ||
             astDecl->TestAttr(Attribute::JAVA_MIRROR_SYNTHETIC_WRAPPER)) {
-                astDecl->MarkAsJavaMirror();
+            astDecl->MarkAsJavaMirror();
         } else if (astDecl->HasAnno(AnnotationKind::JAVA_IMPL)) {
             astDecl->MarkAsJavaImpl();
         }
