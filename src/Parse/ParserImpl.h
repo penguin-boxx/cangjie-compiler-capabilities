@@ -191,6 +191,16 @@ private:
     {
         return Utils::In(GetContextualKeyword(), [this](const TokenKind& kind) { return Seeing(kind); });
     }
+    /**
+     * Checked exceptions (proposal 10): 'throws' and 'captures' are recognized by spelling at
+     * the few positions where a clause may start, and stay ordinary identifiers everywhere
+     * else — reserving them would break existing code (`std.unittest.mock` exports a public
+     * `throws` function). Only recognized when the feature is enabled.
+     */
+    inline bool SeeingChexcClause(const std::string& keyword)
+    {
+        return enableChexc && Seeing(TokenKind::IDENTIFIER) && lookahead.Value() == keyword;
+    }
     inline bool SeeingPrimaryKeyWordContext(TokenKind tk)
     {
         return Utils::In(GetContextualKeyword(), [this, &tk](const TokenKind& kind) { return Seeing({kind, tk}); });
