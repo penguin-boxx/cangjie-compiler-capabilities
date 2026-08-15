@@ -399,6 +399,10 @@ OwnedPtr<ThrowsClause> ASTCloner::CloneThrowsClause(const ThrowsClause& node, co
     ret->leftParenPos = node.leftParenPos;
     ret->rightParenPos = node.rightParenPos;
     ret->commaPosVector = node.commaPosVector;
+    // The `...` marker decides whether inference stays enabled for the declaration
+    // (proposal 6.3.5); it is a plain member, not a Node-level field, so CopyNodeField
+    // does not carry it.
+    ret->hasEllipsis = node.hasEllipsis;
     for (auto& capType : node.capTypes) {
         ret->capTypes.emplace_back(CloneType(capType.get(), visitor));
     }

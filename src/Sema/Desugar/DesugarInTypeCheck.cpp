@@ -135,8 +135,8 @@ OwnedPtr<Expr> CreateArgumentForCompoundAssignOverload(
     return binaryExpr;
 }
 
-void DesugarPrimaryCtorHandleSuper(const Decl& decl, const PrimaryCtorDecl& fd,
-    const OwnedPtr<FuncBody>& funcBody, std::vector<OwnedPtr<Node>>::iterator& it)
+void DesugarPrimaryCtorHandleSuper(const Decl& decl, const PrimaryCtorDecl& fd, const OwnedPtr<FuncBody>& funcBody,
+    std::vector<OwnedPtr<Node>>::iterator& it)
 {
     if (decl.astKind != ASTKind::CLASS_DECL || !fd.funcBody->body || fd.funcBody->body->body.empty()) {
         return;
@@ -335,8 +335,8 @@ void DesugarOperatorOverloadExpr(ASTContext& ctx, UnaryExpr& ue)
     ctx.RemoveTypeCheckCache(*callBase);
     callBase->baseExpr = std::move(ue.expr);
     callBase->field = SrcIdentifier{TOKENS[static_cast<int64_t>(ue.op)]};
-    callBase->field.SetPos(ue.operatorPos, ue.operatorPos +
-        strlen(TOKENS[static_cast<int64_t>(ue.op)])); // Requried for LSP usage.
+    callBase->field.SetPos(
+        ue.operatorPos, ue.operatorPos + strlen(TOKENS[static_cast<int64_t>(ue.op)])); // Requried for LSP usage.
     callExpr->baseFunc = std::move(callBase);
     callExpr->sourceExpr = &ue;
     callExpr->begin = ue.begin;
@@ -662,6 +662,13 @@ void DesugarPrimaryCtor(Decl& decl, PrimaryCtorDecl& fd)
         // Despite that the whole tree is cloned, the retType node is explicitly given by the user.
         funcBody->retType->DisableAttr(Attribute::COMPILER_ADD);
     }
+    // Checked exceptions (experimental): the primary constructor's 'throws' clause belongs to the
+    // synthesized 'init'. Every consumer reads the DESUGARED body — the capability list of the
+    // constructor's functional type (what construction sites demand), clause validation, and
+    // inference eligibility — so without this the clause is parsed and then dropped. Cloned
+    // rather than moved: the primary constructor declaration keeps living in the AST for name
+    // resolution, LSP and incremental hashing, exactly like the return type above.
+    funcBody->throwsClause = ASTCloner::Clone(fd.funcBody->throwsClause.get(), SetIsClonedSourceCode);
     auto funcParamList = MakeOwned<FuncParamList>();
     CopyFileID(funcParamList.get(), &fd);
     std::vector<OwnedPtr<Node>>::iterator it;
