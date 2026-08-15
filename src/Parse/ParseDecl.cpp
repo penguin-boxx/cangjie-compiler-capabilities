@@ -2272,15 +2272,10 @@ void ParserImpl::ParsePropMemberBody(const ScopeKind& scopeKind, FuncBody& fb)
             DiagGetOrSetCannotBeGeneric("setter", *fb.generic);
         }
     }
-    // Checked exceptions (experimental): property accessors may carry a `throws` clause,
-    // e.g. `get() throws GException { ... }` (proposal rule: clauses on all callables).
-    // Effects (proposal 8.2, 9.1 rule 8): 'performs' precedes 'throws'.
-    if (SeeingChexcClause("performs")) {
-        fb.performsClause = ParseThrowsClause(true);
-    }
-    if (SeeingChexcClause("throws")) {
-        fb.throwsClause = ParseThrowsClause(true);
-    }
+    // Checked exceptions (experimental): property accessors may carry capability clauses,
+    // e.g. `get() throws GException { ... }` (proposal rule: clauses on all callables), with
+    // 'performs' preceding 'throws' (proposal 9.1 rule 8) -- enforced by the shared helper.
+    ParseCapabilityClauses(fb);
     if (!Seeing(TokenKind::LCURL)) {
         ParseDiagnoseRefactor(DiagKindRefactor::parse_expected_left_brace, lookahead, ConvertToken(lookahead));
         ConsumeUntilDecl(TokenKind::LCURL);
@@ -2380,9 +2375,14 @@ void ParserImpl::ParseCapabilityClauses(FuncBody& fb)
 {
     if (SeeingChexcClause("performs")) {
         if (fb.performsClause) {
-            ParseDiagnoseRefactor(DiagKindRefactor::parse_duplicate_throws_clause, lookahead.Begin());
+            ParseDiagnoseRefactor(DiagKindRefactor::parse_duplicate_performs_clause, lookahead.Begin());
             (void)ParseThrowsClause(true);
         } else {
+            // Seen on the second call, after the constraints: 'throws ... where ... performs'
+            // still violates the fixed order (proposal 9.1 rule 8).
+            if (fb.throwsClause) {
+                ParseDiagnoseRefactor(DiagKindRefactor::parse_performs_clause_after_throws, lookahead.Begin());
+            }
             fb.performsClause = ParseThrowsClause(true);
         }
     }
@@ -2392,6 +2392,17 @@ void ParserImpl::ParseCapabilityClauses(FuncBody& fb)
             (void)ParseThrowsClause(true);
         } else {
             fb.throwsClause = ParseThrowsClause(true);
+        }
+    }
+    // 'throws E performs H' with no constraints between: the fixed order is violated within one
+    // run. Diagnosed here, where the position is the offending clause; parsed anyway so the
+    // semantic checks still see the declared requirements.
+    if (SeeingChexcClause("performs")) {
+        ParseDiagnoseRefactor(DiagKindRefactor::parse_performs_clause_after_throws, lookahead.Begin());
+        if (fb.performsClause) {
+            (void)ParseThrowsClause(true);
+        } else {
+            fb.performsClause = ParseThrowsClause(true);
         }
     }
 }

@@ -413,6 +413,9 @@ void PrintFuncBody(unsigned indent, const FuncBody& body, std::ostream& stream =
         PrintIndent(stream, indent + ONE_INDENT, "// return type");
         PrintNode(body.retType.get(), indent + ONE_INDENT, "", stream);
     }
+    if (body.performsClause) {
+        PrintThrowsClause(indent + ONE_INDENT, *body.performsClause, stream);
+    }
     if (body.throwsClause) {
         PrintThrowsClause(indent + ONE_INDENT, *body.throwsClause, stream);
     }
@@ -1280,6 +1283,9 @@ void PrintFuncType(unsigned indent, const FuncType& type, std::ostream& stream =
         PrintNode(paramType.get(), indent + TWO_INDENT, "", stream);
     }
     PrintIndent(stream, indent + ONE_INDENT, "]");
+    if (type.performsClause) {
+        PrintThrowsClause(indent + ONE_INDENT, *type.performsClause, stream);
+    }
     if (type.throwsClause) {
         PrintThrowsClause(indent + ONE_INDENT, *type.throwsClause, stream);
     }

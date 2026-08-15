@@ -35,6 +35,10 @@ struct CapabilityDemand {
     Ptr<AST::Ty> exceptionTy;
     Ptr<const AST::Node> demandSite;
     std::string requiredBy;
+    /// Effects (proposal 8.2): true when the demanded type is a Command subtype. Decides the
+    /// diagnostic's capability name -- 'Handler<C>' rather than 'CanThrow<E>' -- and exclusion
+    /// from inference, which never infers effect requirements (proposal 9.1).
+    bool isEffect{false};
 };
 
 /**
