@@ -1279,7 +1279,7 @@ void ParserImpl::ParseInheritedTypes(InheritableDecl& decl)
 
 void ParserImpl::TryParseCapturesClause(InheritableDecl& decl)
 {
-    if (!Seeing(TokenKind::CAPTURES)) {
+    if (!SeeingChexcClause("captures")) {
         return;
     }
     if (decl.capturesClause) {
@@ -1296,14 +1296,19 @@ void ParserImpl::ParseInterfaceDeclOrClassDeclGeneric(InheritableDecl& ret)
         ret.EnableAttr(Attribute::GENERIC);
         ret.generic = ParseGeneric();
     }
-    if (SeeingAny({TokenKind::IDENTIFIER, TokenKind::COLON}) || SeeingContextualKeyword()) {
-        ParseDiagnoseRefactor(DiagKindRefactor::parse_expected_lt_brace, lookahead, ConvertToken(lookahead));
-        ConsumeUntilDecl(TokenKind::LCURL);
-    }
     // Checked exceptions (experimental): a class may declare a `captures` clause; its position
     // relative to the superclass list and the `where` block is arbitrary (proposal 3.9).
     // Interfaces cannot capture: on them `captures` follows the natural error path below.
     bool allowCaptures = ret.astKind == ASTKind::CLASS_DECL;
+    // `captures` is an ordinary identifier outside clause position (proposal 10), so the
+    // "expected '{' or '<'" recovery below would otherwise swallow the clause.
+    if (allowCaptures && SeeingChexcClause("captures")) {
+        TryParseCapturesClause(ret);
+    }
+    if (SeeingAny({TokenKind::IDENTIFIER, TokenKind::COLON}) || SeeingContextualKeyword()) {
+        ParseDiagnoseRefactor(DiagKindRefactor::parse_expected_lt_brace, lookahead, ConvertToken(lookahead));
+        ConsumeUntilDecl(TokenKind::LCURL);
+    }
     if (allowCaptures) {
         TryParseCapturesClause(ret);
     }
@@ -2269,7 +2274,7 @@ void ParserImpl::ParsePropMemberBody(const ScopeKind& scopeKind, FuncBody& fb)
     }
     // Checked exceptions (experimental): property accessors may carry a `throws` clause,
     // e.g. `get() throws GException { ... }` (proposal rule: clauses on all callables).
-    if (Seeing(TokenKind::THROWS)) {
+    if (SeeingChexcClause("throws")) {
         fb.throwsClause = ParseThrowsClause(true);
     }
     if (!Seeing(TokenKind::LCURL)) {
@@ -2321,11 +2326,11 @@ OwnedPtr<FuncBody> ParserImpl::ParseFuncBody(ScopeKind scopeKind)
     }
     // Checked exceptions (experimental): a `throws` clause and generic constraints may appear
     // in either order after the return type (proposal §3.2 rule 4).
-    if (Seeing(TokenKind::THROWS)) {
+    if (SeeingChexcClause("throws")) {
         ret->throwsClause = ParseThrowsClause(true);
     }
     ParseFuncGenericConstraints(*ret);
-    if (Seeing(TokenKind::THROWS)) {
+    if (SeeingChexcClause("throws")) {
         if (ret->throwsClause) {
             ParseDiagnoseRefactor(DiagKindRefactor::parse_duplicate_throws_clause, lookahead.Begin());
             (void)ParseThrowsClause(true); // Parse and drop the duplicate to recover.
