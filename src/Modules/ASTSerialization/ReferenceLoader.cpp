@@ -366,8 +366,18 @@ void ASTLoader::ASTLoaderImpl::SetTypeTy(FormattedIndex type, const PackageForma
     } else if constexpr (std::is_same_v<TypeT, FuncTy>) {
         auto info = typeObj.info_as_FuncTyInfo();
         CJC_NULLPTR_CHECK(info);
+        // Checked exceptions (proposal 3.10.2): restore the capability list of the functional
+        // type. A .cjo written before the field existed has no vector at all, which loads as an
+        // empty list — exactly the pre-feature reading.
+        std::vector<Ptr<Ty>> capTys;
+        if (auto saved = info->capTypes()) {
+            auto capCount = static_cast<uoffset_t>(saved->size());
+            for (uoffset_t i = 0; i < capCount; i++) {
+                capTys.emplace_back(LoadType(saved->Get(i)));
+            }
+        }
         ty = typeManager.GetFunctionTy(
-            LoadTypeArgs(typeObj), LoadType(info->retType()), {info->isC(), false, info->hasVariableLenArg()});
+            LoadTypeArgs(typeObj), LoadType(info->retType()), {info->isC(), false, info->hasVariableLenArg()}, capTys);
     } else {
         auto info = typeObj.info_as_CompositeTyInfo();
         CJC_NULLPTR_CHECK(info);

@@ -1107,10 +1107,18 @@ TTypeOffset ASTWriter::ASTWriterImpl::SaveFuncTy(const FuncTy& type)
         paramTypes.push_back(SaveType(it));
     }
     auto vParamTypes = builder.CreateVector<FormattedIndex>(paramTypes);
+    // Checked exceptions (proposal 3.10.2): the capability list travels with the functional type,
+    // separately from the parameter types above, so an imported declaration's requirements are
+    // demanded at call sites in the importing package.
+    std::vector<FormattedIndex> capTypes;
+    for (auto& it : NormalizeCapTys(type.capTys)) {
+        capTypes.push_back(SaveType(it));
+    }
+    auto vCapTypes = builder.CreateVector<FormattedIndex>(capTypes);
     // SaveType has side effect (it allocates an offset for the type)
     // DO NOT put it in another expression
     FormattedIndex retType = SaveType(type.retTy);
-    auto info = PackageFormat::CreateFuncTyInfo(builder, retType, type.isC, type.hasVariableLenArg);
+    auto info = PackageFormat::CreateFuncTyInfo(builder, retType, type.isC, type.hasVariableLenArg, vCapTypes);
     PackageFormat::SemaTyBuilder tbuilder(builder);
     tbuilder.add_kind(GetFormatTypeKind(type.kind));
     tbuilder.add_typeArgs(vParamTypes);
@@ -1389,7 +1397,8 @@ TDeclOffset ASTWriter::ASTWriterImpl::SaveStructDecl(const StructDecl& structDec
     auto vInterfaceTypes = GetVirtualInterfaces(structDecl);
     auto generic = SaveGeneric(structDecl);
     auto genericDeclIndex = GetGenericDeclIndex(structDecl);
-    auto info = PackageFormat::CreateStructInfo(builder, vInterfaceTypes, structBody, 0);
+    auto vcaptures = SaveCapturesCapTys(structDecl);
+    auto info = PackageFormat::CreateStructInfo(builder, vInterfaceTypes, structBody, 0, vcaptures);
     PackageFormat::DeclBuilder dbuilder(builder);
     SaveDeclBasicInfo(declInfo, dbuilder);
     dbuilder.add_kind(PackageFormat::DeclKind_StructDecl);
@@ -1469,9 +1478,11 @@ TDeclOffset ASTWriter::ASTWriterImpl::SaveClassDecl(const ClassDecl& classDecl, 
     auto vinheritedTypes = GetVirtualInterfaces(classDecl);
     auto generic = SaveGeneric(classDecl);
     auto genericDeclIndex = GetGenericDeclIndex(classDecl);
+    auto vcaptures = SaveCapturesCapTys(classDecl);
     PackageFormat::ClassInfoBuilder ibuilder(builder);
     ibuilder.add_body(vclassBody);
     ibuilder.add_inheritedTypes(vinheritedTypes);
+    ibuilder.add_capturesTypes(vcaptures);
     if (classDecl.TestAttr(Attribute::IS_ANNOTATION)) {
         ibuilder.add_isAnno(true);
         for (auto& ann : classDecl.annotations) {
