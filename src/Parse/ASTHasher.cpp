@@ -378,6 +378,17 @@ struct ASTHasherImpl {
             }
         }
         SUPERHash<whatTypeToHash>(im.hasDoubleColon);
+        // Checked exceptions (proposal 5.2.2, ledger E3): an '@AssumeThrows' annotation imposes
+        // obligations on every call into the imported package, so changing its list changes what
+        // the file's declarations must supply -- exactly like changing the import itself. Without
+        // this the declarations keep their hashes and an incremental build never re-checks them,
+        // leaving the stale obligations in place. Import-spec changes roll the package back to a
+        // full compilation, which is coarse but the granularity this hash already has.
+        for (auto& anno : is.annotations) {
+            if (anno && anno->assumeThrows) {
+                SUPERHash<whatTypeToHash>(anno->assumeThrows);
+            }
+        }
     }
     template <int whatTypeToHash> void HashPackageSpec(const PackageSpec& ps)
     {
