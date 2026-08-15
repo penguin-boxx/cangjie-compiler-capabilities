@@ -12,8 +12,8 @@
 
 #include "cangjie/AST/Utils.h"
 
-#include <mutex>
 #include <deque>
+#include <mutex>
 #include <sstream>
 
 #include "cangjie/AST/Create.h"
@@ -48,6 +48,17 @@ void AddCurFile(Node& root, Ptr<File> file)
                 curFile->curFile = curFile;
                 for (auto& import : curFile->imports) {
                     import->curFile = curFile;
+                    // Checked exceptions (proposal 5.2.2): an '@AssumeThrows' annotation carries
+                    // type nodes that sema resolves and checks like 'throws' clause entries, and
+                    // those checks read 'curFile'. The walk below never reaches them: an import
+                    // is not a declaration, so its annotations are not walked with it. Only the
+                    // capability list is visited — the other annotations an import may carry keep
+                    // whatever 'curFile' they had.
+                    for (auto& anno : import->annotations) {
+                        if (anno && anno->assumeThrows) {
+                            Walker(anno->assumeThrows.get(), walkerID, setCurFile).Walk();
+                        }
+                    }
                 }
                 return VisitAction::WALK_CHILDREN;
             }

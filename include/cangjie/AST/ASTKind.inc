@@ -5,7 +5,7 @@
 // See https://cangjie-lang.cn/pages/LICENSE for license information.
 // ASTKIND(ast kind, ast value for human reading, ast node, ast size for notify checking related code)
 #ifdef ASTKIND
-ASTKIND(ANNOTATION, "annotation", Annotation, 512)
+ASTKIND(ANNOTATION, "annotation", Annotation, 520)
 ASTKIND(MODIFIER, "modifier", Modifier, 264)
 ASTKIND(DECL, "*decl", Decl, 728) // begin of subtypes of Decl.
 ASTKIND(MAIN_DECL, "main_decl", MainDecl, 752)

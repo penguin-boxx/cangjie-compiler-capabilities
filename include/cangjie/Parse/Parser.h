@@ -58,9 +58,10 @@ const std::unordered_map<std::string, AST::AnnotationKind> NAME_TO_ANNO_KIND = {
     {"OverflowThrowing", AST::AnnotationKind::NUMERIC_OVERFLOW},
     {"OverflowWrapping", AST::AnnotationKind::NUMERIC_OVERFLOW},
     {"OverflowSaturating", AST::AnnotationKind::NUMERIC_OVERFLOW}, {"When", AST::AnnotationKind::WHEN},
-    {"FastNative", AST::AnnotationKind::FASTNATIVE}, {"Annotation", AST::AnnotationKind::ANNOTATION},
-    {"ConstSafe", AST::AnnotationKind::CONSTSAFE}, {"Deprecated", AST::AnnotationKind::DEPRECATED},
-    {"Frozen", AST::AnnotationKind::FROZEN}, {"EnsurePreparedToMock", AST::AnnotationKind::ENSURE_PREPARED_TO_MOCK},
+    {"AssumeThrows", AST::AnnotationKind::ASSUME_THROWS}, {"FastNative", AST::AnnotationKind::FASTNATIVE},
+    {"Annotation", AST::AnnotationKind::ANNOTATION}, {"ConstSafe", AST::AnnotationKind::CONSTSAFE},
+    {"Deprecated", AST::AnnotationKind::DEPRECATED}, {"Frozen", AST::AnnotationKind::FROZEN},
+    {"EnsurePreparedToMock", AST::AnnotationKind::ENSURE_PREPARED_TO_MOCK},
     {"NonProduct", AST::AnnotationKind::NON_PRODUCT}};
 
 extern const std::unordered_map<AST::AnnotationKind, std::string> ANNO_KIND_TO_NAME;

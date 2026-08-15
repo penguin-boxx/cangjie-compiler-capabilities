@@ -938,6 +938,23 @@ void TypeChecker::TypeCheckerImpl::ResolveNames(ASTContext& ctx)
         CJC_NULLPTR_CHECK(sym);
         Walker(sym->node, id, resolveSingleType).Walk();
     }
+    // Checked exceptions (proposal 5.2.2): an '@AssumeThrows' annotation sits on an import, not on
+    // a top-level declaration, so its exception types are not reached by the walk above.
+    if (ctx.curPackage != nullptr) {
+        for (auto& file : ctx.curPackage->files) {
+            CJC_NULLPTR_CHECK(file);
+            for (auto& import : file->imports) {
+                for (auto& anno : import->annotations) {
+                    if (!anno || !anno->assumeThrows) {
+                        continue;
+                    }
+                    for (auto& capType : anno->assumeThrows->capTypes) {
+                        Walker(capType.get(), id, resolveSingleType).Walk();
+                    }
+                }
+            }
+        }
+    }
     if (ci->invocation.globalOptions.enableMacroInLSP) {
         for (auto& file : ctx.curPackage->files) {
             for (auto& it : file->originalMacroCallNodes) {

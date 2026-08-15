@@ -1314,6 +1314,8 @@ private:
     void ChkThrowsClauseTypes(ASTContext& ctx, AST::ThrowsClause& clause, const std::string& clauseKeyword = "throws");
     /** Checked exceptions: diagnose 'throws' clauses on foreign/C functions and CFunc types. */
     void ChkThrowsClauseOfFuncBody(ASTContext& ctx, AST::FuncBody& fb);
+    /// Checked exceptions (proposal 5.2.2): validate the '@AssumeThrows' annotations of a package.
+    void ChkAssumeThrowsAnnotations(ASTContext& ctx, AST::Package& pkg);
     /**
      * Checked exceptions: validate the 'captures' clause of a class or struct declaration
      * (proposal 3.9) -- elaborate and validate its entries like 'throws' entries and ban
