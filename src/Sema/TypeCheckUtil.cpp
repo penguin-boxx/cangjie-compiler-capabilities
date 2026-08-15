@@ -336,9 +336,18 @@ std::vector<Ptr<Ty>> GetInstantiatedAccessorCapTys(TypeManager& tyMgr, const Fun
     // Entries that failed elaboration are dropped rather than forwarded: a FuncTy marks itself
     // invalid when any capability ty is incorrect, and the desugared callee expressions this
     // feeds have never carried an invalid ty.
+    // An IMPORTED accessor has no clause node: the loader rebuilds declarations from the .cjo,
+    // where the capability list lives on the functional type (proposal 3.10.2). Fall back to it,
+    // so a 'throws' clause on a property accessor is demanded across a package boundary too.
+    auto declared = GetFuncBodyCapTys(*accessor.funcBody);
+    if (declared.empty() && accessor.TestAttr(Attribute::IMPORTED)) {
+        if (auto funcTy = DynamicCast<FuncTy*>(accessor.GetTy())) {
+            declared = funcTy->capTys;
+        }
+    }
     std::vector<Ptr<Ty>> caps;
     bool anyGeneric = false;
-    for (auto cap : GetFuncBodyCapTys(*accessor.funcBody)) {
+    for (auto cap : declared) {
         if (!Ty::IsTyCorrect(cap)) {
             continue;
         }
