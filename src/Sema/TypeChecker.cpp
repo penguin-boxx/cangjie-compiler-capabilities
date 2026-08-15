@@ -256,6 +256,36 @@ void TypeChecker::TypeCheckerImpl::ChkCapturesClauseOfDecl(ASTContext& ctx, Inhe
     }
 }
 
+void TypeChecker::TypeCheckerImpl::ChkAssumeThrowsAnnotations(ASTContext& ctx, Package& pkg)
+{
+    if (!ci->invocation.globalOptions.enableChexc) {
+        return;
+    }
+    // Checked exceptions (proposal 5.2.2): validate the exception types of every assumption import
+    // exactly like the entries of a 'throws' clause. Their types were resolved by 'ResolveNames'.
+    for (auto& file : pkg.files) {
+        CJC_NULLPTR_CHECK(file);
+        for (auto& import : file->imports) {
+            for (auto& anno : import->annotations) {
+                if (anno && anno->assumeThrows) {
+                    ChkThrowsClauseTypes(ctx, *anno->assumeThrows, "@AssumeThrows");
+                }
+            }
+        }
+    }
+    // The annotation only means anything on an import, where the trust relationship lives; it is
+    // silently inert anywhere else, so a misplaced one is rejected rather than ignored.
+    Walker(&pkg, [this](Ptr<Node> node) -> VisitAction {
+        if (node->astKind == ASTKind::IMPORT_SPEC) {
+            return VisitAction::SKIP_CHILDREN;
+        }
+        if (auto anno = DynamicCast<Annotation*>(node); anno && anno->kind == AnnotationKind::ASSUME_THROWS) {
+            diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_assume_throws_not_on_import, *anno);
+        }
+        return VisitAction::WALK_CHILDREN;
+    }).Walk();
+}
+
 void TypeChecker::TypeCheckerImpl::ChkThrowsClauseOfFuncBody(ASTContext& ctx, FuncBody& fb)
 {
     if (!fb.throwsClause) {
@@ -2134,6 +2164,7 @@ void TypeChecker::TypeCheckerImpl::PostTypeCheck(std::vector<Ptr<ASTContext>>& c
     // Post checking for legality of semantic.
     for (auto& ctx : contexts) {
         CheckOverflow(*ctx->curPackage);
+        ChkAssumeThrowsAnnotations(*ctx, *ctx->curPackage);
         CheckUnusedImportSpec(*ctx->curPackage);
         // Check duplicated super interfaces in class, interface when type arguments applied.
         CheckInstDupSuperInterfacesEntry(*ctx->curPackage);

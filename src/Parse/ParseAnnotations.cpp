@@ -151,10 +151,8 @@ void ParserImpl::ParseAnnotationArguments(Annotation& anno)
             builder.AddMainHintArguments("]");
             builder.AddHint(pos, "[");
             if (anno.kind == AnnotationKind::CUSTOM) {
-                builder.AddNote(
-                    "Argument syntax error. May be caused by missing macro definitions. "
-                    "If not, verify the annotation arguments are valid."
-                );
+                builder.AddNote("Argument syntax error. May be caused by missing macro definitions. "
+                                "If not, verify the annotation arguments are valid.");
             }
         }
     }
@@ -332,8 +330,7 @@ void ParserImpl::CheckObjCMirrorAnnotation(const Annotation& anno) const
     static const std::string OBJ_C_MIRROR_NAME = "@ObjCMirror";
     static const std::string OBJ_C_IMPL_NAME = "@ObjCImpl";
 
-    const auto& annotationName =
-        anno.kind == AnnotationKind::OBJ_C_MIRROR ? OBJ_C_MIRROR_NAME : OBJ_C_IMPL_NAME;
+    const auto& annotationName = anno.kind == AnnotationKind::OBJ_C_MIRROR ? OBJ_C_MIRROR_NAME : OBJ_C_IMPL_NAME;
     ffiParser->CheckZeroOrSingleStringLitArgAnnotation(anno, annotationName);
 }
 
@@ -367,6 +364,10 @@ OwnedPtr<Annotation> ParserImpl::ParseAnnotation()
             ParseWhenAnnotation(*annotation);
             break;
         }
+        case AnnotationKind::ASSUME_THROWS: {
+            ParseAssumeThrowsAnnotation(*annotation);
+            break;
+        }
         case AnnotationKind::DEPRECATED: {
             ParseAnnotationArguments(*annotation);
             CheckDeprecatedAnnotation(*annotation);
@@ -398,4 +399,45 @@ OwnedPtr<Annotation> ParserImpl::ParseAnnotation()
     annotation->end = lastToken.End();
 
     return annotation;
+}
+
+void ParserImpl::ParseAssumeThrowsAnnotation(Annotation& anno)
+{
+    // Checked exceptions (proposal 5.2.2): '@AssumeThrows[E1, E2]' on an import imposes the
+    // listed exception types on every call into the imported package; the bare '@AssumeThrows'
+    // assumes 'Exception'. Capability list aliases apply, so the entries are ordinary types.
+    auto clause = MakeOwned<ThrowsClause>();
+    ChainScope cs(*this, clause.get());
+    clause->begin = anno.begin;
+    clause->end = anno.end;
+    if (Seeing(TokenKind::LSQUARE)) {
+        clause->leftParenPos = lookahead.Begin();
+        anno.lsquarePos = lookahead.Begin();
+        Next();
+        while (true) {
+            while (Skip(TokenKind::NL)) {
+            }
+            if (!SeeingAny(GetTypeFirst()) && !SeeingContextualKeyword()) {
+                ParseDiagnoseRefactor(
+                    DiagKindRefactor::parse_expected_exception_type_after_throws, lookahead, ConvertToken(lookahead));
+                anno.EnableAttr(Attribute::IS_BROKEN);
+                break;
+            }
+            (void)clause->capTypes.emplace_back(ParseType());
+            if (!Skip(TokenKind::COMMA)) {
+                break;
+            }
+            clause->commaPosVector.emplace_back(lastToken.Begin());
+        }
+        if (Skip(TokenKind::RSQUARE)) {
+            anno.rsquarePos = lastToken.Begin();
+            clause->rightParenPos = lastToken.Begin();
+            clause->end = lastToken.End();
+        } else {
+            DiagExpectedRightDelimiter("[", clause->leftParenPos);
+            anno.EnableAttr(Attribute::IS_BROKEN);
+        }
+    }
+    // An empty list is the bare form: elaboration substitutes 'Exception'.
+    anno.assumeThrows = std::move(clause);
 }

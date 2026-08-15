@@ -61,12 +61,72 @@ using SupplyScope = std::vector<Ptr<Ty>>;
 /// Consulted when the lexical scope stack has no suitable supply; used for the every-constructor
 /// rule of instance field initializers. Null means no further supplies.
 using RootSupply = std::function<bool(Ptr<Ty>)>;
+/// Assumption imports (proposal 5.2.2), per file: the exception types imposed on every call into
+/// each named package. Keyed per file because that is where an import — and with it the consumer's
+/// trust claim about the dependency — lives.
+using AssumedThrows = std::unordered_map<std::string, std::vector<Ptr<Ty>>>;
+using AssumedThrowsByFile = std::unordered_map<Ptr<const File>, AssumedThrows>;
+
+/**
+ * Collects the assumption imports of a package (proposal 5.2.2).
+ *
+ * The bare form '@AssumeThrows' assumes 'Exception'. A tuple entry — written directly or reached
+ * through a type alias — is a capability list and is spliced in (proposal 6.1). The claim is
+ * recorded under every package name the import could denote, so it matches the callee's package
+ * whether the import names the package ('import legacy.db.*') or a declaration in it
+ * ('import legacy.db.query').
+ */
+AssumedThrowsByFile CollectAssumedThrows(const Package& pkg, const ImportManager& importManager)
+{
+    AssumedThrowsByFile byFile;
+    for (auto& file : pkg.files) {
+        if (!file) {
+            continue;
+        }
+        for (auto& import : file->imports) {
+            if (!import || import->IsImportMulti()) {
+                continue; // Desugared into single imports, which carry copies of the annotations.
+            }
+            for (auto& anno : import->annotations) {
+                if (!anno || !anno->assumeThrows) {
+                    continue;
+                }
+                std::vector<Ptr<Ty>> caps;
+                if (anno->assumeThrows->capTypes.empty()) {
+                    auto exception = importManager.GetCoreDecl<ClassDecl>(CLASS_EXCEPTION);
+                    if (exception && Ty::IsTyCorrect(exception->GetTy())) {
+                        caps.emplace_back(exception->GetTy());
+                    }
+                } else {
+                    caps = TypeCheckUtil::ExpandCapabilityList(anno->assumeThrows->capTypes);
+                }
+                if (caps.empty()) {
+                    continue;
+                }
+                for (auto& name : import->content.GetPossiblePackageNames()) {
+                    auto& entry = byFile[file.get()][name];
+                    for (auto cap : caps) {
+                        if (Ty::IsTyCorrect(cap) && !Utils::In(cap, entry)) {
+                            entry.emplace_back(cap);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return byFile;
+}
 
 class CapabilityChecker {
 public:
     CapabilityChecker(TypeManager& typeManager, const ImportManager& importManager,
-        Sema::CapabilityMissHandler& missHandler, const Sema::InferredCapabilities& inferred = {})
-        : typeManager(typeManager), importManager(importManager), missHandler(missHandler), inferred(inferred)
+        Sema::CapabilityMissHandler& missHandler, const AssumedThrowsByFile& assumed,
+        const Sema::InferredCapabilities& inferred = {})
+        : typeManager(typeManager),
+          importManager(importManager),
+          missHandler(missHandler),
+          assumed(assumed),
+          inferred(inferred)
     {
     }
 
@@ -219,6 +279,7 @@ private:
             return;
         }
         CJC_ASSERT(supplies.empty());
+        currentFile = fd.curFile;
         rootSupply = nullptr;
         // The enclosing class's captured capabilities are in scope throughout a member that has
         // a receiver to carry them (proposal 3.9). A static member, a static initializer and a
@@ -242,6 +303,7 @@ private:
             return;
         }
         CJC_ASSERT(supplies.empty());
+        currentFile = vd.curFile;
         rootSupply = std::move(root);
         // Only an INSTANCE field initializer runs with a receiver; a static one has no
         // capability scope at all (proposal 3.3, 3.9 rule 1). 'root' is non-null exactly for
@@ -459,12 +521,45 @@ private:
                 }
             }
         }
+        AddAssumedDemands(ce, demands);
         for (auto cap : demands) {
             if (Ty::IsTyCorrect(cap)) {
                 Demand(cap, ce, DescribeCallee(ce));
             }
         }
         DemandConstructedCaptures(ce);
+    }
+
+    /**
+     * Assumption imports (proposal 5.2.2): a call into an assumed package carries the assumed
+     * list on top of whatever the callee declares. Assumptions only ADD obligations relative to
+     * the read-as-empty default, so the two are unioned; the entries can already be present when
+     * the dependency is itself checked.
+     */
+    void AddAssumedDemands(const CallExpr& ce, std::vector<Ptr<Ty>>& demands) const
+    {
+        if (assumed.empty() || !ce.resolvedFunction) {
+            return;
+        }
+        // The claim belongs to the file that wrote the import. A node the desugar rebuilt may have
+        // lost its file, in which case the enclosing declaration's file is the same one.
+        Ptr<const File> file = currentFile;
+        if (ce.curFile) {
+            file = ce.curFile;
+        }
+        auto byFile = assumed.find(file);
+        if (byFile == assumed.end()) {
+            return;
+        }
+        auto entry = byFile->second.find(ce.resolvedFunction->fullPackageName);
+        if (entry == byFile->second.end()) {
+            return;
+        }
+        for (auto cap : entry->second) {
+            if (Ty::IsTyCorrect(cap) && !Utils::In(cap, demands)) {
+                demands.emplace_back(cap);
+            }
+        }
     }
 
     /// Substitution from the callee's own type parameters to this call site's type arguments:
@@ -560,12 +655,16 @@ private:
     TypeManager& typeManager;
     const ImportManager& importManager;
     Sema::CapabilityMissHandler& missHandler;
+    /// Assumption imports of the package being checked, indexed by the file they appear in.
+    const AssumedThrowsByFile& assumed;
     std::vector<SupplyScope> supplies;
     RootSupply rootSupply;
     // Lists inferred for declarations without an authoritative clause (proposal 6.3).
     const Sema::InferredCapabilities& inferred;
     // Set while collecting one declaration's residual demands: its own inferred list is not a supply.
     Ptr<const Decl> collectingFor{nullptr};
+    // File of the declaration being checked; the fallback for a call site that lost its own.
+    Ptr<const File> currentFile{nullptr};
 };
 /// Collects residual demands instead of diagnosing them (proposal 6.3, the miss-handler seam).
 class CollectingMissHandler : public Sema::CapabilityMissHandler {
@@ -610,6 +709,8 @@ public:
 
     Sema::InferredCapabilities Infer(Package& pkg)
     {
+        // Assumed requirements participate in inference like declared ones (proposal 5.2.2).
+        assumed = CollectAssumedThrows(pkg, importManager);
         CollectEligible(pkg);
         BuildCallGraph();
         for (auto& component : StronglyConnectedComponents()) {
@@ -839,7 +940,7 @@ private:
     void SolveComponent(const std::vector<size_t>& component)
     {
         CollectingMissHandler handler;
-        CapabilityChecker checker(typeManager, importManager, handler, inferred);
+        CapabilityChecker checker(typeManager, importManager, handler, assumed, inferred);
         bool changed = true;
         while (changed) {
             changed = false;
@@ -882,6 +983,8 @@ private:
     std::vector<std::vector<std::pair<Ptr<const CallExpr>, size_t>>> genericCalls;
     std::unordered_set<size_t> reportedPolymorphic;
     Sema::InferredCapabilities inferred;
+    /// Assumption imports of the package (proposal 5.2.2), shared with every checker below.
+    AssumedThrowsByFile assumed;
     std::vector<size_t> tarjanIndex;
     std::vector<size_t> tarjanLow;
     std::vector<bool> onStack;
@@ -938,6 +1041,7 @@ InferredCapabilities InferCapabilities(
 void CheckCapabilities(TypeManager& typeManager, const ImportManager& importManager, AST::Package& pkg,
     CapabilityMissHandler& missHandler, const InferredCapabilities& inferred)
 {
-    CapabilityChecker(typeManager, importManager, missHandler, inferred).CheckPackage(pkg);
+    auto assumed = CollectAssumedThrows(pkg, importManager);
+    CapabilityChecker(typeManager, importManager, missHandler, assumed, inferred).CheckPackage(pkg);
 }
 } // namespace Cangjie::Sema
