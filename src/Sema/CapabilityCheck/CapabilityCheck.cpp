@@ -713,6 +713,22 @@ private:
         if (TypeCheckUtil::IsUncheckedExceptionTy(typeManager, importManager, exceptionTy)) {
             return;
         }
+        // The Error hierarchy is fail-fast, never statically tracked (proposal 1.1's split,
+        // after Midori's Error Model): 'Error <: ToString' is a separate root, so a class type
+        // under NEITHER tracked root -- Exception (throws) nor Command (performs) -- never
+        // demands. Found by the stdlib migration: std.core's own OutOfMemoryError throws warned
+        // without this. The Command test is essential, not defensive: commands are classes
+        // outside the Exception root too, and exempting them here silenced every effect demand
+        // (caught by the performs negative tests). Type parameters keep demanding: a generic
+        // entry only instantiates where its clause was legal.
+        if (exceptionTy->IsClass()) {
+            auto exception = importManager.GetCoreDecl<ClassDecl>(CLASS_EXCEPTION);
+            bool underException = exception && Ty::IsTyCorrect(exception->GetTy()) &&
+                typeManager.IsSubtype(exceptionTy, exception->GetTy());
+            if (!underException && !IsCommandTy(typeManager, importManager, exceptionTy)) {
+                return;
+            }
+        }
         // Scopes are searched from the innermost enclosing one outwards; within one scope the
         // first suitable entry in textual order supplies the capability (proposal 3.3).
         for (auto scope = supplies.rbegin(); scope != supplies.rend(); ++scope) {
