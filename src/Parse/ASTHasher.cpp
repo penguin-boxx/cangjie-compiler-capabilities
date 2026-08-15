@@ -336,8 +336,8 @@ struct ASTHasherImpl {
     template <int whatTypeToHash> void HashFuncBody(const FuncBody& funcBody)
     {
         HashNode<whatTypeToHash>(funcBody);
-        SUPERHash<whatTypeToHash>(
-            funcBody.paramLists, funcBody.retType, funcBody.throwsClause, funcBody.body, funcBody.generic);
+        SUPERHash<whatTypeToHash>(funcBody.paramLists, funcBody.retType, funcBody.performsClause, funcBody.throwsClause,
+            funcBody.body, funcBody.generic);
     }
 
     template <int whatTypeToHash> void HashThrowsClause(const ThrowsClause& tc)
@@ -658,7 +658,7 @@ struct ASTHasherImpl {
     template <int whatTypeToHash> void HashFuncType(const FuncType& ft)
     {
         HashType<whatTypeToHash>(ft);
-        SUPERHash<whatTypeToHash>(ft.paramTypes, ft.throwsClause, ft.retType, ft.isC);
+        SUPERHash<whatTypeToHash>(ft.paramTypes, ft.performsClause, ft.throwsClause, ft.retType, ft.isC);
     }
     template <int whatTypeToHash> void HashOptionType(const OptionType& ot)
     {
@@ -1095,7 +1095,10 @@ struct ASTHasherImpl {
         SUPERHash<NON_POSITION>(decl.generic);
         if (auto func = DynamicCast<FuncDecl*>(&decl)) {
             SUPERHash<NON_POSITION>(func->funcBody->paramLists[0]->params);
-            // The checked-exception `throws` clause (experimental) is part of the API surface.
+            // The capability clauses (experimental) are part of the API surface: a 'performs'
+            // or 'throws' change alters what every call site must supply (review finding F1 --
+            // without this, an incremental build never re-checks the callers).
+            SUPERHash<NON_POSITION>(func->funcBody->performsClause);
             SUPERHash<NON_POSITION>(func->funcBody->throwsClause);
             if (func->funcBody->retType) {
                 SUPERHash<NON_POSITION>(func->funcBody->retType);
@@ -1205,6 +1208,16 @@ ASTHasher::hash_type ASTHasher::SigHash(const Decl& decl)
     }
     if (auto typeAlias = DynamicCast<TypeAliasDecl*>(&decl)) {
         a.HashTypeAlias(*typeAlias);
+    }
+    // The checked-exception capability clauses (experimental) are part of the declaration's
+    // call-site contract: a change alters what every caller must supply, so it must spread to
+    // dependents exactly like a signature change. HashMemberSignature alone is not enough --
+    // it feeds the virtual/API hashes, while THIS hash fills DeclHash.sig, which is what the
+    // pollution analysis spreads on (a clause-only change otherwise classifies as 'body' and
+    // stops at the declaration itself).
+    if (auto func = DynamicCast<FuncDecl*>(&decl); func && func->funcBody) {
+        a.SUPERHash<NON_POSITION>(func->funcBody->performsClause);
+        a.SUPERHash<NON_POSITION>(func->funcBody->throwsClause);
     }
     if (auto type = DynamicCast<InheritableDecl*>(&decl); type && type->astKind != ASTKind::EXTEND_DECL) {
         for (auto& parent : SortParentTypes(*type)) {

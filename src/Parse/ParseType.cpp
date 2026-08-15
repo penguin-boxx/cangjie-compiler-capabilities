@@ -224,6 +224,16 @@ OwnedPtr<AST::Type> ParserImpl::ParseTypeWithParen()
         if (SeeingChexcClause("throws")) {
             throwsClause = ParseThrowsClause(false);
         }
+        // Wrong order (proposal 9.1 rule 8): name the real problem instead of tripping over the
+        // missing '->' below; parsed anyway so the type still carries its requirements.
+        if (SeeingChexcClause("performs")) {
+            ParseDiagnoseRefactor(DiagKindRefactor::parse_performs_clause_after_throws, lookahead.Begin());
+            if (performsClause == nullptr) {
+                performsClause = ParseThrowsClause(false);
+            } else {
+                (void)ParseThrowsClause(false);
+            }
+        }
         if (!Skip(TokenKind::ARROW)) {
             ParseDiagnoseRefactor(DiagKindRefactor::parse_expected_arrow_after_throws_clause, lookahead.Begin());
             auto invalid = MakeOwned<InvalidType>(lookahead.Begin());

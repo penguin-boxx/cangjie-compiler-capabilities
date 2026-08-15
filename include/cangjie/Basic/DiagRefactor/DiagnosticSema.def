@@ -429,6 +429,12 @@ ERROR(sema_chexc_missing_capability,
 WARNING(sema_chexc_missing_capability_warn, CHEXC,
     "Cannot find a capability for '%s' (of type 'CanThrow<%s>') in the current scope",
     "required by %s")
+ERROR(sema_chexc_missing_handler_capability,
+    "Cannot find a capability for '%s' (of type 'Handler<%s>') in the current scope",
+    "required by %s")
+WARNING(sema_chexc_missing_handler_capability_warn, CHEXC,
+    "Cannot find a capability for '%s' (of type 'Handler<%s>') in the current scope",
+    "required by %s")
 
 ERROR(sema_chexc_performs_type_not_command, "type '%s' in 'performs' clause is not a subtype of 'Command'",
     "this type must be a subtype of 'Command'")
