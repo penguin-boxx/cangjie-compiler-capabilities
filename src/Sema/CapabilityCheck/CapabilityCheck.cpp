@@ -161,11 +161,6 @@ private:
 
     void CheckMembers(Decl& decl)
     {
-        // A capturing class or struct stores the listed capabilities at construction, so its own
-        // clause supplies them to every member body (proposal 3.9 rules 3 and 4; until Modal
-        // CangJie lands, every constructor captures and every body is covered). Rule 5: a
-        // subclass does not see its superclass's captures — only the class's own clause counts.
-        classCaptures = TypeCheckUtil::GetDeclCapturesCapTys(decl);
         // An instance field initializer has no scope of its own: its demands must be satisfiable
         // in the capability scope of EVERY constructor (proposal 3.3). With no explicit
         // constructor the implicit one supplies nothing.
@@ -216,7 +211,6 @@ private:
                     break;
             }
         }
-        classCaptures.clear();
     }
 
     void CheckCallable(FuncDecl& fd)
@@ -226,13 +220,19 @@ private:
         }
         CJC_ASSERT(supplies.empty());
         rootSupply = nullptr;
-        // The enclosing class's captured capabilities, if any, are in scope throughout the
-        // member (proposal 3.9); the FUNC_BODY visit then pushes the declaration's own clause
-        // scope. The walker visits parameter default values before the body, matching "as if it
-        // appeared at the beginning of the body" (proposal 3.3).
-        PushClassCaptures();
+        // The enclosing class's captured capabilities are in scope throughout a member that has
+        // a receiver to carry them (proposal 3.9). A static member, a static initializer and a
+        // finalizer have none, and proposal 3.9 rule 1 forbids checked throws there. Derived
+        // from the declaration's owner rather than from checker state, so inference — which
+        // checks declarations one by one — sees the same supplies as the reporting pass.
+        bool hasReceiver = !fd.TestAttr(Attribute::STATIC) && !fd.IsFinalizer();
+        auto captures = hasReceiver ? OwnerCaptures(fd) : SupplyScope{};
+        PushCaptures(captures);
+        // The FUNC_BODY visit then pushes the declaration's own clause scope. The walker visits
+        // parameter default values before the body, matching "as if it appeared at the
+        // beginning of the body" (proposal 3.3).
         WalkScoped(fd.funcBody.get());
-        PopClassCaptures();
+        PopCaptures(captures);
         CJC_ASSERT(supplies.empty());
     }
 
@@ -243,23 +243,34 @@ private:
         }
         CJC_ASSERT(supplies.empty());
         rootSupply = std::move(root);
-        PushClassCaptures();
+        // Only an INSTANCE field initializer runs with a receiver; a static one has no
+        // capability scope at all (proposal 3.3, 3.9 rule 1). 'root' is non-null exactly for
+        // instance fields.
+        auto captures = rootSupply ? OwnerCaptures(vd) : SupplyScope{};
+        PushCaptures(captures);
         WalkScoped(vd.initializer.get());
-        PopClassCaptures();
+        PopCaptures(captures);
         rootSupply = nullptr;
         CJC_ASSERT(supplies.empty());
     }
 
-    void PushClassCaptures()
+    /// The 'captures' list of the declaration's own class or struct — never an inherited one
+    /// (proposal 3.9 rule 5).
+    SupplyScope OwnerCaptures(const Decl& decl) const
     {
-        if (!classCaptures.empty()) {
-            supplies.emplace_back(classCaptures);
+        return decl.outerDecl ? TypeCheckUtil::GetDeclCapturesCapTys(*decl.outerDecl) : SupplyScope{};
+    }
+
+    void PushCaptures(const SupplyScope& captures)
+    {
+        if (!captures.empty()) {
+            supplies.emplace_back(captures);
         }
     }
 
-    void PopClassCaptures()
+    void PopCaptures(const SupplyScope& captures)
     {
-        if (!classCaptures.empty()) {
+        if (!captures.empty()) {
             supplies.pop_back();
         }
     }
@@ -510,8 +521,6 @@ private:
     Sema::CapabilityMissHandler& missHandler;
     std::vector<SupplyScope> supplies;
     RootSupply rootSupply;
-    // Capabilities captured by the class or struct whose members are being checked (proposal 3.9).
-    SupplyScope classCaptures;
     // Lists inferred for declarations without an authoritative clause (proposal 6.3).
     const Sema::InferredCapabilities& inferred;
     // Set while collecting one declaration's residual demands: its own inferred list is not a supply.
@@ -563,6 +572,7 @@ public:
         CollectEligible(pkg);
         BuildCallGraph();
         for (auto& component : StronglyConnectedComponents()) {
+            CheckPolymorphicRecursion(component);
             SolveComponent(component);
         }
         return std::move(inferred);
@@ -632,14 +642,20 @@ private:
     void BuildCallGraph()
     {
         callees.resize(order.size());
+        genericCalls.resize(order.size());
         for (size_t i = 0; i < order.size(); ++i) {
             auto caller = order[i];
             Walker(caller->funcBody.get(), [this, i](Ptr<Node> node) {
                 if (auto ce = DynamicCast<CallExpr*>(node.get()); ce && ce->resolvedFunction) {
                     auto found = index.find(ce->resolvedFunction);
-                    if (found != index.end() && found->second != i) {
-                        callees[i].emplace(found->second);
-                        CheckPolymorphicRecursion(*ce, i, found->second);
+                    if (found != index.end()) {
+                        if (found->second != i) {
+                            callees[i].emplace(found->second);
+                        }
+                        // Self-calls are not graph edges (an SCC of one is still a cycle), but
+                        // they are exactly where polymorphic recursion shows up, so record the
+                        // call for the post-SCC check below.
+                        genericCalls[i].emplace_back(Ptr<const CallExpr>(ce), found->second);
                     }
                 }
                 return VisitAction::WALK_CHILDREN;
@@ -650,37 +666,62 @@ private:
     /**
      * Proposal 6.3.4: a cycle that re-enters a member at a growing generic instantiation has no
      * finite candidate universe, so inference is rejected and explicit clauses are required.
-     * Detected by an occurs check on the call's type arguments.
+     *
+     * Only calls that stay inside the cycle can grow a type argument on every turn, so the check
+     * runs per strongly connected component — including a component's self-calls, which are the
+     * canonical case ('f<T>' calling 'f<Box<T>>') and are not graph edges. A call that merely
+     * passes a wrapped type argument to a callee outside the cycle terminates and is fine.
      */
-    void CheckPolymorphicRecursion(const CallExpr& ce, size_t caller, size_t callee)
+    void CheckPolymorphicRecursion(const std::vector<size_t>& component)
     {
-        auto callerGeneric = order[caller]->GetGeneric();
-        if (!callerGeneric || reportedPolymorphic.count(caller) > 0) {
-            return;
+        std::unordered_set<size_t> inCycle(component.begin(), component.end());
+        bool isCycle = component.size() > 1;
+        for (auto i : component) {
+            auto caller = order[i];
+            auto callerGeneric = caller->GetGeneric();
+            if (!callerGeneric) {
+                continue;
+            }
+            for (auto& [ce, callee] : genericCalls[i]) {
+                bool selfCall = callee == i;
+                if (!selfCall && (!isCycle || inCycle.count(callee) == 0)) {
+                    continue; // Leaves the cycle: the instantiation cannot keep growing.
+                }
+                if (ReportGrowingInstantiation(*ce, i, *callerGeneric)) {
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Reports the first type argument that properly contains one of the caller's own type
+    /// parameters, i.e. one that is strictly larger on each turn of the cycle.
+    bool ReportGrowingInstantiation(const CallExpr& ce, size_t caller, const Generic& callerGeneric)
+    {
+        if (reportedPolymorphic.count(caller) > 0) {
+            return false;
         }
         auto nre = DynamicCast<NameReferenceExpr*>(ce.baseFunc.get());
         if (!nre) {
-            return;
+            return false;
         }
         for (auto typeArg : nre->instTys) {
             if (!Ty::IsTyCorrect(typeArg) || typeArg->IsGeneric()) {
                 continue;
             }
-            for (auto& typeParam : callerGeneric->typeParameters) {
+            for (auto& typeParam : callerGeneric.typeParameters) {
                 if (!typeParam || !Ty::IsTyCorrect(typeParam->GetTy())) {
                     continue;
                 }
-                // A type argument that properly contains the caller's own type parameter grows
-                // on every turn of the cycle.
                 if (typeArg != typeParam->GetTy() && ContainsTy(typeArg, typeParam->GetTy())) {
-                    (void)callee;
                     diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_polymorphic_recursion, ce,
                         order[caller]->identifier.Val(), Ty::ToString(typeArg));
                     reportedPolymorphic.emplace(caller);
-                    return;
+                    return true;
                 }
             }
         }
+        return false;
     }
 
     static bool ContainsTy(Ptr<Ty> haystack, Ptr<Ty> needle)
@@ -786,6 +827,9 @@ private:
     std::vector<Ptr<FuncDecl>> order;
     std::unordered_map<Ptr<const Decl>, size_t> index;
     std::vector<std::set<size_t>> callees;
+    /// Calls from an eligible declaration to an eligible one, kept for the polymorphic-recursion
+    /// check, which is meaningful only once the cycles are known.
+    std::vector<std::vector<std::pair<Ptr<const CallExpr>, size_t>>> genericCalls;
     std::unordered_set<size_t> reportedPolymorphic;
     Sema::InferredCapabilities inferred;
     std::vector<size_t> tarjanIndex;

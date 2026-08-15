@@ -213,7 +213,7 @@ OwnedPtr<AST::Type> ParserImpl::ParseTypeWithParen()
     }
     // Checked exceptions (experimental): a contextual `throws` after ')' also selects the
     // function-type path, e.g. `(A) throws (E1, E2) -> R`. The clause must be followed by '->'.
-    if (Seeing(TokenKind::THROWS)) {
+    if (SeeingChexcClause("throws")) {
         auto throwsClause = ParseThrowsClause(false);
         if (!Skip(TokenKind::ARROW)) {
             ParseDiagnoseRefactor(DiagKindRefactor::parse_expected_arrow_after_throws_clause, lookahead.Begin());
@@ -272,7 +272,7 @@ OwnedPtr<FuncType> ParserImpl::ParseFuncType(
 
 OwnedPtr<AST::ThrowsClause> ParserImpl::ParseThrowsClause(bool isDeclClause)
 {
-    CJC_ASSERT(Seeing(TokenKind::THROWS));
+    CJC_ASSERT(SeeingChexcClause("throws"));
     auto clause = MakeOwned<ThrowsClause>();
     ChainScope cs(*this, clause.get());
     Next(); // Consume `throws`.
@@ -357,7 +357,7 @@ OwnedPtr<AST::ThrowsClause> ParserImpl::ParseCapturesClause()
     // Checked exceptions (proposal 3.9): the `captures` clause of a class or struct header.
     // Reuses the ThrowsClause node shape; the grammar is the bare comma-separated list only:
     // `captures E1, E2` (no parenthesized or ellipsis forms).
-    CJC_ASSERT(Seeing(TokenKind::CAPTURES));
+    CJC_ASSERT(SeeingChexcClause("captures"));
     auto clause = MakeOwned<ThrowsClause>();
     ChainScope cs(*this, clause.get());
     Next(); // Consume `captures`.
