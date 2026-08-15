@@ -213,8 +213,17 @@ OwnedPtr<AST::Type> ParserImpl::ParseTypeWithParen()
     }
     // Checked exceptions (experimental): a contextual `throws` after ')' also selects the
     // function-type path, e.g. `(A) throws (E1, E2) -> R`. The clause must be followed by '->'.
-    if (SeeingChexcClause("throws")) {
-        auto throwsClause = ParseThrowsClause(false);
+    // Effects (proposal 8.2): 'performs' does the same and precedes 'throws' (9.1 rule 8), so
+    // `(A) performs H throws E -> R` stacks both.
+    if (SeeingChexcClause("performs") || SeeingChexcClause("throws")) {
+        OwnedPtr<ThrowsClause> performsClause;
+        OwnedPtr<ThrowsClause> throwsClause;
+        if (SeeingChexcClause("performs")) {
+            performsClause = ParseThrowsClause(false);
+        }
+        if (SeeingChexcClause("throws")) {
+            throwsClause = ParseThrowsClause(false);
+        }
         if (!Skip(TokenKind::ARROW)) {
             ParseDiagnoseRefactor(DiagKindRefactor::parse_expected_arrow_after_throws_clause, lookahead.Begin());
             auto invalid = MakeOwned<InvalidType>(lookahead.Begin());
@@ -222,6 +231,7 @@ OwnedPtr<AST::Type> ParserImpl::ParseTypeWithParen()
             return invalid;
         }
         auto ft = ParseFuncType(std::move(types), lParenPos, rParenPos);
+        ft->performsClause = std::move(performsClause);
         ft->throwsClause = std::move(throwsClause);
         return ft;
     }
