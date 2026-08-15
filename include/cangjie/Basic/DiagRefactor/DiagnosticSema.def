@@ -430,6 +430,11 @@ WARNING(sema_chexc_missing_capability_warn, CHEXC,
     "Cannot find a capability for '%s' (of type 'CanThrow<%s>') in the current scope",
     "required by %s")
 
+ERROR(sema_chexc_performs_type_not_command, "type '%s' in 'performs' clause is not a subtype of 'Command'",
+    "this type must be a subtype of 'Command'")
+ERROR(sema_chexc_performs_in_main, "'main' cannot declare a 'performs' clause",
+    "there is no default effect handler, unlike the default exception handler")
+
 ERROR(sema_chexc_assume_throws_not_on_import, "'@AssumeThrows' is only allowed on an 'import'",
     "an assumption applies to a whole imported package")
 

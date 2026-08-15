@@ -415,6 +415,9 @@ OwnedPtr<FuncType> ASTCloner::CloneFuncType(const FuncType& node, const VisitFun
     for (auto& paramType : node.paramTypes) {
         ret->paramTypes.emplace_back(CloneType(paramType.get(), visitor));
     }
+    if (node.performsClause) {
+        ret->performsClause = CloneThrowsClause(*node.performsClause, visitor);
+    }
     if (node.throwsClause) {
         ret->throwsClause = CloneThrowsClause(*node.throwsClause, visitor);
     }
@@ -1404,6 +1407,9 @@ OwnedPtr<FuncBody> ASTCloner::CloneFuncBody(const FuncBody& fb, const VisitFunc&
     ret->doubleArrowPos = fb.doubleArrowPos;
     ret->colonPos = fb.colonPos;
     ret->retType = CloneType(fb.retType.get(), visitor);
+    if (fb.performsClause) {
+        ret->performsClause = CloneThrowsClause(*fb.performsClause, visitor);
+    }
     if (fb.throwsClause) {
         ret->throwsClause = CloneThrowsClause(*fb.throwsClause, visitor);
     }

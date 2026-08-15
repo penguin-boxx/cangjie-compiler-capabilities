@@ -1311,6 +1311,8 @@ private:
     void ChkThrowsClauseTypes(ASTContext& ctx, AST::ThrowsClause& clause, const std::string& clauseKeyword = "throws");
     /** Checked exceptions: diagnose 'throws' clauses on foreign/C functions and CFunc types. */
     void ChkThrowsClauseOfFuncBody(ASTContext& ctx, AST::FuncBody& fb);
+    /// Effects (proposal 8.2): validate that every 'performs' entry is a 'Command' subtype.
+    void ChkPerformsClauseTypes(ASTContext& ctx, AST::ThrowsClause& clause);
     /// Checked exceptions (proposal 5.2.2): validate the '@AssumeThrows' annotations of a package.
     void ChkAssumeThrowsAnnotations(ASTContext& ctx, AST::Package& pkg);
     /**

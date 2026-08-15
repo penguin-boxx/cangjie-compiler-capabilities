@@ -191,6 +191,9 @@ VisitAction WalkerT<NodeT>::Walk(Ptr<NodeT> curNode) const
                 if (Walk(fb->retType.get()) == VisitAction::STOP_NOW) {
                     return VisitAction::STOP_NOW;
                 }
+                if (Walk(fb->performsClause.get()) == VisitAction::STOP_NOW) {
+                    return VisitAction::STOP_NOW;
+                }
                 if (Walk(fb->throwsClause.get()) == VisitAction::STOP_NOW) {
                     return VisitAction::STOP_NOW;
                 }
@@ -984,6 +987,9 @@ VisitAction WalkerT<NodeT>::Walk(Ptr<NodeT> curNode) const
                     if (Walk(paramType.get()) == VisitAction::STOP_NOW) {
                         return VisitAction::STOP_NOW;
                     }
+                }
+                if (Walk(ft->performsClause.get()) == VisitAction::STOP_NOW) {
+                    return VisitAction::STOP_NOW;
                 }
                 if (Walk(ft->throwsClause.get()) == VisitAction::STOP_NOW) {
                     return VisitAction::STOP_NOW;

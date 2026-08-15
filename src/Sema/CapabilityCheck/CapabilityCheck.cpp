@@ -117,6 +117,31 @@ AssumedThrowsByFile CollectAssumedThrows(const Package& pkg, const ImportManager
     return byFile;
 }
 
+/// Effects (proposal 8.2): an entry is an effect requirement iff it is a 'Command' subtype, and
+/// an exception requirement iff it is an 'Exception' subtype. The two roots are disjoint, which is
+/// what lets one capability list carry both kinds (decision D17).
+bool IsCommandTy(TypeManager& typeManager, const ImportManager& importManager, Ptr<Ty> ty)
+{
+    if (!Ty::IsTyCorrect(ty)) {
+        return false;
+    }
+    auto command = importManager.GetImportedDecl(EFFECT_PACKAGE_NAME, CLASS_COMMAND);
+    if (!command) {
+        return false; // No effect handlers in this build: nothing is a command.
+    }
+    // Compare DECLARATIONS, not types: 'Command' is generic, so a subtype test against the
+    // uninstantiated 'Command<T>' fails for a concrete 'C <: Command<Int64>'.
+    if (Ty::GetDeclPtrOfTy(ty) == command) {
+        return true;
+    }
+    for (auto superTy : typeManager.GetAllSuperTys(*ty)) {
+        if (Ty::GetDeclPtrOfTy(superTy) == command) {
+            return true;
+        }
+    }
+    return false;
+}
+
 class CapabilityChecker {
 public:
     CapabilityChecker(TypeManager& typeManager, const ImportManager& importManager,
@@ -395,6 +420,15 @@ private:
                 }
                 return VisitAction::WALK_CHILDREN;
             }
+            case ASTKind::PERFORM_EXPR: {
+                // Effects (proposal 8.2): 'perform c' requires a handler capability for the
+                // command's own type, exactly as 'throw e' requires one for the exception's.
+                auto& pe = StaticCast<PerformExpr&>(*node);
+                if (pe.expr && Ty::IsTyCorrect(pe.expr->GetTy())) {
+                    Demand(pe.expr->GetTy(), pe, "this 'perform' expression");
+                }
+                return VisitAction::WALK_CHILDREN;
+            }
             case ASTKind::CALL_EXPR:
                 HandleCall(StaticCast<CallExpr&>(*node));
                 return VisitAction::WALK_CHILDREN;
@@ -420,20 +454,41 @@ private:
 
     void HandleTry(TryExpr& te)
     {
-        // Effect-handler clauses ('handle') introduce no capabilities and are not checked
-        // (author ruling); 'te.handlers', 'te.tryLambda' and 'te.finallyLambda' are ignored.
-        supplies.emplace_back(CollectCatchCapTys(te));
+        // A 'handle' clause supplies a handler capability for each command type it lists
+        // (proposal 8.2), over the same region a 'catch' covers. 'te.tryLambda' and
+        // 'te.finallyLambda' are the desugared forms of the blocks walked below, so they are
+        // deliberately not walked again.
+        auto caps = CollectCatchCapTys(te);
+        for (auto handlerCap : CollectHandlerCapTys(te)) {
+            caps.emplace_back(handlerCap);
+        }
+        supplies.emplace_back(std::move(caps));
         for (auto& resource : te.resourceSpec) {
             // Resource initializers of try-with-resources are inside the try's scope: their
             // exceptions are caught by the same clauses (proposal 3.3).
             WalkScoped(resource.get());
         }
-        WalkScoped(te.tryBlock.get());
+        // With 'handle' clauses present the parser rebuilds the try block as a lambda, and THAT
+        // copy is the one sema types; the original block keeps untyped nodes, so walking it would
+        // silently raise no demands at all. Walk whichever copy carries the types.
+        if (te.tryLambda) {
+            WalkScoped(te.tryLambda.get());
+        } else {
+            WalkScoped(te.tryBlock.get());
+        }
         supplies.pop_back();
         // A 'catch' block is not inside its try's capability scope: rethrowing a caught checked
-        // exception requires a capability from the enclosing scopes. Same for 'finally'.
+        // exception requires a capability from the enclosing scopes. Same for 'finally' and for
+        // a 'handle' body, which runs where the handler was installed.
         for (auto& catchBlock : te.catchBlocks) {
             WalkScoped(catchBlock.get());
+        }
+        for (auto& handler : te.handlers) {
+            if (handler.desugaredLambda) {
+                WalkScoped(handler.desugaredLambda.get());
+            } else {
+                WalkScoped(handler.block.get());
+            }
         }
         WalkScoped(te.finallyBlock.get());
     }
@@ -457,6 +512,25 @@ private:
                     if (type && Ty::IsTyCorrect(type->GetTy())) {
                         caps.emplace_back(type->GetTy());
                     }
+                }
+            }
+        }
+        return caps;
+    }
+
+    /// The command types listed by the 'handle' clauses of @p te (proposal 8.2). A pattern
+    /// 'c: C1 | C2' introduces two, mirroring how a catch pattern introduces one per exception.
+    SupplyScope CollectHandlerCapTys(const TryExpr& te) const
+    {
+        SupplyScope caps;
+        for (auto& handler : te.handlers) {
+            auto ctp = DynamicCast<CommandTypePattern*>(handler.commandPattern.get());
+            if (ctp == nullptr) {
+                continue;
+            }
+            for (auto& type : ctp->types) {
+                if (type && Ty::IsTyCorrect(type->GetTy())) {
+                    caps.emplace_back(type->GetTy());
                 }
             }
         }
@@ -669,11 +743,22 @@ private:
 /// Collects residual demands instead of diagnosing them (proposal 6.3, the miss-handler seam).
 class CollectingMissHandler : public Sema::CapabilityMissHandler {
 public:
+    CollectingMissHandler(TypeManager& typeManager, const ImportManager& importManager)
+        : typeManager(typeManager), importManager(importManager)
+    {
+    }
     void HandleMiss(const Sema::CapabilityDemand& demand) override
     {
-        if (Ty::IsTyCorrect(demand.exceptionTy)) {
-            collected.emplace_back(demand.exceptionTy);
+        if (!Ty::IsTyCorrect(demand.exceptionTy)) {
+            return;
         }
+        // Effect requirements are never inferred (proposal 9.1, policy table): they are semantic
+        // contract and, under evidence passing, ABI. Dropping them here leaves them undischarged,
+        // so the reporting pass diagnoses them instead of silently widening the declaration.
+        if (IsCommandTy(typeManager, importManager, demand.exceptionTy)) {
+            return;
+        }
+        collected.emplace_back(demand.exceptionTy);
     }
     std::vector<Ptr<Ty>> Take()
     {
@@ -683,6 +768,8 @@ public:
     }
 
 private:
+    TypeManager& typeManager;
+    const ImportManager& importManager;
     std::vector<Ptr<Ty>> collected;
 };
 
@@ -939,7 +1026,7 @@ private:
     /// Kleene iteration to the least fixed point. Members outside a cycle stabilize in one pass.
     void SolveComponent(const std::vector<size_t>& component)
     {
-        CollectingMissHandler handler;
+        CollectingMissHandler handler(typeManager, importManager);
         CapabilityChecker checker(typeManager, importManager, handler, assumed, inferred);
         bool changed = true;
         while (changed) {

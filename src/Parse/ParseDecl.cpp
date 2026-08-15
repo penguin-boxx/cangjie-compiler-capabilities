@@ -2284,6 +2284,10 @@ void ParserImpl::ParsePropMemberBody(const ScopeKind& scopeKind, FuncBody& fb)
     }
     // Checked exceptions (experimental): property accessors may carry a `throws` clause,
     // e.g. `get() throws GException { ... }` (proposal rule: clauses on all callables).
+    // Effects (proposal 8.2, 9.1 rule 8): 'performs' precedes 'throws'.
+    if (SeeingChexcClause("performs")) {
+        fb.performsClause = ParseThrowsClause(true);
+    }
     if (SeeingChexcClause("throws")) {
         fb.throwsClause = ParseThrowsClause(true);
     }
@@ -2335,19 +2339,11 @@ OwnedPtr<FuncBody> ParserImpl::ParseFuncBody(ScopeKind scopeKind)
         }
     }
     // Checked exceptions (experimental): a `throws` clause and generic constraints may appear
-    // in either order after the return type (proposal §3.2 rule 4).
-    if (SeeingChexcClause("throws")) {
-        ret->throwsClause = ParseThrowsClause(true);
-    }
+    // in either order after the return type (proposal §3.2 rule 4). Effects (proposal 8.2) add a
+    // 'performs' clause, which precedes 'throws' (proposal 9.1 rule 8).
+    ParseCapabilityClauses(*ret);
     ParseFuncGenericConstraints(*ret);
-    if (SeeingChexcClause("throws")) {
-        if (ret->throwsClause) {
-            ParseDiagnoseRefactor(DiagKindRefactor::parse_duplicate_throws_clause, lookahead.Begin());
-            (void)ParseThrowsClause(true); // Parse and drop the duplicate to recover.
-        } else {
-            ret->throwsClause = ParseThrowsClause(true);
-        }
-    }
+    ParseCapabilityClauses(*ret);
     if (Seeing(TokenKind::LCURL)) {
         ret->body = ParseBlock(ScopeKind::FUNC_BODY);
         ret->end = ret->body->end;
@@ -2380,6 +2376,32 @@ void ParserImpl::ParseFuncParameters(const ScopeKind& scopeKind, FuncBody& fb)
         ParseDiagnoseRefactor(scopeKind == ScopeKind::MAIN_BODY ? DiagKindRefactor::parse_expected_left_paren :
             DiagKindRefactor::parse_expected_lt_paren, lookahead, ConvertToken(lookahead));
         fb.EnableAttr(Attribute::HAS_BROKEN);
+    }
+}
+
+/**
+ * Checked exceptions and effects: parse the capability clauses of a function body, in the fixed
+ * order 'performs' then 'throws' (proposal 9.1 rule 8). Called on both sides of the generic
+ * constraints, which may precede or follow the clauses (proposal 3.2 rule 4); a clause seen twice
+ * is diagnosed and dropped so the rest of the declaration still parses.
+ */
+void ParserImpl::ParseCapabilityClauses(FuncBody& fb)
+{
+    if (SeeingChexcClause("performs")) {
+        if (fb.performsClause) {
+            ParseDiagnoseRefactor(DiagKindRefactor::parse_duplicate_throws_clause, lookahead.Begin());
+            (void)ParseThrowsClause(true);
+        } else {
+            fb.performsClause = ParseThrowsClause(true);
+        }
+    }
+    if (SeeingChexcClause("throws")) {
+        if (fb.throwsClause) {
+            ParseDiagnoseRefactor(DiagKindRefactor::parse_duplicate_throws_clause, lookahead.Begin());
+            (void)ParseThrowsClause(true);
+        } else {
+            fb.throwsClause = ParseThrowsClause(true);
+        }
     }
 }
 

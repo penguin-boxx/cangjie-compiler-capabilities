@@ -286,8 +286,48 @@ void TypeChecker::TypeCheckerImpl::ChkAssumeThrowsAnnotations(ASTContext& ctx, P
     }).Walk();
 }
 
+void TypeChecker::TypeCheckerImpl::ChkPerformsClauseTypes(ASTContext& ctx, ThrowsClause& clause)
+{
+    // Effects (proposal 8.2): a 'performs' entry names an effect command, so it must be a subtype
+    // of 'Command'. Validated separately from 'throws', whose entries must be 'Exception'
+    // subtypes: the disjointness of the two roots is what keeps the two kinds of capability from
+    // ever discharging one another.
+    auto command = importManager.GetImportedDecl(EFFECT_PACKAGE_NAME, CLASS_COMMAND);
+    for (auto& capType : clause.capTypes) {
+        CJC_NULLPTR_CHECK(capType);
+        CheckReferenceTypeLegality(ctx, *capType);
+        if (!Ty::IsTyCorrect(capType->GetTy())) {
+            continue;
+        }
+        std::vector<OwnedPtr<Type>> single;
+        single.emplace_back(std::move(capType));
+        auto elements = TypeCheckUtil::ExpandCapabilityList(single);
+        capType = std::move(single.front());
+        bool expanded = elements.size() != 1 || elements.front() != capType->GetTy();
+        for (auto capTy : elements) {
+            if (!Ty::IsTyCorrect(capTy)) {
+                continue;
+            }
+            auto entryName = expanded ? Ty::ToString(capTy) : capType->ToString();
+            bool isCommand = capTy->IsGeneric() ||
+                (command && Ty::IsTyCorrect(command->GetTy()) && !promotion.Promote(*capTy, *command->GetTy()).empty());
+            if (!isCommand) {
+                diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_performs_type_not_command, *capType, entryName);
+            }
+        }
+    }
+}
+
 void TypeChecker::TypeCheckerImpl::ChkThrowsClauseOfFuncBody(ASTContext& ctx, FuncBody& fb)
 {
+    if (fb.performsClause) {
+        // No default effect handler exists, so 'main' cannot carry effect requirements the way it
+        // may carry exception ones (proposal 9.1, policy table).
+        if (fb.funcDecl && fb.funcDecl->identifier == MAIN_INVOKE) {
+            diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_performs_in_main, *fb.performsClause);
+        }
+        ChkPerformsClauseTypes(ctx, *fb.performsClause);
+    }
     if (!fb.throwsClause) {
         return;
     }

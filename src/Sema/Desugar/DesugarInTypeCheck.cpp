@@ -668,6 +668,7 @@ void DesugarPrimaryCtor(Decl& decl, PrimaryCtorDecl& fd)
     // inference eligibility — so without this the clause is parsed and then dropped. Cloned
     // rather than moved: the primary constructor declaration keeps living in the AST for name
     // resolution, LSP and incremental hashing, exactly like the return type above.
+    funcBody->performsClause = ASTCloner::Clone(fd.funcBody->performsClause.get(), SetIsClonedSourceCode);
     funcBody->throwsClause = ASTCloner::Clone(fd.funcBody->throwsClause.get(), SetIsClonedSourceCode);
     auto funcParamList = MakeOwned<FuncParamList>();
     CopyFileID(funcParamList.get(), &fd);
