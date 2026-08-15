@@ -70,7 +70,7 @@ private:
  * Kept beside the AST rather than written into declaration types: the checking pass stays a
  * pure check, and call sites resolve a callee's list through this map.
  */
-using InferredCapabilities = std::unordered_map<Ptr<const AST::Decl>, std::vector<Ptr<AST::Ty>>>;
+using InferredCapabilities = std::unordered_map<Ptr<AST::FuncDecl>, std::vector<Ptr<AST::Ty>>>;
 
 /**
  * Infer capability parameter lists for the inference-eligible declarations of @p pkg
@@ -81,6 +81,16 @@ using InferredCapabilities = std::unordered_map<Ptr<const AST::Decl>, std::vecto
  */
 InferredCapabilities InferCapabilities(
     TypeManager& typeManager, const ImportManager& importManager, AST::Package& pkg, DiagnosticEngine& diag);
+
+/**
+ * Complete the types of the declarations covered by @p inferred (proposal 6.3.3: capability
+ * parameters, then clause components of types, then capability arguments). Each declaration's
+ * functional type is re-interned with its inferred entries, so the declaration's own type is the
+ * single source of its capability list. Expression types are deliberately NOT completed: they
+ * were formed during type check, before inference ran, and re-typing them would double-charge
+ * every call site — call sites read the map instead.
+ */
+void CompleteInferredCapabilityTypes(TypeManager& typeManager, const InferredCapabilities& inferred);
 
 /**
  * Run capability argument checking over every callable body and initializer of @p pkg on the

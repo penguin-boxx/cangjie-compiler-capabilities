@@ -481,6 +481,7 @@ OwnedPtr<ThrowsClause> PartialInstantiation::InstantiateThrowsClause(const Throw
     ret->leftParenPos = node.leftParenPos;
     ret->rightParenPos = node.rightParenPos;
     ret->commaPosVector = node.commaPosVector;
+    ret->hasEllipsis = node.hasEllipsis;
     for (auto& capType : node.capTypes) {
         ret->capTypes.emplace_back(InstantiateType(capType.get(), visitor));
     }

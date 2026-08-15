@@ -729,6 +729,10 @@ bool CompilerInstance::PerformCapabilityCheck()
         // Capability parameter inference runs first and its results act as the declared clauses
         // of the declarations it covers (proposal 6.3.3: parameters before arguments).
         auto inferred = Sema::InferCapabilities(*typeManager, *importManager, *srcPkg, diag);
+        // Proposal 6.3.3: the clause components of types are completed between capability
+        // parameter inference and capability argument checking, so a declaration's own type is
+        // the single source of its list. Keep these three calls adjacent.
+        Sema::CompleteInferredCapabilityTypes(*typeManager, inferred);
         Sema::CheckCapabilities(*typeManager, *importManager, *srcPkg, missHandler, inferred);
     }
     return diag.GetErrorCount() == errorCountBefore;

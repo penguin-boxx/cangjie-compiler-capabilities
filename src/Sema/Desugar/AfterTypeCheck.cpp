@@ -36,8 +36,8 @@
 #include "cangjie/Modules/ImportManager.h"
 #include "cangjie/Sema/TypeManager.h"
 #include "cangjie/Utils/CheckUtils.h"
-#include "cangjie/Utils/Utils.h"
 #include "cangjie/Utils/ProfileRecorder.h"
+#include "cangjie/Utils/Utils.h"
 
 using namespace Cangjie;
 using namespace AST;
@@ -136,7 +136,10 @@ std::vector<OwnedPtr<FuncArg>> GetFuncArgsForDesugaredPropDecl(
     auto leftBaseExpr = mapExpr ? CreateMemberAccess(ASTCloner::Clone(mapExpr), getFunc)
                                 : OwnedPtr<Expr>(CreateRefExpr(getFunc).release());
     // 'getFunc' may be generic type, which need to be update to real used type.
-    leftBaseExpr->SetTy(tyMgr.GetFunctionTy({}, &propTy));
+    // Checked exceptions: the accessor's own 'throws' clause must ride on the synthesized callee
+    // type, or the use site demands nothing (proposal 3.3).
+    leftBaseExpr->SetTy(tyMgr.GetFunctionTy(
+        {}, &propTy, {}, GetInstantiatedAccessorCapTys(tyMgr, getFunc, mapExpr ? mapExpr->GetTy() : nullptr)));
     auto isMemberAccessSuperCall = false;
     if (auto ma = DynamicCast<MemberAccess*>(leftBaseExpr.get()); ma) {
         CJC_NULLPTR_CHECK(ma->baseExpr);
@@ -182,11 +185,13 @@ void DesugarGetForPropDecl(TypeManager& tyMgr, Expr& expr)
         return;
     }
     OwnedPtr<Expr> baseExpr;
+    Ptr<Ty> receiverTy = nullptr;
     bool isMemberAccessSuperCall = false;
     if (auto ma = DynamicCast<MemberAccess*>(&expr); ma) {
         if (!ma->baseExpr) {
             return; // Current node may be desugared by other process.
         }
+        receiverTy = ma->baseExpr->GetTy();
         if (auto ref = DynamicCast<RefExpr*>(ma->baseExpr.get()); ref) {
             isMemberAccessSuperCall = ref->isSuper;
         }
@@ -195,7 +200,9 @@ void DesugarGetForPropDecl(TypeManager& tyMgr, Expr& expr)
         baseExpr = CreateRefExpr(*getFunc);
     }
     // 'getFunc' may be generic type, which need to be update to real used type.
-    baseExpr->SetTy(tyMgr.GetFunctionTy({}, expr.GetTy()));
+    // Checked exceptions: carry the accessor's capability list onto the synthesized callee type.
+    baseExpr->SetTy(tyMgr.GetFunctionTy(
+        {}, expr.GetTy(), {}, GetInstantiatedAccessorCapTys(tyMgr, *StaticCast<FuncDecl*>(getFunc), receiverTy)));
     CopyBasicInfo(&expr, baseExpr.get());
     auto lastCallExpr = CreateCallExpr(std::move(baseExpr), {});
     lastCallExpr->callKind = isMemberAccessSuperCall ? CallKind::CALL_SUPER_FUNCTION : CallKind::CALL_DECLARED_FUNCTION;
@@ -242,11 +249,15 @@ void DesugarSetForPropDecl(TypeManager& tyMgr, Expr& expr)
     subExpr->EnableAttr(Attribute::UNREACHABLE);
 
     // Since current desugar happens inside sema stage, we cannot use 'move' to create new node.
+    Ptr<Ty> receiverTy =
+        subExpr->astKind == ASTKind::MEMBER_ACCESS ? RawStaticCast<MemberAccess*>(subExpr)->baseExpr->GetTy() : nullptr;
     auto baseExpr = subExpr->astKind == ASTKind::MEMBER_ACCESS
         ? CreateMemberAccess(ASTCloner::Clone(RawStaticCast<MemberAccess*>(subExpr)->baseExpr.get()), *setFunc)
         : OwnedPtr<Expr>(CreateRefExpr(*setFunc).release());
     // 'setFunc' may be generic type, which need to be update to real used type.
-    baseExpr->SetTy(tyMgr.GetFunctionTy({subExpr->GetTy()}, TypeManager::GetPrimitiveTy(TypeKind::TYPE_UNIT)));
+    // Checked exceptions: carry the accessor's capability list onto the synthesized callee type.
+    baseExpr->SetTy(tyMgr.GetFunctionTy({subExpr->GetTy()}, TypeManager::GetPrimitiveTy(TypeKind::TYPE_UNIT), {},
+        GetInstantiatedAccessorCapTys(tyMgr, *setFunc, receiverTy)));
     CopyBasicInfo(subExpr, baseExpr.get());
     Ptr<Expr> basePtr = nullptr;
     // For refExpr case, 'a += b' is desugared to aSet(aGet() + b), there is no side effect to be handle.
