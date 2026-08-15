@@ -606,14 +606,19 @@ Ptr<Ty> TypeChecker::TypeCheckerImpl::GetTyFromASTType(ASTContext& ctx, FuncType
     // Checked exceptions: elaborate the 'throws' clause types into the functional type's capability
     // list. CFunc types never carry capabilities (the clause is rejected during type check).
     std::vector<Ptr<Ty>> capTys;
-    if (funcType.throwsClause && !funcType.isC) {
-        for (auto& capType : funcType.throwsClause->capTypes) {
+    // Effects (proposal 8.2): 'performs' entries come first, then 'throws' (proposal 9.1 rule 8).
+    for (auto clause : {funcType.performsClause.get(), funcType.throwsClause.get()}) {
+        if (clause == nullptr || funcType.isC) {
+            continue;
+        }
+        for (auto& capType : clause->capTypes) {
             CJC_NULLPTR_CHECK(capType);
             capType->SetTy(GetTyFromASTType(ctx, capType.get()));
         }
         // A tuple entry — written directly or reached through a type alias — is itself a
         // capability list and is spliced into this one (proposal 6.1).
-        capTys = TypeCheckUtil::ExpandCapabilityList(funcType.throwsClause->capTypes);
+        auto expanded = TypeCheckUtil::ExpandCapabilityList(clause->capTypes);
+        capTys.insert(capTys.end(), expanded.begin(), expanded.end());
     }
     funcType.SetTy(typeManager.GetFunctionTy(paramTys, funcType.retType->GetTy(), {funcType.isC}, capTys));
     return funcType.GetTy();

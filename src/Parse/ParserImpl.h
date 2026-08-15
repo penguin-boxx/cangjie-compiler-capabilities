@@ -536,6 +536,8 @@ private:
     void DiagMissingPropertyBody(AST::PropDecl& prop);
     void ParsePropBody(const std::set<AST::Modifier>& modifiers, AST::PropDecl& propDecl);
     OwnedPtr<AST::FuncDecl> ParsePropMemberDecl(const std::set<AST::Modifier>& modifiers);
+    /// Parse 'performs' then 'throws' clauses of a function body (proposal 9.1 rule 8).
+    void ParseCapabilityClauses(AST::FuncBody& fb);
     void ParseFuncGenericConstraints(const AST::FuncBody& fb);
     void ParsePropMemberBody(const ScopeKind& scopeKind, AST::FuncBody& fb);
     void ParseFuncParameters(const ScopeKind& scopeKind, AST::FuncBody& fb);

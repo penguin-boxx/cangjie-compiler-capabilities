@@ -358,10 +358,13 @@ void Collector::CollectFuncBody(ASTContext& ctx, FuncBody& fb, bool buildTrie)
         BuildSymbolTable(ctx, funcParamList.get(), buildTrie);
     }
     BuildSymbolTable(ctx, fb.retType.get(), buildTrie);
-    if (fb.throwsClause) {
+    for (auto clause : {fb.performsClause.get(), fb.throwsClause.get()}) {
+        if (clause == nullptr) {
+            continue;
+        }
         // Checked exceptions (experimental): capability types may reference the function's
         // generic parameters, so they are collected inside the function's scope.
-        for (auto& capType : fb.throwsClause->capTypes) {
+        for (auto& capType : clause->capTypes) {
             BuildSymbolTable(ctx, capType.get(), buildTrie);
         }
     }
@@ -1343,8 +1346,11 @@ void Collector::BuildSymbolTable(ASTContext& ctx, Ptr<Node> node, bool buildTrie
             for (auto& paramType : ft->paramTypes) {
                 BuildSymbolTable(ctx, paramType.get(), buildTrie);
             }
-            if (ft->throwsClause) {
-                for (auto& capType : ft->throwsClause->capTypes) {
+            for (auto clause : {ft->performsClause.get(), ft->throwsClause.get()}) {
+                if (clause == nullptr) {
+                    continue;
+                }
+                for (auto& capType : clause->capTypes) {
                     BuildSymbolTable(ctx, capType.get(), buildTrie);
                 }
             }

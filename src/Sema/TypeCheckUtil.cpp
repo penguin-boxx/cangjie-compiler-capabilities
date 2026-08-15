@@ -321,10 +321,22 @@ std::vector<Ptr<Ty>> GetFuncBodyCapTys(const FuncBody& fb)
     // name resolution) become the capability list of the declaration's functional type.
     // Foreign/C functions never carry capabilities; the clause on them is diagnosed separately.
     bool isCLike = fb.TestAttr(Attribute::C) || (fb.funcDecl && fb.funcDecl->TestAttr(Attribute::FOREIGN));
-    if (!fb.throwsClause || isCLike) {
+    if (isCLike) {
         return {};
     }
-    return ExpandCapabilityList(fb.throwsClause->capTypes);
+    // Effects (proposal 8.2): 'performs' entries join the same list, ahead of the 'throws' ones
+    // (proposal 9.1 rule 8). The kinds stay apart by type, not by position: an effect entry is a
+    // 'Command' subtype and an exception entry an 'Exception' subtype, and discharge is by
+    // subtyping, so neither can ever satisfy the other.
+    std::vector<Ptr<Ty>> caps;
+    if (fb.performsClause) {
+        caps = ExpandCapabilityList(fb.performsClause->capTypes);
+    }
+    if (fb.throwsClause) {
+        auto thrown = ExpandCapabilityList(fb.throwsClause->capTypes);
+        caps.insert(caps.end(), thrown.begin(), thrown.end());
+    }
+    return caps;
 }
 
 std::vector<Ptr<Ty>> GetInstantiatedAccessorCapTys(TypeManager& tyMgr, const FuncDecl& accessor, Ptr<Ty> receiverTy)

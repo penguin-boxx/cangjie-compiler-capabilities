@@ -494,6 +494,9 @@ OwnedPtr<FuncType> PartialInstantiation::InstantiateFuncType(const FuncType& nod
     for (auto& paramType : node.paramTypes) {
         ret->paramTypes.emplace_back(InstantiateType(paramType.get(), visitor));
     }
+    if (node.performsClause) {
+        ret->performsClause = InstantiateThrowsClause(*node.performsClause, visitor);
+    }
     if (node.throwsClause) {
         ret->throwsClause = InstantiateThrowsClause(*node.throwsClause, visitor);
     }
@@ -1446,6 +1449,9 @@ OwnedPtr<FuncBody> PartialInstantiation::InstantiateFuncBody(const FuncBody& fb,
     ret->doubleArrowPos = fb.doubleArrowPos;
     ret->colonPos = fb.colonPos;
     ret->retType = InstantiateType(fb.retType.get(), visitor);
+    if (fb.performsClause) {
+        ret->performsClause = InstantiateThrowsClause(*fb.performsClause, visitor);
+    }
     if (fb.throwsClause) {
         ret->throwsClause = InstantiateThrowsClause(*fb.throwsClause, visitor);
     }
