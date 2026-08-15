@@ -190,6 +190,15 @@ std::vector<Ptr<AST::Ty>> GetFuncBodyParamTys(const AST::FuncBody& fb);
 std::vector<Ptr<AST::Ty>> ExpandCapabilityList(const std::vector<OwnedPtr<AST::Type>>& capTypes);
 
 std::vector<Ptr<AST::Ty>> GetFuncBodyCapTys(const AST::FuncBody& fb);
+
+/**
+ * Checked exceptions: the capability list of @p accessor (its elaborated 'throws' clause),
+ * instantiated for a use site whose receiver has type @p receiverTy. @p receiverTy may be null
+ * (unqualified reference), in which case the list is returned verbatim: the declaration's own
+ * type parameters are already the ones in scope. Entries that failed elaboration are dropped.
+ */
+std::vector<Ptr<AST::Ty>> GetInstantiatedAccessorCapTys(
+    TypeManager& tyMgr, const AST::FuncDecl& accessor, Ptr<AST::Ty> receiverTy);
 /**
  * Checked exceptions: get the exception capability tys of @p decl 's elaborated 'captures'
  * clause (proposal 3.9). Empty when @p decl is not a class/struct or has no clause; entries

@@ -298,7 +298,7 @@ private:
                 // An inferred list acts as the declaration's clause — except while collecting
                 // that very declaration's residual demands, when consulting it would make every
                 // requirement look discharged (proposal 6.3.2).
-                if (fb.funcDecl && fb.funcDecl != collectingFor) {
+                if (fb.funcDecl && fb.funcDecl.get() != collectingFor.get()) {
                     auto it = inferred.find(fb.funcDecl);
                     if (it != inferred.end()) {
                         caps.insert(caps.end(), it->second.begin(), it->second.end());
@@ -427,21 +427,36 @@ private:
         if (!funcTy) {
             return;
         }
-        for (auto cap : funcTy->capTys) {
-            if (Ty::IsTyCorrect(cap)) {
-                Demand(cap, ce, DescribeCallee(ce));
+        std::vector<Ptr<Ty>> demands = funcTy->capTys;
+        // Defence in depth: a callee expression rebuilt by machinery that predates this feature
+        // can carry a capability-free functional type. Recover from the callee's DECLARED clause
+        // — never from its FuncTy capTys, which also hold the inferred entries the union below
+        // contributes — re-instantiated through the receiver so a generic accessor demands
+        // 'MyExc<Int64>' rather than a bare 'MyExc<T>'.
+        if (demands.empty() && ce.resolvedFunction) {
+            Ptr<Ty> receiverTy = nullptr;
+            if (auto ma = DynamicCast<MemberAccess*>(ce.baseFunc.get()); ma && ma->baseExpr) {
+                receiverTy = ma->baseExpr->GetTy();
             }
+            demands = TypeCheckUtil::GetInstantiatedAccessorCapTys(typeManager, *ce.resolvedFunction, receiverTy);
         }
-        // A callee whose list was inferred (proposal 6.3) carries it beside the AST rather than
-        // in its type, because inference runs after the call site's type was formed.
+        // A callee whose list was inferred (proposal 6.3) carries it beside the AST: this call
+        // site's type was formed during type check, before inference ran, so completing the
+        // declaration's type cannot reach it. Unioned, not appended: the entries can be
+        // pointer-identical to those already present.
         if (ce.resolvedFunction) {
             auto it = inferred.find(ce.resolvedFunction);
             if (it != inferred.end()) {
                 for (auto cap : it->second) {
-                    if (Ty::IsTyCorrect(cap)) {
-                        Demand(cap, ce, DescribeCallee(ce));
+                    if (!Utils::In(cap, demands)) {
+                        demands.emplace_back(cap);
                     }
                 }
+            }
+        }
+        for (auto cap : demands) {
+            if (Ty::IsTyCorrect(cap)) {
+                Demand(cap, ce, DescribeCallee(ce));
             }
         }
         DemandConstructedCaptures(ce);
@@ -849,6 +864,34 @@ void ReportCapabilityMissHandler::HandleMiss(const CapabilityDemand& demand)
                           : DiagKindRefactor::sema_chexc_missing_capability;
     auto builder = diag.DiagnoseRefactor(kind, *demand.demandSite, tyName, tyName);
     builder.AddMainHintArguments(demand.requiredBy);
+}
+
+void CompleteInferredCapabilityTypes(TypeManager& typeManager, const InferredCapabilities& inferred)
+{
+    for (auto& [decl, caps] : inferred) {
+        if (caps.empty() || !decl || !decl->funcBody) {
+            continue;
+        }
+        auto funcTy = DynamicCast<FuncTy*>(decl->GetTy());
+        if (!funcTy) {
+            continue;
+        }
+        // Union: a clause ending in '...' contributes declared entries that are already present
+        // (proposal 6.3.5).
+        std::vector<Ptr<Ty>> completed = funcTy->capTys;
+        for (auto cap : caps) {
+            if (Ty::IsTyCorrect(cap) && !Utils::In(cap, completed)) {
+                completed.emplace_back(cap);
+            }
+        }
+        if (completed.size() == funcTy->capTys.size()) {
+            continue;
+        }
+        auto completedTy = typeManager.GetFunctionTy(funcTy->paramTys, funcTy->retTy,
+            {funcTy->IsCFunc(), funcTy->isClosureTy, funcTy->hasVariableLenArg, funcTy->noCast}, completed);
+        decl->SetTy(completedTy);
+        decl->funcBody->SetTy(completedTy);
+    }
 }
 
 InferredCapabilities InferCapabilities(

@@ -328,6 +328,53 @@ std::vector<Ptr<Ty>> GetFuncBodyCapTys(const FuncBody& fb)
     return ExpandCapabilityList(fb.throwsClause->capTypes);
 }
 
+std::vector<Ptr<Ty>> GetInstantiatedAccessorCapTys(TypeManager& tyMgr, const FuncDecl& accessor, Ptr<Ty> receiverTy)
+{
+    if (!accessor.funcBody) {
+        return {};
+    }
+    // Entries that failed elaboration are dropped rather than forwarded: a FuncTy marks itself
+    // invalid when any capability ty is incorrect, and the desugared callee expressions this
+    // feeds have never carried an invalid ty.
+    std::vector<Ptr<Ty>> caps;
+    bool anyGeneric = false;
+    for (auto cap : GetFuncBodyCapTys(*accessor.funcBody)) {
+        if (!Ty::IsTyCorrect(cap)) {
+            continue;
+        }
+        anyGeneric = anyGeneric || cap->HasGeneric();
+        caps.emplace_back(cap);
+    }
+    if (!anyGeneric || !Ty::IsTyCorrect(receiverTy)) {
+        return caps;
+    }
+    // The accessor may be inherited or reached through an extend, so the mapping comes from the
+    // RECEIVER's type — which walks extends and the inheritance chain — not from outerDecl.
+    MultiTypeSubst mts;
+    tyMgr.GenerateGenericMapping(mts, *receiverTy);
+    // Collapse to a single-valued substitution: picking one of several candidates would make
+    // user-visible diagnostics depend on pointer order, so an ambiguous variable keeps its
+    // un-instantiated entry.
+    TypeSubst subst;
+    for (auto& [tv, candidates] : mts) {
+        if (candidates.size() == 1) {
+            subst.emplace(tv, *candidates.begin());
+        }
+    }
+    if (subst.empty()) {
+        return caps;
+    }
+    for (auto& cap : caps) {
+        // Per capability, never on the whole FuncTy: instantiation reduces against
+        // GetAllGenericTys, which is typeArgs-only and therefore blind to capTys.
+        auto inst = tyMgr.GetInstantiatedTy(cap, subst);
+        if (Ty::IsTyCorrect(inst)) {
+            cap = inst;
+        }
+    }
+    return caps;
+}
+
 std::vector<Ptr<Ty>> GetDeclCapturesCapTys(const Decl& decl)
 {
     // Checked exceptions: the 'captures' clause types of a class or struct declaration
