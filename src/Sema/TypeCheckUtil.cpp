@@ -267,7 +267,7 @@ std::vector<Ptr<Ty>> GetFuncBodyParamTys(const FuncBody& fb)
 
 namespace {
 /**
- * Expands one capability list entry (proposal 6.1): a tuple of exceptions — spelled directly or
+ * Expands one capability list entry: a tuple of exceptions — spelled directly or
  * reached through type aliases — is a capability list, so its elements are spliced into the list.
  * Expansion is recursive, since an alias tuple may contain further aliases; the visited set
  * guards against a cyclic alias, which the type checker reports separately.
@@ -324,8 +324,8 @@ std::vector<Ptr<Ty>> GetFuncBodyCapTys(const FuncBody& fb)
     if (isCLike) {
         return {};
     }
-    // Effects (proposal 8.2): 'performs' entries join the same list, ahead of the 'throws' ones
-    // (proposal 9.1 rule 8). The kinds stay apart by type, not by position: an effect entry is a
+    // Effects: 'performs' entries join the same list, ahead of the 'throws' ones
+    //. The kinds stay apart by type, not by position: an effect entry is a
     // 'Command' subtype and an exception entry an 'Exception' subtype, and discharge is by
     // subtyping, so neither can ever satisfy the other.
     std::vector<Ptr<Ty>> caps;
@@ -348,7 +348,7 @@ std::vector<Ptr<Ty>> GetInstantiatedAccessorCapTys(TypeManager& tyMgr, const Fun
     // invalid when any capability ty is incorrect, and the desugared callee expressions this
     // feeds have never carried an invalid ty.
     // An IMPORTED accessor has no clause node: the loader rebuilds declarations from the .cjo,
-    // where the capability list lives on the functional type (proposal 3.10.2). Fall back to it,
+    // where the capability list lives on the functional type. Fall back to it,
     // so a 'throws' clause on a property accessor is demanded across a package boundary too.
     auto declared = GetFuncBodyCapTys(*accessor.funcBody);
     if (declared.empty() && accessor.TestAttr(Attribute::IMPORTED)) {
@@ -398,13 +398,13 @@ std::vector<Ptr<Ty>> GetInstantiatedAccessorCapTys(TypeManager& tyMgr, const Fun
 std::vector<Ptr<Ty>> GetDeclCapturesCapTys(const Decl& decl)
 {
     // Checked exceptions: the 'captures' clause types of a class or struct declaration
-    // (proposal 3.9), elaborated during type check. Only supply/demand material: entries whose
+    //, elaborated during type check. Only supply/demand material: entries whose
     // types failed elaboration are skipped (their errors are reported at the clause).
     auto inheritable = DynamicCast<const InheritableDecl*>(&decl);
     if (!inheritable || !inheritable->capturesClause) {
         return {};
     }
-    // Capability list aliases apply here as well (proposal 6.1); entries whose types failed
+    // Capability list aliases apply here as well; entries whose types failed
     // elaboration are dropped, their errors having been reported at the clause.
     auto expanded = ExpandCapabilityList(inheritable->capturesClause->capTypes);
     std::vector<Ptr<Ty>> ret;
@@ -418,7 +418,7 @@ std::vector<Ptr<Ty>> GetDeclCapturesCapTys(const Decl& decl)
 
 bool IsUncheckedExceptionTy(TypeManager& typeManager, const ImportManager& importManager, Ptr<Ty> ty)
 {
-    // Checked exceptions (proposal 6.4): an exception type is unchecked iff it is a subtype of
+    // Checked exceptions: an exception type is unchecked iff it is a subtype of
     // the core 'UncheckedException' class. When std.core does not provide the class (compiling
     // an older or partial core during bootstrap), every exception type is checked.
     if (!Ty::IsTyCorrect(ty)) {

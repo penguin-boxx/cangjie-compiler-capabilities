@@ -380,7 +380,7 @@ struct ASTHasherImpl {
             }
         }
         SUPERHash<whatTypeToHash>(im.hasDoubleColon);
-        // Checked exceptions (proposal 5.2.2, ledger E3): an '@AssumeThrows' annotation imposes
+        // Checked exceptions (ledger E3): an '@AssumeThrows' annotation imposes
         // obligations on every call into the imported package, so changing its list changes what
         // the file's declarations must supply -- exactly like changing the import itself. Without
         // this the declarations keep their hashes and an incremental build never re-checks them,

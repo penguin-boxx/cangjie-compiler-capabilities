@@ -213,7 +213,7 @@ OwnedPtr<AST::Type> ParserImpl::ParseTypeWithParen()
     }
     // Checked exceptions (experimental): a contextual `throws` after ')' also selects the
     // function-type path, e.g. `(A) throws (E1, E2) -> R`. The clause must be followed by '->'.
-    // Effects (proposal 8.2): 'performs' does the same and precedes 'throws' (9.1 rule 8), so
+    // Effects: 'performs' does the same and precedes 'throws' (9.1 rule 8), so
     // `(A) performs H throws E -> R` stacks both.
     if (SeeingChexcClause("performs") || SeeingChexcClause("throws")) {
         OwnedPtr<ThrowsClause> performsClause;
@@ -224,7 +224,7 @@ OwnedPtr<AST::Type> ParserImpl::ParseTypeWithParen()
         if (SeeingChexcClause("throws")) {
             throwsClause = ParseThrowsClause(false);
         }
-        // Wrong order (proposal 9.1 rule 8): name the real problem instead of tripping over the
+        // Wrong order: name the real problem instead of tripping over the
         // missing '->' below; parsed anyway so the type still carries its requirements.
         if (SeeingChexcClause("performs")) {
             ParseDiagnoseRefactor(DiagKindRefactor::parse_performs_clause_after_throws, lookahead.Begin());
@@ -302,8 +302,8 @@ OwnedPtr<AST::ThrowsClause> ParserImpl::ParseThrowsClause(bool isDeclClause)
     clause->end = lastToken.End();
     auto diagnoseEllipsis = [this, isDeclClause, &clause]() {
         // On a declaration `...` re-enables capability parameter inference, whose result is
-        // unioned with the listed entries (proposal 6.3.5). A functional type's list is always
-        // complete, so the marker is rejected there (proposal 3.4).
+        // unioned with the listed entries. A functional type's list is always
+        // complete, so the marker is rejected there.
         if (isDeclClause) {
             clause->hasEllipsis = true;
         } else {
@@ -375,7 +375,7 @@ OwnedPtr<AST::ThrowsClause> ParserImpl::ParseThrowsClause(bool isDeclClause)
 
 OwnedPtr<AST::ThrowsClause> ParserImpl::ParseCapturesClause()
 {
-    // Checked exceptions (proposal 3.9): the `captures` clause of a class or struct header.
+    // Checked exceptions: the `captures` clause of a class or struct header.
     // Reuses the ThrowsClause node shape; the grammar is the bare comma-separated list only:
     // `captures E1, E2` (no parenthesized or ellipsis forms).
     CJC_ASSERT(SeeingChexcClause("captures"));

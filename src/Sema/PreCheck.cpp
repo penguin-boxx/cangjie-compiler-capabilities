@@ -606,7 +606,7 @@ Ptr<Ty> TypeChecker::TypeCheckerImpl::GetTyFromASTType(ASTContext& ctx, FuncType
     // Checked exceptions: elaborate the 'throws' clause types into the functional type's capability
     // list. CFunc types never carry capabilities (the clause is rejected during type check).
     std::vector<Ptr<Ty>> capTys;
-    // Effects (proposal 8.2): 'performs' entries come first, then 'throws' (proposal 9.1 rule 8).
+    // Effects: 'performs' entries come first, then 'throws'.
     for (auto clause : {funcType.performsClause.get(), funcType.throwsClause.get()}) {
         if (clause == nullptr || funcType.isC) {
             continue;
@@ -616,7 +616,7 @@ Ptr<Ty> TypeChecker::TypeCheckerImpl::GetTyFromASTType(ASTContext& ctx, FuncType
             capType->SetTy(GetTyFromASTType(ctx, capType.get()));
         }
         // A tuple entry — written directly or reached through a type alias — is itself a
-        // capability list and is spliced into this one (proposal 6.1).
+        // capability list and is spliced into this one.
         auto expanded = TypeCheckUtil::ExpandCapabilityList(clause->capTypes);
         capTys.insert(capTys.end(), expanded.begin(), expanded.end());
     }
@@ -943,7 +943,7 @@ void TypeChecker::TypeCheckerImpl::ResolveNames(ASTContext& ctx)
         CJC_NULLPTR_CHECK(sym);
         Walker(sym->node, id, resolveSingleType).Walk();
     }
-    // Checked exceptions (proposal 5.2.2): an '@AssumeThrows' annotation sits on an import, not on
+    // Checked exceptions: an '@AssumeThrows' annotation sits on an import, not on
     // a top-level declaration, so its exception types are not reached by the walk above.
     if (ctx.curPackage != nullptr) {
         for (auto& file : ctx.curPackage->files) {

@@ -48,7 +48,7 @@ void AddCurFile(Node& root, Ptr<File> file)
                 curFile->curFile = curFile;
                 for (auto& import : curFile->imports) {
                     import->curFile = curFile;
-                    // Checked exceptions (proposal 5.2.2): an '@AssumeThrows' annotation carries
+                    // Checked exceptions: an '@AssumeThrows' annotation carries
                     // type nodes that sema resolves and checks like 'throws' clause entries, and
                     // those checks read 'curFile'. The walk below never reaches them: an import
                     // is not a declaration, so its annotations are not walked with it. Only the

@@ -185,7 +185,7 @@ std::vector<Ptr<AST::Ty>> GetFuncBodyParamTys(const AST::FuncBody& fb);
  */
 /**
  * Expands a checked-exception clause's types into a capability list, splicing tuple entries
- * (capability list aliases, proposal 6.1) recursively.
+ * (capability list aliases) recursively.
  */
 std::vector<Ptr<AST::Ty>> ExpandCapabilityList(const std::vector<OwnedPtr<AST::Type>>& capTypes);
 
@@ -201,13 +201,13 @@ std::vector<Ptr<AST::Ty>> GetInstantiatedAccessorCapTys(
     TypeManager& tyMgr, const AST::FuncDecl& accessor, Ptr<AST::Ty> receiverTy);
 /**
  * Checked exceptions: get the exception capability tys of @p decl 's elaborated 'captures'
- * clause (proposal 3.9). Empty when @p decl is not a class/struct or has no clause; entries
+ * clause. Empty when @p decl is not a class/struct or has no clause; entries
  * whose types failed elaboration are skipped.
  */
 std::vector<Ptr<AST::Ty>> GetDeclCapturesCapTys(const AST::Decl& decl);
 /**
  * Checked exceptions: whether @p ty is an unchecked exception type, i.e. a subtype of the core
- * 'UncheckedException' class (proposal 6.4). Tolerant of the class's absence (bootstrapping
+ * 'UncheckedException' class. Tolerant of the class's absence (bootstrapping
  * with an std.core that predates it): every exception type is checked then.
  */
 bool IsUncheckedExceptionTy(TypeManager& typeManager, const ImportManager& importManager, Ptr<AST::Ty> ty);

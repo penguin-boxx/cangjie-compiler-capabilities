@@ -219,7 +219,7 @@ Ptr<AST::Ty> JoinAndMeet::JoinOrMeetFuncTy(const DualMode& mode, const std::set<
 }
 
 /**
- * Checked exceptions (proposal 3.4, "Joins and meets"): combine the ground capability lists of
+ * Checked exceptions ("Joins and meets"): combine the ground capability lists of
  * already-typed functional operands. The join of capability lists is their union; the meet keeps
  * the entries covered by every operand list (of two comparable entries, the more specific one;
  * incomparable entries contribute nothing). Entries subsumed by other kept entries are redundant

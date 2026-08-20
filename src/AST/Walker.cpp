@@ -1120,7 +1120,7 @@ VisitAction WalkerT<NodeT>::Walk(Ptr<NodeT> curNode) const
                         return VisitAction::STOP_NOW;
                     }
                 }
-                // Checked exceptions: '@AssumeThrows' carries a capability list (proposal 5.2.2).
+                // Checked exceptions: '@AssumeThrows' carries a capability list.
                 if (Walk(anno->assumeThrows.get()) == VisitAction::STOP_NOW) {
                     return VisitAction::STOP_NOW;
                 }

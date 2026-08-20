@@ -892,7 +892,7 @@ void ASTLoader::ASTLoaderImpl::LoadInheritableDeclAdvancedInfo(const PackageForm
             (void)id.annotations.emplace_back(std::move(ann));
         }
     }
-    // Checked exceptions (proposal 3.9 with 3.10.2): rebuild the 'captures' clause so that
+    // Checked exceptions: rebuild the 'captures' clause so that
     // construction sites in this package demand the declaration's captured capabilities. Only the
     // types matter downstream, which read them off the clause's nodes.
     const flatbuffers::Vector<FormattedIndex>* capturesTypes = nullptr;

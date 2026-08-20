@@ -105,7 +105,7 @@ void ParserImpl::ParseImportSpec(PtrVector<ImportSpec>& imports, const PtrVector
     ParseImportContent(importSpec->content);
     importSpec->end = importSpec->content.end;
 
-    // Check allowed annotation on import. Checked exceptions (proposal 5.2.2): '@AssumeThrows'
+    // Check allowed annotation on import. Checked exceptions: '@AssumeThrows'
     // belongs on an import and nowhere else, and only when the feature is enabled.
     std::for_each(annos.begin(), annos.end(), [&, this](const Ptr<Annotation>& anno) {
         if (anno->kind == AnnotationKind::ASSUME_THROWS && enableChexc) {

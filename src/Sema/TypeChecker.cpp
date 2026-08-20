@@ -198,7 +198,7 @@ void TypeChecker::TypeCheckerImpl::ChkThrowsClauseTypes(
         if (!Ty::IsTyCorrect(capType->GetTy())) {
             continue;
         }
-        // A tuple entry is a capability list alias (proposal 6.1): its ELEMENTS are the
+        // A tuple entry is a capability list alias: its ELEMENTS are the
         // capabilities, so they are what the entry rules apply to. Expansion is recursive, so
         // an alias of aliases is validated element by element as well.
         std::vector<OwnedPtr<Type>> single;
@@ -223,7 +223,7 @@ void TypeChecker::TypeCheckerImpl::ChkThrowsClauseTypes(
                 // Proposal 3.2 rule 5: a concrete unchecked exception type never needs a
                 // capability, so listing it is misleading and rejected. Type parameters are
                 // exempt: a requirement instantiating to an unchecked type is trivially
-                // satisfied instead (proposal 6.4).
+                // satisfied instead.
                 diag.DiagnoseRefactor(
                     DiagKindRefactor::sema_chexc_unchecked_type_in_clause, *capType, entryName, clauseKeyword);
             }
@@ -261,7 +261,7 @@ void TypeChecker::TypeCheckerImpl::ChkAssumeThrowsAnnotations(ASTContext& ctx, P
     if (!ci->invocation.globalOptions.enableChexc) {
         return;
     }
-    // Checked exceptions (proposal 5.2.2): validate the exception types of every assumption import
+    // Checked exceptions: validate the exception types of every assumption import
     // exactly like the entries of a 'throws' clause. Their types were resolved by 'ResolveNames'.
     for (auto& file : pkg.files) {
         CJC_NULLPTR_CHECK(file);
@@ -288,7 +288,7 @@ void TypeChecker::TypeCheckerImpl::ChkAssumeThrowsAnnotations(ASTContext& ctx, P
 
 void TypeChecker::TypeCheckerImpl::ChkPerformsClauseTypes(ASTContext& ctx, ThrowsClause& clause)
 {
-    // Effects (proposal 8.2): a 'performs' entry names an effect command, so it must be a subtype
+    // Effects: a 'performs' entry names an effect command, so it must be a subtype
     // of 'Command'. Validated separately from 'throws', whose entries must be 'Exception'
     // subtypes: the disjointness of the two roots is what keeps the two kinds of capability from
     // ever discharging one another.
@@ -322,7 +322,7 @@ void TypeChecker::TypeCheckerImpl::ChkThrowsClauseOfFuncBody(ASTContext& ctx, Fu
 {
     if (fb.performsClause) {
         // No default effect handler exists, so 'main' cannot carry effect requirements the way it
-        // may carry exception ones (proposal 9.1, policy table).
+        // may carry exception ones (policy table).
         if (fb.funcDecl && fb.funcDecl->identifier == MAIN_INVOKE) {
             diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_performs_in_main, *fb.performsClause);
         }

@@ -210,7 +210,7 @@ std::unordered_set<Ptr<Ty>> GetAllGenericTys(Ptr<Ty> const ty)
         // reachable only through it still needs a substitution — otherwise the raw
         // instantiation placeholder survives into capability checking, where it is neither
         // demandable nor dischargeable. Capability lists still take no part in deciding type
-        // arguments (proposal 3.6); this only makes the resulting substitution complete.
+        // arguments; this only makes the resulting substitution complete.
         if (auto funcTy = DynamicCast<FuncTy*>(curTy)) {
             for (auto cap : funcTy->capTys) {
                 q.emplace(cap);

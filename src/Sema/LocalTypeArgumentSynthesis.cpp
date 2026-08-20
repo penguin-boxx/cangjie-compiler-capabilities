@@ -463,7 +463,7 @@ bool LocalTypeArgumentSynthesis::UnifyFuncTy(const Tracked<FuncTy>& argTTy, cons
 {
     auto& argTy = argTTy.ty;
     auto& paramTy = paramTTy.ty;
-    // Checked exceptions (proposal 3.6): capability lists ('capTys') are deliberately IGNORED here.
+    // Checked exceptions: capability lists ('capTys') are deliberately IGNORED here.
     // They are never unified and differing list lengths never cause rejection, to avoid row-type
     // unification; type variables occurring only in capability lists simply stay unsolved.
     // Reconciliation of differing ground lists happens via join/meet (JoinAndMeet), not unification.

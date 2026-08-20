@@ -224,7 +224,7 @@ private:
         return builder.CreateVector<FormattedIndex>(superInterfaceTypes);
     }
     /**
-     * Checked exceptions (proposal 3.10.2 rule 1): the canonical normal form of a capability list
+     * Checked exceptions: the canonical normal form of a capability list
      * — entries subsumed by another entry dropped, the remainder ordered by type name.
      *
      * Sound because a demand is per entry and satisfied by any supply the entry is a subtype of:
@@ -255,9 +255,9 @@ private:
     }
 
     /**
-     * Checked exceptions (proposal 3.9 with 3.10.2): save the 'captures' clause of a class or
+     * Checked exceptions: save the 'captures' clause of a class or
      * struct, which every construction site of the declaration must supply. Read from the
-     * elaborated clause, so a capability list alias (proposal 6.1) is already spliced in.
+     * elaborated clause, so a capability list alias is already spliced in.
      */
     template <typename T> TVectorOffset<FormattedIndex> SaveCapturesCapTys(const T& decl)
     {

@@ -135,7 +135,7 @@ table ClassInfo {
   annoTargets:uint8;   // available if current class is custom annotation
   runtimeVisible:bool;
   annoTargets2:uint8;
-  // Checked exceptions (proposal 3.9 with 3.10.2): the 'captures' clause, demanded at every
+  // Checked exceptions: the 'captures' clause, demanded at every
   // construction site. Appended last, so a .cjo written before this feature still loads.
   capturesTypes:[uint32];
 }
@@ -147,7 +147,7 @@ table StructInfo {
   inheritedTypes:[uint32];
   body:[uint32];
   adInfo:AutoDiffInfo;
-  // Checked exceptions (proposal 3.9 with 3.10.2): see ClassInfo.capturesTypes.
+  // Checked exceptions: see ClassInfo.capturesTypes.
   capturesTypes:[uint32];
 }
 table EnumInfo {
@@ -597,7 +597,7 @@ table FuncTyInfo {
   retType:uint32; // Func return type
   isC:bool;       // CFunc or @C func type.
   hasVariableLenArg:bool;
-  // Checked exceptions (proposal 3.10.2): the capability list of the functional type, i.e. the
+  // Checked exceptions: the capability list of the functional type, i.e. the
   // exception types of its 'throws' clause. Kept OUT of typeArgs, which holds the parameter
   // types: capabilities are erased for codegen and must not be mistaken for type arguments.
   // Appended last, so a .cjo written before this feature still loads (the field reads as empty).

@@ -192,7 +192,7 @@ private:
         return Utils::In(GetContextualKeyword(), [this](const TokenKind& kind) { return Seeing(kind); });
     }
     /**
-     * Checked exceptions (proposal 10): 'throws' and 'captures' are recognized by spelling at
+     * Checked exceptions: 'throws' and 'captures' are recognized by spelling at
      * the few positions where a clause may start, and stay ordinary identifiers everywhere
      * else — reserving them would break existing code (`std.unittest.mock` exports a public
      * `throws` function). Only recognized when the feature is enabled.
@@ -536,7 +536,7 @@ private:
     void DiagMissingPropertyBody(AST::PropDecl& prop);
     void ParsePropBody(const std::set<AST::Modifier>& modifiers, AST::PropDecl& propDecl);
     OwnedPtr<AST::FuncDecl> ParsePropMemberDecl(const std::set<AST::Modifier>& modifiers);
-    /// Parse 'performs' then 'throws' clauses of a function body (proposal 9.1 rule 8).
+    /// Parse 'performs' then 'throws' clauses of a function body.
     void ParseCapabilityClauses(AST::FuncBody& fb);
     void ParseFuncGenericConstraints(const AST::FuncBody& fb);
     void ParsePropMemberBody(const ScopeKind& scopeKind, AST::FuncBody& fb);
@@ -609,14 +609,14 @@ private:
     OwnedPtr<AST::ThrowsClause> ParseThrowsClause(bool isDeclClause);
     /**
      * Parse a checked-exception `captures` clause on a class or struct header (experimental,
-     * requires the CAPTURES token which only exists with '--enable-chexc'; proposal 3.9).
+     * requires the CAPTURES token which only exists with '--enable-chexc';).
      * Grammar: `captures T {, T}` (bare list only). Reuses the ThrowsClause node shape.
      */
     OwnedPtr<AST::ThrowsClause> ParseCapturesClause();
     /**
      * If the lookahead is `captures`, parse the clause into @p decl (diagnosing duplicates).
      * Called at each admissible clause position of a class/struct header: its position relative
-     * to the superclass list and `where` block is arbitrary (proposal 3.9).
+     * to the superclass list and `where` block is arbitrary.
      */
     void TryParseCapturesClause(AST::InheritableDecl& decl);
     OwnedPtr<AST::Type> ParsePrefixType();

@@ -137,7 +137,7 @@ std::vector<OwnedPtr<FuncArg>> GetFuncArgsForDesugaredPropDecl(
                                 : OwnedPtr<Expr>(CreateRefExpr(getFunc).release());
     // 'getFunc' may be generic type, which need to be update to real used type.
     // Checked exceptions: the accessor's own 'throws' clause must ride on the synthesized callee
-    // type, or the use site demands nothing (proposal 3.3).
+    // type, or the use site demands nothing.
     leftBaseExpr->SetTy(tyMgr.GetFunctionTy(
         {}, &propTy, {}, GetInstantiatedAccessorCapTys(tyMgr, getFunc, mapExpr ? mapExpr->GetTy() : nullptr)));
     auto isMemberAccessSuperCall = false;

@@ -1304,10 +1304,10 @@ void ParserImpl::ParseInterfaceDeclOrClassDeclGeneric(InheritableDecl& ret)
         ret.generic = ParseGeneric();
     }
     // Checked exceptions (experimental): a class may declare a `captures` clause; its position
-    // relative to the superclass list and the `where` block is arbitrary (proposal 3.9).
+    // relative to the superclass list and the `where` block is arbitrary.
     // Interfaces cannot capture: on them `captures` follows the natural error path below.
     bool allowCaptures = ret.astKind == ASTKind::CLASS_DECL;
-    // `captures` is an ordinary identifier outside clause position (proposal 10), so the
+    // `captures` is an ordinary identifier outside clause position, so the
     // "expected '{' or '<'" recovery below would otherwise swallow the clause.
     if (allowCaptures && SeeingChexcClause("captures")) {
         TryParseCapturesClause(ret);
@@ -1626,7 +1626,7 @@ OwnedPtr<StructDecl> ParserImpl::ParseStructDecl(
         ret->EnableAttr(Attribute::GENERIC);
     }
     // Checked exceptions (experimental): a struct may declare a `captures` clause; its position
-    // relative to the interface list and the `where` block is arbitrary (proposal 3.9).
+    // relative to the interface list and the `where` block is arbitrary.
     TryParseCapturesClause(*ret);
     if (Skip(TokenKind::UPPERBOUND)) {
         ret->upperBoundPos = lastToken.Begin();
@@ -2284,7 +2284,7 @@ void ParserImpl::ParsePropMemberBody(const ScopeKind& scopeKind, FuncBody& fb)
     }
     // Checked exceptions (experimental): property accessors may carry capability clauses,
     // e.g. `get() throws GException { ... }` (proposal rule: clauses on all callables), with
-    // 'performs' preceding 'throws' (proposal 9.1 rule 8) -- enforced by the shared helper.
+    // 'performs' preceding 'throws' -- enforced by the shared helper.
     ParseCapabilityClauses(fb);
     if (!Seeing(TokenKind::LCURL)) {
         ParseDiagnoseRefactor(DiagKindRefactor::parse_expected_left_brace, lookahead, ConvertToken(lookahead));
@@ -2334,8 +2334,8 @@ OwnedPtr<FuncBody> ParserImpl::ParseFuncBody(ScopeKind scopeKind)
         }
     }
     // Checked exceptions (experimental): a `throws` clause and generic constraints may appear
-    // in either order after the return type (proposal §3.2 rule 4). Effects (proposal 8.2) add a
-    // 'performs' clause, which precedes 'throws' (proposal 9.1 rule 8).
+    // in either order after the return type (the language rule). Effects add a
+    // 'performs' clause, which precedes 'throws'.
     ParseCapabilityClauses(*ret);
     ParseFuncGenericConstraints(*ret);
     ParseCapabilityClauses(*ret);
@@ -2376,8 +2376,8 @@ void ParserImpl::ParseFuncParameters(const ScopeKind& scopeKind, FuncBody& fb)
 
 /**
  * Checked exceptions and effects: parse the capability clauses of a function body, in the fixed
- * order 'performs' then 'throws' (proposal 9.1 rule 8). Called on both sides of the generic
- * constraints, which may precede or follow the clauses (proposal 3.2 rule 4); a clause seen twice
+ * order 'performs' then 'throws'. Called on both sides of the generic
+ * constraints, which may precede or follow the clauses; a clause seen twice
  * is diagnosed and dropped so the rest of the declaration still parses.
  */
 void ParserImpl::ParseCapabilityClauses(FuncBody& fb)
@@ -2388,7 +2388,7 @@ void ParserImpl::ParseCapabilityClauses(FuncBody& fb)
             (void)ParseThrowsClause(true);
         } else {
             // Seen on the second call, after the constraints: 'throws ... where ... performs'
-            // still violates the fixed order (proposal 9.1 rule 8).
+            // still violates the fixed order.
             if (fb.throwsClause) {
                 ParseDiagnoseRefactor(DiagKindRefactor::parse_performs_clause_after_throws, lookahead.Begin());
             }

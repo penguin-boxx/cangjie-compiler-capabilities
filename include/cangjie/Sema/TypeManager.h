@@ -191,7 +191,7 @@ public:
     /**
      * Checked exceptions (experimental): recursively rebuild @p ty with every functional type's
      * capability list removed. Used where overloading compares signatures modulo capability
-     * lists (proposal 3.7).
+     * lists.
      */
     Ptr<AST::Ty> EraseCapTys(Ptr<AST::Ty> ty);
     TypeCompatibility CheckTypeCompatibility(

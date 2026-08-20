@@ -713,7 +713,7 @@ bool CompilerInstance::PerformOverflowStrategy()
 
 bool CompilerInstance::PerformCapabilityCheck()
 {
-    // Checked exceptions (experimental): capability argument checking (proposal 3.3/3.5) over the
+    // Checked exceptions (experimental): capability argument checking (/3.5) over the
     // typed AST. Must run before desugar destroys 'TryExpr' structure and before instantiation.
     if (!invocation.globalOptions.enableChexc) {
         return true;
@@ -727,7 +727,7 @@ bool CompilerInstance::PerformCapabilityCheck()
     for (auto& srcPkg : GetSourcePackages()) {
         CJC_NULLPTR_CHECK(srcPkg);
         // Capability parameter inference runs first and its results act as the declared clauses
-        // of the declarations it covers (proposal 6.3.3: parameters before arguments).
+        // of the declarations it covers (parameters before arguments).
         auto inferred = Sema::InferCapabilities(*typeManager, *importManager, *srcPkg, diag);
         // Proposal 6.3.3: the clause components of types are completed between capability
         // parameter inference and capability argument checking, so a declaration's own type is

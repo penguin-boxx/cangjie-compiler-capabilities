@@ -77,7 +77,7 @@ private:
     void CheckInheritanceForInterface(const MemberSignature& interface, const MemberSignature& child) const;
     bool CheckImplementationRelation(const MemberSignature& parent, const MemberSignature& child) const;
     /**
-     * Checked exceptions (proposal 3.8): the override's 'throws' list must be pointwise subsumed
+     * Checked exceptions: the override's 'throws' list must be pointwise subsumed
      * by the original's. Constructors are exempt.
      */
     void CheckPropertyThrowsClauses(const AST::PropDecl& parentProp, const AST::PropDecl& childProp) const;

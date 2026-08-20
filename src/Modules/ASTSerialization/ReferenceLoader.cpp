@@ -367,7 +367,7 @@ void ASTLoader::ASTLoaderImpl::SetTypeTy(FormattedIndex type, const PackageForma
     } else if constexpr (std::is_same_v<TypeT, FuncTy>) {
         auto info = typeObj.info_as_FuncTyInfo();
         CJC_NULLPTR_CHECK(info);
-        // Checked exceptions (proposal 3.10.2): restore the capability list of the functional
+        // Checked exceptions: restore the capability list of the functional
         // type. A .cjo written before the field existed has no vector at all, which loads as an
         // empty list — exactly the pre-feature reading.
         std::vector<Ptr<Ty>> capTys;

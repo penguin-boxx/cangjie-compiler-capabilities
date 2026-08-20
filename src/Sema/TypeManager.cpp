@@ -893,7 +893,7 @@ bool TypeManager::IsFuncSubtype(const Ty& leaf, const Ty& root)
     auto& rootFuncType = static_cast<const FuncTy&>(root);
     if (IsFuncParametersSubtype(leafFuncType, rootFuncType)) {
         bool noCast = leafFuncType.noCast || rootFuncType.noCast;
-        // Checked exceptions (proposal 3.4): the subtype's capability list must be subsumed by the
+        // Checked exceptions: the subtype's capability list must be subsumed by the
         // supertype's, so any call site providing the supertype's capabilities can invoke the subtype.
         return IsSubtype(leafFuncType.retTy, rootFuncType.retTy, noCast) &&
             IsCapTysSubsumed(leafFuncType.capTys, rootFuncType.capTys);
@@ -1173,7 +1173,7 @@ bool TypeManager::IsFuncParameterTypesIdentical(const FuncTy& t1, const FuncTy& 
     if (Ty::IsTyCorrect(&t1) && Ty::IsTyCorrect(&t2) && t1.paramTys.size() == t2.paramTys.size()) {
         result = true;
         for (size_t i = 0; i < t2.paramTys.size(); i++) {
-            // Checked exceptions (proposal 3.7): overloading and overriding compare signatures with
+            // Checked exceptions: overloading and overriding compare signatures with
             // all capability lists removed, so parameter functional types differing only in their
             // 'throws' lists are the same type here.
             result = result &&
@@ -1192,7 +1192,7 @@ bool TypeManager::IsFuncParameterTypesIdentical(
         result = true;
         for (size_t i = 0; i < paramTys2.size(); i++) {
             auto paramTy1 = GetInstantiatedTy(paramTys1[i], typeMapping);
-            // Checked exceptions (proposal 3.7): compare modulo capability lists.
+            // Checked exceptions: compare modulo capability lists.
             result = result &&
                 CheckTypeCompatibility(EraseCapTys(paramTy1), EraseCapTys(paramTys2[i]), false) ==
                     TypeCompatibility::IDENTICAL;
@@ -2032,7 +2032,7 @@ bool TypeManager::IsFuncDeclSubType(const AST::FuncDecl& decl, const AST::FuncDe
 
 bool TypeManager::IsFuncTySubType(const AST::FuncTy& type1, const AST::FuncTy& type2)
 {
-    // Checked exceptions (proposal 3.4): capability lists compare by set subsumption.
+    // Checked exceptions: capability lists compare by set subsumption.
     return IsFuncParameterTypesIdentical(type1.paramTys, type2.paramTys) && IsSubtype(type1.retTy, type2.retTy) &&
         IsCapTysSubsumed(type1.capTys, type2.capTys);
 }

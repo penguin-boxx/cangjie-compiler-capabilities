@@ -1305,19 +1305,19 @@ private:
     /**
      * Checked exceptions: validate an elaborated 'throws' or 'captures' clause -- every entry
      * must be a subtype of core 'Exception' (type parameters allowed when suitably bounded),
-     * and no concrete entry may be an unchecked exception type (proposal 3.2 rule 5).
+     * and no concrete entry may be an unchecked exception type.
      * @p clauseKeyword names the clause in diagnostics ("throws" or "captures").
      */
     void ChkThrowsClauseTypes(ASTContext& ctx, AST::ThrowsClause& clause, const std::string& clauseKeyword = "throws");
     /** Checked exceptions: diagnose 'throws' clauses on foreign/C functions and CFunc types. */
     void ChkThrowsClauseOfFuncBody(ASTContext& ctx, AST::FuncBody& fb);
-    /// Effects (proposal 8.2): validate that every 'performs' entry is a 'Command' subtype.
+    /// Effects: validate that every 'performs' entry is a 'Command' subtype.
     void ChkPerformsClauseTypes(ASTContext& ctx, AST::ThrowsClause& clause);
-    /// Checked exceptions (proposal 5.2.2): validate the '@AssumeThrows' annotations of a package.
+    /// Checked exceptions: validate the '@AssumeThrows' annotations of a package.
     void ChkAssumeThrowsAnnotations(ASTContext& ctx, AST::Package& pkg);
     /**
      * Checked exceptions: validate the 'captures' clause of a class or struct declaration
-     * (proposal 3.9) -- elaborate and validate its entries like 'throws' entries and ban
+     * -- elaborate and validate its entries like 'throws' entries and ban
      * primary constructors on capturing declarations (they cannot capture; author ruling).
      */
     void ChkCapturesClauseOfDecl(ASTContext& ctx, AST::InheritableDecl& decl);

@@ -406,7 +406,7 @@ OwnedPtr<Annotation> ParserImpl::ParseAnnotation()
 
 void ParserImpl::ParseAssumeThrowsAnnotation(Annotation& anno)
 {
-    // Checked exceptions (proposal 5.2.2): '@AssumeThrows[E1, E2]' on an import imposes the
+    // Checked exceptions: '@AssumeThrows[E1, E2]' on an import imposes the
     // listed exception types on every call into the imported package; the bare '@AssumeThrows'
     // assumes 'Exception'. Capability list aliases apply, so the entries are ordinary types.
     auto clause = MakeOwned<ThrowsClause>();

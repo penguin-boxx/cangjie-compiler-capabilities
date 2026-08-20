@@ -16,7 +16,7 @@
  *   exception type listed in its catch patterns ('e: E1 | E2' introduces two) covering the try
  *   block and the resource initializers of a try-with-resources expression, while 'catch' and
  *   'finally' blocks stay outside; a function literal's body is covered by the capability list
- *   of the literal's own functional type (inferred from the expected type, proposal 3.5).
+ * of the literal's own functional type (inferred from the expected type).
  *   'spawn' bodies start with an EMPTY stack (author ruling): enclosing capabilities are
  *   unreachable inside them. Effect-handler clauses ('handle') are ignored entirely.
  * - Demands: 'throw e' demands the static type of 'e'; a call demands every entry of the
@@ -25,10 +25,10 @@
  *   must be satisfiable in EVERY constructor's scope; static and top-level initializers have
  *   no capability scope.
  * - Resolution: a demand is satisfied iff some active supply S exists with demanded <: S,
- *   searched from the innermost scope outwards, first match (proposal 3.3).
+ * searched from the innermost scope outwards, first match.
  *
  * The pass never mutates types; unsatisfied demands go to a CapabilityMissHandler — the seam
- * where capability-parameter inference (proposal 6.3) will later collect residual demands.
+ * where capability-parameter inference will later collect residual demands.
  */
 
 #include "cangjie/Sema/CapabilityCheck.h"
@@ -56,22 +56,22 @@ using namespace Cangjie::AST;
 
 namespace {
 /// One capability scope: the exception types whose capabilities the scope supplies, in textual
-/// order (within one scope the first suitable entry wins, proposal 3.3).
+/// order (within one scope the first suitable entry wins).
 using SupplyScope = std::vector<Ptr<Ty>>;
 /// Consulted when the lexical scope stack has no suitable supply; used for the every-constructor
 /// rule of instance field initializers. Null means no further supplies.
 using RootSupply = std::function<bool(Ptr<Ty>)>;
-/// Assumption imports (proposal 5.2.2), per file: the exception types imposed on every call into
+/// Assumption imports, per file: the exception types imposed on every call into
 /// each named package. Keyed per file because that is where an import — and with it the consumer's
 /// trust claim about the dependency — lives.
 using AssumedThrows = std::unordered_map<std::string, std::vector<Ptr<Ty>>>;
 using AssumedThrowsByFile = std::unordered_map<Ptr<const File>, AssumedThrows>;
 
 /**
- * Collects the assumption imports of a package (proposal 5.2.2).
+ * Collects the assumption imports of a package.
  *
  * The bare form '@AssumeThrows' assumes 'Exception'. A tuple entry — written directly or reached
- * through a type alias — is a capability list and is spliced in (proposal 6.1). The claim is
+ * through a type alias — is a capability list and is spliced in. The claim is
  * recorded under every package name the import could denote, so it matches the callee's package
  * whether the import names the package ('import legacy.db.*') or a declaration in it
  * ('import legacy.db.query').
@@ -117,7 +117,7 @@ AssumedThrowsByFile CollectAssumedThrows(const Package& pkg, const ImportManager
     return byFile;
 }
 
-/// Effects (proposal 8.2): an entry is an effect requirement iff it is a 'Command' subtype, and
+/// Effects: an entry is an effect requirement iff it is a 'Command' subtype, and
 /// an exception requirement iff it is an 'Exception' subtype. The two roots are disjoint, which is
 /// what lets one capability list carry both kinds (decision D17).
 bool IsCommandTy(TypeManager& typeManager, const ImportManager& importManager, Ptr<Ty> ty)
@@ -156,7 +156,7 @@ public:
     }
 
     /**
-     * Check one callable in collect mode (proposal 6.3): the declaration's own inferred list is
+     * Check one callable in collect mode: the declaration's own inferred list is
      * not consulted as a supply, so every requirement its body does not discharge locally
      * reaches the miss handler. Explicit clause entries still supply.
      */
@@ -236,7 +236,7 @@ private:
             case ASTKind::VAR_DECL:
             case ASTKind::VAR_WITH_PATTERN_DECL:
                 // Top-level variable initializers cannot throw checked exceptions: no capability
-                // scope encloses them (proposal 3.3).
+                // scope encloses them.
                 CheckInitializer(StaticCast<VarDeclAbstract&>(decl), nullptr);
                 break;
             default:
@@ -247,7 +247,7 @@ private:
     void CheckMembers(Decl& decl)
     {
         // An instance field initializer has no scope of its own: its demands must be satisfiable
-        // in the capability scope of EVERY constructor (proposal 3.3). With no explicit
+        // in the capability scope of EVERY constructor. With no explicit
         // constructor the implicit one supplies nothing.
         std::vector<SupplyScope> ctorCapLists;
         for (auto& member : decl.GetMemberDecls()) {
@@ -307,8 +307,8 @@ private:
         currentFile = fd.curFile;
         rootSupply = nullptr;
         // The enclosing class's captured capabilities are in scope throughout a member that has
-        // a receiver to carry them (proposal 3.9). A static member, a static initializer and a
-        // finalizer have none, and proposal 3.9 rule 1 forbids checked throws there. Derived
+        // a receiver to carry them. A static member, a static initializer and a
+        // finalizer have none, and a checked throw is forbidden there. Derived
         // from the declaration's owner rather than from checker state, so inference — which
         // checks declarations one by one — sees the same supplies as the reporting pass.
         bool hasReceiver = !fd.TestAttr(Attribute::STATIC) && !fd.IsFinalizer();
@@ -316,7 +316,7 @@ private:
         PushCaptures(captures);
         // The FUNC_BODY visit then pushes the declaration's own clause scope. The walker visits
         // parameter default values before the body, matching "as if it appeared at the
-        // beginning of the body" (proposal 3.3).
+        // beginning of the body".
         WalkScoped(fd.funcBody.get());
         PopCaptures(captures);
         CJC_ASSERT(supplies.empty());
@@ -331,7 +331,7 @@ private:
         currentFile = vd.curFile;
         rootSupply = std::move(root);
         // Only an INSTANCE field initializer runs with a receiver; a static one has no
-        // capability scope at all (proposal 3.3, 3.9 rule 1). 'root' is non-null exactly for
+        // capability scope at all (3.9 rule 1). 'root' is non-null exactly for
         // instance fields.
         auto captures = rootSupply ? OwnerCaptures(vd) : SupplyScope{};
         PushCaptures(captures);
@@ -342,7 +342,7 @@ private:
     }
 
     /// The 'captures' list of the declaration's own class or struct — never an inherited one
-    /// (proposal 3.9 rule 5).
+    ///.
     SupplyScope OwnerCaptures(const Decl& decl) const
     {
         return decl.outerDecl ? TypeCheckUtil::GetDeclCapturesCapTys(*decl.outerDecl) : SupplyScope{};
@@ -384,7 +384,7 @@ private:
                 auto caps = TypeCheckUtil::GetFuncBodyCapTys(fb);
                 // An inferred list acts as the declaration's clause — except while collecting
                 // that very declaration's residual demands, when consulting it would make every
-                // requirement look discharged (proposal 6.3.2).
+                // requirement look discharged.
                 if (fb.funcDecl && fb.funcDecl.get() != collectingFor.get()) {
                     auto it = inferred.find(fb.funcDecl);
                     if (it != inferred.end()) {
@@ -396,7 +396,7 @@ private:
             }
             case ASTKind::LAMBDA_EXPR:
                 // A literal's capability list comes from the expected type only and is stored
-                // on the literal's functional type (proposal 3.5).
+                // on the literal's functional type.
                 supplies.emplace_back(GetLiteralCapTys(StaticCast<LambdaExpr&>(*node)));
                 return VisitAction::WALK_CHILDREN;
             case ASTKind::FUNC_PARAM: {
@@ -421,7 +421,7 @@ private:
                 return VisitAction::WALK_CHILDREN;
             }
             case ASTKind::PERFORM_EXPR: {
-                // Effects (proposal 8.2): 'perform c' requires a handler capability for the
+                // Effects: 'perform c' requires a handler capability for the
                 // command's own type, exactly as 'throw e' requires one for the exception's.
                 auto& pe = StaticCast<PerformExpr&>(*node);
                 if (pe.expr && Ty::IsTyCorrect(pe.expr->GetTy())) {
@@ -455,7 +455,7 @@ private:
     void HandleTry(TryExpr& te)
     {
         // A 'handle' clause supplies a handler capability for each command type it lists
-        // (proposal 8.2), over the same region a 'catch' covers. 'te.tryLambda' and
+        //, over the same region a 'catch' covers. 'te.tryLambda' and
         // 'te.finallyLambda' are the desugared forms of the blocks walked below, so they are
         // deliberately not walked again.
         auto caps = CollectCatchCapTys(te);
@@ -465,7 +465,7 @@ private:
         supplies.emplace_back(std::move(caps));
         for (auto& resource : te.resourceSpec) {
             // Resource initializers of try-with-resources are inside the try's scope: their
-            // exceptions are caught by the same clauses (proposal 3.3).
+            // exceptions are caught by the same clauses.
             WalkScoped(resource.get());
         }
         // With 'handle' clauses present the parser rebuilds the try block as a lambda, and THAT
@@ -518,7 +518,7 @@ private:
         return caps;
     }
 
-    /// The command types listed by the 'handle' clauses of @p te (proposal 8.2). A pattern
+    /// The command types listed by the 'handle' clauses of @p te. A pattern
     /// 'c: C1 | C2' introduces two, mirroring how a catch pattern introduces one per exception.
     SupplyScope CollectHandlerCapTys(const TryExpr& te) const
     {
@@ -576,7 +576,7 @@ private:
             }
             demands = TypeCheckUtil::GetInstantiatedAccessorCapTys(typeManager, *ce.resolvedFunction, receiverTy);
         }
-        // A callee whose list was inferred (proposal 6.3) carries it beside the AST: this call
+        // A callee whose list was inferred carries it beside the AST: this call
         // site's type was formed during type check, before inference ran, so completing the
         // declaration's type cannot reach it. Unioned, not appended: the entries can be
         // pointer-identical to those already present.
@@ -605,7 +605,7 @@ private:
     }
 
     /**
-     * Assumption imports (proposal 5.2.2): a call into an assumed package carries the assumed
+     * Assumption imports: a call into an assumed package carries the assumed
      * list on top of whatever the callee declares. Assumptions only ADD obligations relative to
      * the read-as-empty default, so the two are unioned; the entries can already be present when
      * the dependency is itself checked.
@@ -660,7 +660,7 @@ private:
     void DemandConstructedCaptures(CallExpr& ce)
     {
         // Constructing an instance of a capturing class or struct requires its captured
-        // capabilities at the construction site (proposal 3.9 rule 4). This covers 'C(...)',
+        // capabilities at the construction site. This covers 'C(...)',
         // delegating 'this(...)' calls, and 'super(...)' calls, which resolve to the
         // superclass constructor and therefore demand the superclass's captures (rule 5).
         auto ctor = ce.resolvedFunction;
@@ -707,13 +707,13 @@ private:
 
     void Demand(Ptr<Ty> exceptionTy, const Node& site, const std::string& requiredBy)
     {
-        // Throwing an unchecked exception never requires a capability (proposal 6.4). Call-site
+        // Throwing an unchecked exception never requires a capability. Call-site
         // demands are filtered here too: a capability parameter whose type instantiates to an
-        // unchecked exception type is trivially satisfied (proposal 3.2 rule 5).
+        // unchecked exception type is trivially satisfied.
         if (TypeCheckUtil::IsUncheckedExceptionTy(typeManager, importManager, exceptionTy)) {
             return;
         }
-        // The Error hierarchy is fail-fast, never statically tracked (proposal 1.1's split,
+        // The Error hierarchy is fail-fast, never statically tracked (the fail-fast/recoverable split,
         // after Midori's Error Model): 'Error <: ToString' is a separate root, so a class type
         // under NEITHER tracked root -- Exception (throws) nor Command (performs) -- never
         // demands. Found by the stdlib migration: std.core's own OutOfMemoryError throws warned
@@ -730,7 +730,7 @@ private:
             }
         }
         // Scopes are searched from the innermost enclosing one outwards; within one scope the
-        // first suitable entry in textual order supplies the capability (proposal 3.3).
+        // first suitable entry in textual order supplies the capability.
         for (auto scope = supplies.rbegin(); scope != supplies.rend(); ++scope) {
             if (HasSuitableSupply(*scope, exceptionTy)) {
                 return;
@@ -749,14 +749,14 @@ private:
     const AssumedThrowsByFile& assumed;
     std::vector<SupplyScope> supplies;
     RootSupply rootSupply;
-    // Lists inferred for declarations without an authoritative clause (proposal 6.3).
+    // Lists inferred for declarations without an authoritative clause.
     const Sema::InferredCapabilities& inferred;
     // Set while collecting one declaration's residual demands: its own inferred list is not a supply.
     Ptr<const Decl> collectingFor{nullptr};
     // File of the declaration being checked; the fallback for a call site that lost its own.
     Ptr<const File> currentFile{nullptr};
 };
-/// Collects residual demands instead of diagnosing them (proposal 6.3, the miss-handler seam).
+/// Collects residual demands instead of diagnosing them (miss-handler seam).
 class CollectingMissHandler : public Sema::CapabilityMissHandler {
 public:
     void HandleMiss(const Sema::CapabilityDemand& demand) override
@@ -764,7 +764,7 @@ public:
         if (!Ty::IsTyCorrect(demand.exceptionTy)) {
             return;
         }
-        // Effect requirements are never inferred (proposal 9.1, policy table): they are semantic
+        // Effect requirements are never inferred (policy table): they are semantic
         // contract and, under evidence passing, ABI. Dropping them here leaves them undischarged,
         // so the reporting pass diagnoses them instead of silently widening the declaration.
         if (demand.isEffect) {
@@ -784,7 +784,7 @@ private:
 };
 
 /**
- * Capability parameter inference (proposal 6.3).
+ * Capability parameter inference.
  *
  * Eligible declarations are those without an authoritative clause that are not part of the
  * package's exported surface. Their lists are the least solution of
@@ -806,7 +806,7 @@ public:
 
     Sema::InferredCapabilities Infer(Package& pkg)
     {
-        // Assumed requirements participate in inference like declared ones (proposal 5.2.2).
+        // Assumed requirements participate in inference like declared ones.
         assumed = CollectAssumedThrows(pkg, importManager);
         CollectEligible(pkg);
         BuildCallGraph();
@@ -833,7 +833,7 @@ private:
             return false;
         }
         // A non-private static class member can be redefined by a subclass and is dispatched
-        // virtually, so proposal 3.8 applies to it — but override checking runs during type
+        // virtually, so the override rule applies to it — but override checking runs during type
         // check, before inference, and would not see an inferred list. Requiring an explicit
         // clause here keeps the two consistent; a post-inference re-check would let these be
         // inferred too (see notes/audit-report.md MF8).
@@ -985,7 +985,7 @@ private:
     }
 
     /// Tarjan's algorithm; components come out in reverse topological order, i.e. callees first,
-    /// which is exactly the bottom-up order the proposal's phase ordering asks for.
+    /// which is exactly the bottom-up order the phase ordering requires.
     std::vector<std::vector<size_t>> StronglyConnectedComponents()
     {
         tarjanIndex.assign(order.size(), kUnvisited);
@@ -1080,7 +1080,7 @@ private:
     std::vector<std::vector<std::pair<Ptr<const CallExpr>, size_t>>> genericCalls;
     std::unordered_set<size_t> reportedPolymorphic;
     Sema::InferredCapabilities inferred;
-    /// Assumption imports of the package (proposal 5.2.2), shared with every checker below.
+    /// Assumption imports of the package, shared with every checker below.
     AssumedThrowsByFile assumed;
     std::vector<size_t> tarjanIndex;
     std::vector<size_t> tarjanLow;
@@ -1095,7 +1095,7 @@ void ReportCapabilityMissHandler::HandleMiss(const CapabilityDemand& demand)
 {
     CJC_NULLPTR_CHECK(demand.demandSite);
     auto tyName = Ty::ToString(demand.exceptionTy);
-    // Effects (proposal 8.2): an effect capability is named 'Handler<C>', not 'CanThrow<E>'.
+    // Effects: an effect capability is named 'Handler<C>', not 'CanThrow<E>'.
     auto kind = demand.isEffect ? (asWarning ? DiagKindRefactor::sema_chexc_missing_handler_capability_warn
                                              : DiagKindRefactor::sema_chexc_missing_handler_capability)
                                 : (asWarning ? DiagKindRefactor::sema_chexc_missing_capability_warn
@@ -1115,7 +1115,7 @@ void CompleteInferredCapabilityTypes(TypeManager& typeManager, const InferredCap
             continue;
         }
         // Union: a clause ending in '...' contributes declared entries that are already present
-        // (proposal 6.3.5).
+        //.
         std::vector<Ptr<Ty>> completed = funcTy->capTys;
         for (auto cap : caps) {
             if (Ty::IsTyCorrect(cap) && !Utils::In(cap, completed)) {

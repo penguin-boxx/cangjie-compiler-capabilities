@@ -1109,7 +1109,7 @@ TTypeOffset ASTWriter::ASTWriterImpl::SaveFuncTy(const FuncTy& type)
         paramTypes.push_back(SaveType(it));
     }
     auto vParamTypes = builder.CreateVector<FormattedIndex>(paramTypes);
-    // Checked exceptions (proposal 3.10.2): the capability list travels with the functional type,
+    // Checked exceptions: the capability list travels with the functional type,
     // separately from the parameter types above, so an imported declaration's requirements are
     // demanded at call sites in the importing package.
     std::vector<FormattedIndex> capTypes;

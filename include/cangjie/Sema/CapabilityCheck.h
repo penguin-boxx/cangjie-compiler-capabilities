@@ -35,14 +35,14 @@ struct CapabilityDemand {
     Ptr<AST::Ty> exceptionTy;
     Ptr<const AST::Node> demandSite;
     std::string requiredBy;
-    /// Effects (proposal 8.2): true when the demanded type is a Command subtype. Decides the
+    /// Effects: true when the demanded type is a Command subtype. Decides the
     /// diagnostic's capability name -- 'Handler<C>' rather than 'CanThrow<E>' -- and exclusion
-    /// from inference, which never infers effect requirements (proposal 9.1).
+    /// from inference, which never infers effect requirements.
     bool isEffect{false};
 };
 
 /**
- * Miss-handler seam (proposal 6.3): the demand/supply walker is parameterized over what happens
+ * Miss-handler seam: the demand/supply walker is parameterized over what happens
  * to unsatisfied demands. The reporting handler below diagnoses each miss; capability-parameter
  * inference will later plug in a collecting handler that gathers residual demands instead.
  */
@@ -53,7 +53,7 @@ public:
 };
 
 /**
- * Reporting miss-handler: diagnoses each miss with the proposal's wording. Severity follows
+ * Reporting miss-handler: diagnoses each miss. Severity follows
  * '--enable-checked-exceptions[=error|warn]'; the warning variant belongs to the 'chexc'
  * warn group.
  */
@@ -70,7 +70,7 @@ private:
 };
 
 /**
- * Capability lists inferred for declarations without an authoritative clause (proposal 6.3).
+ * Capability lists inferred for declarations without an authoritative clause.
  * Kept beside the AST rather than written into declaration types: the checking pass stays a
  * pure check, and call sites resolve a callee's list through this map.
  */
@@ -78,7 +78,7 @@ using InferredCapabilities = std::unordered_map<Ptr<AST::FuncDecl>, std::vector<
 
 /**
  * Infer capability parameter lists for the inference-eligible declarations of @p pkg
- * (proposal 6.3): the least solution of the monotone equations over each strongly connected
+ *: the least solution of the monotone equations over each strongly connected
  * component of the intra-package call graph, computed bottom-up. Declarations carrying an
  * authoritative clause are constants; a clause ending in `...` contributes its entries and
  * still takes part. Polymorphic recursion is rejected with a diagnostic.
@@ -87,7 +87,7 @@ InferredCapabilities InferCapabilities(
     TypeManager& typeManager, const ImportManager& importManager, AST::Package& pkg, DiagnosticEngine& diag);
 
 /**
- * Complete the types of the declarations covered by @p inferred (proposal 6.3.3: capability
+ * Complete the types of the declarations covered by @p inferred (capability
  * parameters, then clause components of types, then capability arguments). Each declaration's
  * functional type is re-interned with its inferred entries, so the declaration's own type is the
  * single source of its capability list. Expression types are deliberately NOT completed: they
@@ -107,11 +107,11 @@ void CheckCapabilities(TypeManager& typeManager, const ImportManager& importMana
     CapabilityMissHandler& missHandler, const InferredCapabilities& inferred = {});
 
 /**
- * The capability list of @p decl's 'captures' clause (proposal 3.9), with capability list aliases
- * already spliced in (proposal 6.1); empty for a declaration that captures nothing.
+ * The capability list of @p decl's 'captures' clause, with capability list aliases
+ * already spliced in; empty for a declaration that captures nothing.
  *
  * Exposed here for package serialization, which must write the clause into the .cjo so that
- * construction sites in other packages demand it (proposal 3.10.2). The elaborated clause lives
+ * construction sites in other packages demand it. The elaborated clause lives
  * on the AST, which serialization cannot reach through the Sema-private headers.
  */
 std::vector<Ptr<AST::Ty>> GetCapturesCapTys(const AST::Decl& decl);

@@ -1384,7 +1384,7 @@ bool StructInheritanceChecker::CheckReturnOverrideByGeneric(const FuncTy& parent
 void StructInheritanceChecker::CheckThrowsClauseCompatible(const AST::FuncDecl& parentFunc,
     const AST::FuncDecl& childFunc, const FuncTy& parentTy, const FuncTy& childTy) const
 {
-    // Checked exceptions (proposal 3.8): the override's (redefinition's) capability list must be
+    // Checked exceptions: the override's (redefinition's) capability list must be
     // pointwise subsumed by the original's -- every exception type in the override's 'throws' list
     // must be a subtype of some exception type in the original's list. Constructors are exempt
     // (they are new declarations, never overridden).

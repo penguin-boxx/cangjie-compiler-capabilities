@@ -76,7 +76,7 @@ void Collector::CollectFileNode(ASTContext& ctx, File& file, bool buildTrie)
     AddSymbol(ctx, nodeInfo, buildTrie);
     for (auto& import : file.imports) {
         BuildSymbolTable(ctx, import.get(), buildTrie);
-        // Checked exceptions (proposal 5.2.2): the exception types of an '@AssumeThrows' import
+        // Checked exceptions: the exception types of an '@AssumeThrows' import
         // annotation are named in the file's top-level scope, which is the scope in effect here.
         for (auto& anno : import->annotations) {
             if (!anno || !anno->assumeThrows) {
@@ -151,7 +151,7 @@ void Collector::CollectCapturesClause(ASTContext& ctx, const InheritableDecl& de
 {
     // Checked exceptions (experimental): the 'captures' clause types may reference the
     // declaration's generic parameters, so they are collected inside its scope, like the
-    // capability types of a 'throws' clause (proposal 3.9).
+    // capability types of a 'throws' clause.
     if (!decl.capturesClause) {
         return;
     }
