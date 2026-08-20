@@ -27,7 +27,7 @@
 #include "cangjie/Option/OptionTable.h"
 #include "cangjie/Utils/FileUtil.h"
 #include "cangjie/Utils/Utils.h"
-#include  "cangjie/Utils/Semaphore.h"
+#include "cangjie/Utils/Semaphore.h"
 
 namespace Cangjie {
 
