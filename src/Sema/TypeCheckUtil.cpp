@@ -14,7 +14,6 @@
 
 #include "Promotion.h"
 #include "TypeCheckUtil.h"
-#include "Promotion.h"
 
 #include <map>
 #include <set>
