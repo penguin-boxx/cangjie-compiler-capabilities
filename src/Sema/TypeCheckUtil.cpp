@@ -825,7 +825,7 @@ bool IsEnumCtorWithoutTypeArgs(const Expr& expr, Ptr<const Decl> target)
         // For enum like 'None'.
         return expr.GetTypeArgs().empty();
     } else if (auto ma = DynamicCast<const MemberAccess*>(&expr);
-        ma && ma->baseExpr && ma->baseExpr->IsReferenceExpr()) {
+               ma && ma->baseExpr && ma->baseExpr->IsReferenceExpr()) {
         auto baseTypeArgs = ma->baseExpr->GetTypeArgs();
         auto baseDecl = ma->baseExpr->GetTarget();
         CJC_NULLPTR_CHECK(baseDecl);
@@ -978,8 +978,7 @@ bool MemberMatchesSig(const Decl& member, const MemSig& sig)
     auto generic = fd->GetGeneric();
     auto genArity = generic ? generic->typeParameters.size() : 0;
     // Generic members are also registered with genArity 0 for inferred type arguments.
-    return fd->funcBody->paramLists[0]->params.size() == sig.arity &&
-        (sig.genArity == 0 || genArity == sig.genArity);
+    return fd->funcBody->paramLists[0]->params.size() == sig.arity && (sig.genArity == 0 || genArity == sig.genArity);
 }
 
 std::vector<Ptr<GenericsTy>> GetDeclGenericParamVec(const Decl& d)
@@ -1072,8 +1071,7 @@ struct CoverageContext {
 // declared in extends of it. The extended decl's i-th generic param unifies with the i-th type
 // arg of the extended type; it is determined once all extend generics inside that type arg are
 // determined by the matching extend members' parameter types.
-void CollectExtendCoverage(const InheritableDecl& id, const std::vector<Ptr<GenericsTy>>& gpsVec,
-    CoverageContext& ctx)
+void CollectExtendCoverage(const InheritableDecl& id, const std::vector<Ptr<GenericsTy>>& gpsVec, CoverageContext& ctx)
 {
     for (auto extend : ctx.tyMgr->GetDeclExtends(id)) {
         CJC_NULLPTR_CHECK(extend);
@@ -1107,8 +1105,7 @@ void CollectExtendCoverage(const InheritableDecl& id, const std::vector<Ptr<Gene
 // super generic param is unified with the corresponding type arg of the inherited type, which
 // structurally determines `id`'s generics inside that type arg.
 void CollectSuperCoverage(
-    const InheritableDecl& id, const std::set<Ptr<GenericsTy>>& gps, std::set<Ptr<Decl>>& visited,
-    CoverageContext& ctx)
+    const InheritableDecl& id, const std::set<Ptr<GenericsTy>>& gps, std::set<Ptr<Decl>>& visited, CoverageContext& ctx)
 {
     for (auto& inheritedType : id.inheritedTypes) {
         auto superTy = inheritedType ? inheritedType->GetTy() : nullptr;
@@ -1135,8 +1132,7 @@ void CollectSuperCoverage(
 // Collect the generic params of `d` determined by member usages matching `memSigs`, considering
 // members declared in `d` itself, in extends of `d`, and inherited ones; coverage of extend/super
 // generic params is mapped back to `d`'s own params through the extended/inherited type's args.
-std::set<Ptr<GenericsTy>> CoveredGenericsOf(
-    Decl& d, CoverageInput& input, bool& anyMatch, std::set<Ptr<Decl>>& visited)
+std::set<Ptr<GenericsTy>> CoveredGenericsOf(Decl& d, CoverageInput& input, bool& anyMatch, std::set<Ptr<Decl>>& visited)
 {
     auto gpsVec = GetDeclGenericParamVec(d);
     std::set<Ptr<GenericsTy>> gps(gpsVec.begin(), gpsVec.end());
@@ -1179,9 +1175,8 @@ bool CanDetermineCandidate(
 }
 } // namespace
 
-void TryEnforceCandidate(
-    TyVar& tv, const std::set<Ptr<Decl>>& candidates, TypeManager& tyMgr, const std::vector<MemSig>& memSigs,
-    const MemSigSet& resultConstrainedMemSigs)
+void TryEnforceCandidate(TyVar& tv, const std::set<Ptr<Decl>>& candidates, TypeManager& tyMgr,
+    const std::vector<MemSig>& memSigs, const MemSigSet& resultConstrainedMemSigs)
 {
     if (candidates.empty()) {
         return;
@@ -1471,8 +1466,8 @@ inline bool IsNormalCtorRef(const AST::Node& node)
     return !re || (!re->isThis && !re->isSuper);
 }
 
-bool IsLegalAccess(Symbol* curComposite, const Decl& d, const AST::Node& node, ImportManager& importManager,
-    TypeManager& typeManager)
+bool IsLegalAccess(
+    Symbol* curComposite, const Decl& d, const AST::Node& node, ImportManager& importManager, TypeManager& typeManager)
 {
     auto vd = DynamicCast<const VarDecl*>(&d);
     auto fd = DynamicCast<const FuncDecl*>(&d);

@@ -930,7 +930,7 @@ OwnedPtr<Decl> ASTLoader::ASTLoaderImpl::LoadNominalDecl(const PackageFormat::De
         astDecl->DisableAttr(Attribute::JAVA_MIRROR, Attribute::JAVA_IMPL);
         if (astDecl->HasAnno(AnnotationKind::JAVA_MIRROR) ||
             astDecl->TestAttr(Attribute::JAVA_MIRROR_SYNTHETIC_WRAPPER)) {
-                astDecl->MarkAsJavaMirror();
+            astDecl->MarkAsJavaMirror();
         } else if (astDecl->HasAnno(AnnotationKind::JAVA_IMPL)) {
             astDecl->MarkAsJavaImpl();
         }

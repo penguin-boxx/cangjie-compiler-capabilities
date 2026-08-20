@@ -1254,8 +1254,8 @@ bool TypeManager::IsTyExtendInterface(const Ty& classTy, const Ty& interfaceTy)
     return false;
 }
 
-bool TypeManager::HasExtendInterfaceTyHelper(Ty& superTy, const std::set<Ptr<ExtendDecl>>& extends,
-    const std::vector<Ptr<Ty>>& typeArgs)
+bool TypeManager::HasExtendInterfaceTyHelper(
+    Ty& superTy, const std::set<Ptr<ExtendDecl>>& extends, const std::vector<Ptr<Ty>>& typeArgs)
 {
     PData::CommitScope cs(constraints);
     for (auto& extend : extends) {
@@ -2311,7 +2311,7 @@ TypeSubst GetGreedySubst(Constraint& cst)
     }
     return m;
 }
-}
+} // namespace
 
 Ptr<AST::Ty> TypeManager::TryGreedySubst(Ptr<AST::Ty> ty)
 {

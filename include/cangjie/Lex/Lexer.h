@@ -72,12 +72,11 @@ class Lexer {
 public:
     /// Create Lexer.
     /// \param cts whether to enableCollectTokenStream
-    Lexer(unsigned int fileID, const std::string& input, DiagnosticEngine& diag, SourceManager& sm,
-        bool cts = false);
+    Lexer(unsigned int fileID, const std::string& input, DiagnosticEngine& diag, SourceManager& sm, bool cts = false);
     /// \param pos the location of the first character of input. This is typically called in parsing interpolation
     /// string.
-    Lexer(unsigned int fileID, const std::string& input, DiagnosticEngine& diag, SourceManager& sm,
-        const Position& pos);
+    Lexer(
+        unsigned int fileID, const std::string& input, DiagnosticEngine& diag, SourceManager& sm, const Position& pos);
     /// \param splitAmbi
     /// This is called by libast
     Lexer(const std::string& input, DiagnosticEngine& diag, SourceManager& sm, bool cts = false, bool splitAmbi = true);
@@ -137,7 +136,7 @@ public:
      * @brief Enable lexing of EH keywords
      *
      * @param enabled Whether to enable or disable EH tokens lexing
-    */
+     */
     void SetEHEnabled(bool enabled) const;
 
     // Parse/Macro.

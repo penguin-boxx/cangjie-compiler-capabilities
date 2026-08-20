@@ -130,7 +130,7 @@ inline const std::string JAVA_SELF_OBJECT = "selfobj";
 constexpr auto JAVA_REF_GETTER_FUNC_NAME = "$getJavaRef";
 constexpr auto INTEROPLIB_CFFI_JAVA_ENTITY = "Java_CFFI_JavaEntity";
 constexpr auto ENV = "env";
-} // namespace Cangjie::Interop::Java
+} // namespace Interop::Java
 
 namespace Interop::ObjC {
 inline const std::string OBJ_C_ID_IDENT = "ObjCId";

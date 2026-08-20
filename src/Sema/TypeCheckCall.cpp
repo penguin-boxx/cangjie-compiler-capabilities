@@ -408,8 +408,8 @@ bool HasSamePositionalArgsSize(const FuncDecl& fd, const CallExpr& ce)
     size_t positionalParamSize = GetPositionalParamSize(fd);
     size_t positionalArgSize = GetPositionalArgSize(ce);
     if (!ce.args.empty() && ce.args.back()->TestAttr(Attribute::IMPLICIT_ADD) &&
-        !fd.funcBody->paramLists[0]->params.empty() &&
-        fd.funcBody->paramLists[0]->params.back()->isNamedParam && positionalArgSize == ce.args.size()) {
+        !fd.funcBody->paramLists[0]->params.empty() && fd.funcBody->paramLists[0]->params.back()->isNamedParam &&
+        positionalArgSize == ce.args.size()) {
         // For trailing closure argument, if the original func param is named and no other named argument existed,
         // it should be treated as named argument.
         --positionalArgSize;
@@ -503,9 +503,8 @@ std::vector<Ptr<FuncDecl>> SyntaxFilterCandidates(const CallExpr& ce, const std:
                 mismatch = true;
             }
         }
-        definitelyMismatch
-            ? definitelyMismatched.emplace_back(fd)
-            : (mismatch ? mismatched.emplace_back(fd) : matched.emplace_back(fd));
+        definitelyMismatch ? definitelyMismatched.emplace_back(fd)
+                           : (mismatch ? mismatched.emplace_back(fd) : matched.emplace_back(fd));
     }
     // Should not return empty vector for future diagnoses.
     return matched.empty() ? (mismatched.empty() ? definitelyMismatched : mismatched) : matched;
@@ -614,8 +613,8 @@ bool CheckUseTrailingClosureWithFunctionType(
     arg.expr->SetTy(TypeManager::GetInvalidTy());
     std::string message =
         originalTy.IsGeneric() ? "generic type without upper bound of function type" : "non-function type";
-    auto diagBuilder = diag.DiagnoseRefactor(
-        DiagKindRefactor::sema_trailing_lambda_cannot_used_for_non_function, arg, message);
+    auto diagBuilder =
+        diag.DiagnoseRefactor(DiagKindRefactor::sema_trailing_lambda_cannot_used_for_non_function, arg, message);
     diagBuilder.AddMainHintArguments(originalTy.String());
     diagBuilder.AddNote(candidate, MakeRangeForDeclIdentifier(candidate), "found candidate");
     return false;
@@ -783,8 +782,7 @@ bool TypeChecker::TypeCheckerImpl::CompareFuncCandidates(
         ic.SetRefDeclSimple(j.fd, ce);
         ArgumentTypeUnit atu(i.tysInArgOrder, j.tysInArgOrder, {});
         ProcessParamToArg(typeManager, atu);
-        auto argPack = LocTyArgSynArgPack{GetTyVarsToSolve(typeManager.GetInstMapping()),
-            atu.argTys, atu.tysInArgOrder,
+        auto argPack = LocTyArgSynArgPack{GetTyVarsToSolve(typeManager.GetInstMapping()), atu.argTys, atu.tysInArgOrder,
             {}, TypeManager::GetInvalidTy(), TypeManager::GetInvalidTy(), {}};
         auto optSubst = LocalTypeArgumentSynthesis(typeManager, argPack, {}).SynthesizeTypeArguments();
         if (!optSubst.has_value()) {
@@ -992,7 +990,7 @@ void FilterAndReduceSubstPacks(std::vector<SubstPack>& mapsList, TypeManager& ty
     }
     mapsList = filtered;
 }
-}
+} // namespace
 
 void TypeChecker::TypeCheckerImpl::FilterTypeMappings(
     const Expr& expr, FuncDecl& fd, std::vector<MultiTypeSubst>& typeMappings)
@@ -2093,8 +2091,7 @@ namespace {
  * @param ce The callExpr need to be resolved.
  * @param diagnoses The vector of diagnostics of all function candidates and their count of matched arguments.
  */
-void CheckEmptyMatchResult(DiagnosticEngine& diag, CallExpr& ce,
-    std::vector<FunctionMatchingUnit>& illegals)
+void CheckEmptyMatchResult(DiagnosticEngine& diag, CallExpr& ce, std::vector<FunctionMatchingUnit>& illegals)
 {
     if (illegals.empty()) {
         return;
@@ -2462,7 +2459,7 @@ bool TypeChecker::TypeCheckerImpl::ChkCurryCallBase(ASTContext& ctx, CallExpr& c
     Ptr<Ty> retTy = targetRet ? targetRet : TypeManager::GetQuestTy();
     {
         auto ds = DiagSuppressor(diag);
-        for (auto& arg: ce.args) {
+        for (auto& arg : ce.args) {
             if (Ty::IsInitialTy(arg->GetTy())) {
                 SynthesizeWithCache({ctx, SynPos::EXPR_ARG}, arg);
             }
@@ -2889,7 +2886,7 @@ Ptr<FuncTy> TryCastingToFuncTy(Ptr<Ty> ty, size_t arity, TypeManager& tyMgr)
     }
     return nullptr;
 };
-}
+} // namespace
 
 bool TypeChecker::TypeCheckerImpl::CheckNonNormalCall(ASTContext& ctx, Ptr<Ty> target, CallExpr& ce)
 {
@@ -3146,7 +3143,9 @@ bool TypeChecker::TypeCheckerImpl::ChkVariadicCallExpr(ASTContext& ctx, Ptr<Ty> 
         // Multiple matching functions found, report ambiguous function call.
         Ptr<Decl> decl = results.front();
         CJC_NULLPTR_CHECK(decl);
-        if (decl->TestAttr(Attribute::CONSTRUCTOR) && decl->outerDecl) { decl = decl->outerDecl; }
+        if (decl->TestAttr(Attribute::CONSTRUCTOR) && decl->outerDecl) {
+            decl = decl->outerDecl;
+        }
         DiagnoseForCall(candidates, results, ce, *decl);
     }
     ce.callKind = CallKind::CALL_INVALID;

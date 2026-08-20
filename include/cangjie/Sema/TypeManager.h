@@ -633,8 +633,8 @@ private:
 
     std::unordered_set<Ptr<AST::Ty>> GetAllExtendInterfaceTyHelper(
         const std::set<Ptr<AST::ExtendDecl>>& extends, const std::vector<Ptr<AST::Ty>>& typeArgs);
-    bool HasExtendInterfaceTyHelper(AST::Ty& superTy, const std::set<Ptr<AST::ExtendDecl>>& extends,
-        const std::vector<Ptr<AST::Ty>>& typeArgs);
+    bool HasExtendInterfaceTyHelper(
+        AST::Ty& superTy, const std::set<Ptr<AST::ExtendDecl>>& extends, const std::vector<Ptr<AST::Ty>>& typeArgs);
 
     Ptr<AST::Ty> SubstituteTypeArgs(Ptr<AST::Ty> baseTy, std::vector<Ptr<AST::Ty>>& typeArgs);
     std::vector<Ptr<AST::Ty>> RecursiveSubstituteTypeAliasInTy(

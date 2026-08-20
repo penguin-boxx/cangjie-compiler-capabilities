@@ -60,7 +60,7 @@ bool IsContextualKeyword(std::string_view s)
     }
     return names.count(s) == 1;
 }
-}
+} // namespace Cangjie
 
 bool LexerImpl::IsCurrentCharLineTerminator() const
 {
@@ -387,7 +387,7 @@ bool LexerImpl::ProcessDigits(const int& base, bool& hasDigit, const char* reaso
 {
     bool hasTypeSuffix = false;
     int max = base + static_cast<int>('0');
-    for (int i{0}; ; ++i) {
+    for (int i{0};; ++i) {
         if (i == 0 && isFloat && IsDigit(currentChar)) {
             *isFloat = true;
             tokenKind = TokenKind::FLOAT_LITERAL;
@@ -597,8 +597,9 @@ void LexerImpl::ProcessNumberFloatSuffix(const char& prefix, bool isFloat, bool 
         }
         currentChar = static_cast<int>(cp);
     }
-    if (((!isFloat && hasSuffix) || (suffixBegin != pNext && !IsAdjacent(suffixBegin, pNext)
-        && (isFloat || !hasDot))) && success) {
+    if (((!isFloat && hasSuffix) ||
+            (suffixBegin != pNext && !IsAdjacent(suffixBegin, pNext) && (isFloat || !hasDot))) &&
+        success) {
         auto errPoint = isFloat ? suffixBegin : nonDigitStart;
         auto args = std::string{errPoint, pCurrent};
         /// the suffix is empty, add dot to prevent empty string in diag message
@@ -1688,7 +1689,7 @@ void LexerImpl::ScanSymbolQuest()
         ReadUTF8Char();
     }
 }
- 
+
 void LexerImpl::ScanSymbolColon()
 {
     ReadUTF8Char();

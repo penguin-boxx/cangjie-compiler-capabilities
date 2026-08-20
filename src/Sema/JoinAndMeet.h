@@ -22,10 +22,10 @@
 
 namespace Cangjie {
 struct DualMode {
-    Ptr<AST::Ty> bound; // Any for join, Nothing for meet
-    std::function<Ptr<AST::Ty>(const std::set<Ptr<AST::Ty>>&)> coFunc; // join for join, meet for meet
+    Ptr<AST::Ty> bound;                                                    // Any for join, Nothing for meet
+    std::function<Ptr<AST::Ty>(const std::set<Ptr<AST::Ty>>&)> coFunc;     // join for join, meet for meet
     std::function<Ptr<AST::Ty>(const std::set<Ptr<AST::Ty>>&)> contraFunc; // meet for join, join for meet
-    std::function<bool(Ptr<AST::Ty>, Ptr<AST::Ty>)> coSubtyFunc; // is-subtype for join, is-supertype for meet
+    std::function<bool(Ptr<AST::Ty>, Ptr<AST::Ty>)> coSubtyFunc;           // is-subtype for join, is-supertype for meet
 };
 
 class JoinAndMeet {

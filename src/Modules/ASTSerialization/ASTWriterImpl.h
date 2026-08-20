@@ -68,10 +68,8 @@ public:
     void PreSaveFullExportDecls(AST::Package& package);
     void SaveOptions(bool debug, GlobalOptions::OptimizationLevel level);
     inline bool NeedToExportDecl(Ptr<const AST::Decl> decl);
-    void DFSCollectFilesDeclarations(Ptr<AST::File> file,
-        std::unordered_set<AST::File*>& alreadyVisitedFiles,
-        std::vector<Ptr<const AST::Decl>>& topLevelDeclsOrdered,
-        std::unordered_set<AST::Ty*>& usedTys);
+    void DFSCollectFilesDeclarations(Ptr<AST::File> file, std::unordered_set<AST::File*>& alreadyVisitedFiles,
+        std::vector<Ptr<const AST::Decl>>& topLevelDeclsOrdered, std::unordered_set<AST::Ty*>& usedTys);
     // Export external decls of a package AST to a buffer.
     void ExportAST(const AST::PackageDecl& package);
     void AST2FB(std::vector<uint8_t>& data, const AST::PackageDecl& package);
@@ -168,7 +166,7 @@ private:
             return (this->*saveFunc)(StaticCast<const DeclT&>(decl), declInfo);
         };
     }
-    std::unordered_map<AST::ASTKind, DeclWriterT> declWriterMap {
+    std::unordered_map<AST::ASTKind, DeclWriterT> declWriterMap{
         {AST::ASTKind::VAR_DECL, Proxy<AST::VarDecl>(&ASTWriterImpl::SaveVarDecl)},
         {AST::ASTKind::VAR_WITH_PATTERN_DECL, Proxy<AST::VarWithPatternDecl>(&ASTWriterImpl::SaveVarWithPatternDecl)},
         {AST::ASTKind::PROP_DECL, Proxy<AST::PropDecl>(&ASTWriterImpl::SavePropDecl)},
@@ -185,8 +183,8 @@ private:
     };
 
     bool PlannedToBeSerialized(Ptr<const AST::Decl> decl);
-    std::vector<TFullIdOffset> CollectInitializationDependencies(const AST::Decl& decl,
-        std::set<const AST::Decl*> visited);
+    std::vector<TFullIdOffset> CollectInitializationDependencies(
+        const AST::Decl& decl, std::set<const AST::Decl*> visited);
     TFuncBodyOffset SaveFuncBody(const AST::FuncBody& funcBody);
     // Save generic Information
     flatbuffers::Offset<PackageFormat::Generic> SaveGeneric(const AST::Decl& decl);

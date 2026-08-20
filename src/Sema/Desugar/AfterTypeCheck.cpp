@@ -435,13 +435,10 @@ void TypeChecker::TypeCheckerImpl::PerformDesugarAfterTypeCheck(ASTContext& ctx,
         jim.CheckTypes(*file);
     }
 
-    jim.DesugarPackage(pkg, structMemberMap, [this](auto& node) {
-        DesugarForPropDecl(node);
-    });
-    Interop::ObjC::Desugar(Interop::ObjC::InteropContext(
-        pkg, typeManager, importManager, diag, *ci->mangler,
-        ci->invocation.globalOptions.output, ci->invocation.globalOptions.outputObjCGenDir,
-        structMemberMap, ci->invocation.globalOptions.target.os));
+    jim.DesugarPackage(pkg, structMemberMap, [this](auto& node) { DesugarForPropDecl(node); });
+    Interop::ObjC::Desugar(Interop::ObjC::InteropContext(pkg, typeManager, importManager, diag, *ci->mangler,
+        ci->invocation.globalOptions.output, ci->invocation.globalOptions.outputObjCGenDir, structMemberMap,
+        ci->invocation.globalOptions.target.os));
 
     DesugarDeclsForPackage(pkg, ci->invocation.globalOptions.enableCoverage);
     std::function<VisitAction(Ptr<Node>)> preVisit = [this, &ctx](Ptr<Node> node) -> VisitAction {
@@ -508,8 +505,7 @@ void TypeChecker::TypeCheckerImpl::PerformDesugarAfterTypeCheck(ASTContext& ctx,
     Walker(&pkg, preVisit).Walk();
 }
 
-Ptr<AST::Ty> TypeChecker::TypeCheckerImpl::SynthesizeWithoutRecover(
-    const CheckerContext& ctx, Ptr<AST::Node> node)
+Ptr<AST::Ty> TypeChecker::TypeCheckerImpl::SynthesizeWithoutRecover(const CheckerContext& ctx, Ptr<AST::Node> node)
 {
     CJC_NULLPTR_CHECK(node);
     ctx.Ctx().ClearTypeCheckCache(*node);    // ensure newly created nodes have no related cache

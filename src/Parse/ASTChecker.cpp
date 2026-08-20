@@ -292,7 +292,7 @@ void ASTChecker::CheckFeaturesSet(Ptr<Node> node)
 void ASTChecker::CheckFeatureId(Ptr<Node> node)
 {
     auto fc = StaticAs<ASTKind::FEATURE_ID>(node);
-    for (auto &ident : fc->identifiers) {
+    for (auto& ident : fc->identifiers) {
         EMPTY_IDENTIFIER_CHECK(node, ident);
     }
     VEC_ZERO_POS_CHECK(node, fc->dotPoses);
@@ -614,7 +614,7 @@ void ASTChecker::CheckPerformExpr(Ptr<Node> node)
 {
     auto pe = StaticAs<ASTKind::PERFORM_EXPR>(node);
     ZERO_POSITION_CHECK(node, pe->performPos);
-    AST_NULLPTR_CHECK(node, pe->expr)   ;
+    AST_NULLPTR_CHECK(node, pe->expr);
 }
 void ASTChecker::CheckResumeExpr(Ptr<Node> node)
 {

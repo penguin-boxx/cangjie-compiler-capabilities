@@ -71,15 +71,12 @@ const std::unordered_map<std::string, uint8_t> COMPILE_TARGET_MAP = {
 
 #endif
 
-const std::unordered_map<std::string, ArchType> STRING_ARCH_MAP = {
-    {"x86_64", ArchType::X86_64}, {"aarch64", ArchType::AARCH64}, {"arm64", ArchType::ARM64},
-    {"arm", ArchType::ARM32}, {"unknown", ArchType::UNKNOWN}
-};
+const std::unordered_map<std::string, ArchType> STRING_ARCH_MAP = {{"x86_64", ArchType::X86_64},
+    {"aarch64", ArchType::AARCH64}, {"arm64", ArchType::ARM64}, {"arm", ArchType::ARM32},
+    {"unknown", ArchType::UNKNOWN}};
 
-const std::unordered_map<std::string, OSType> STRING_OS_MAP = {
-    {"windows", OSType::WINDOWS}, {"w64", OSType::WINDOWS}, {"linux", OSType::LINUX},
-    {"darwin", OSType::DARWIN}, {"ios", OSType::IOS}, {"unknown", OSType::UNKNOWN}
-};
+const std::unordered_map<std::string, OSType> STRING_OS_MAP = {{"windows", OSType::WINDOWS}, {"w64", OSType::WINDOWS},
+    {"linux", OSType::LINUX}, {"darwin", OSType::DARWIN}, {"ios", OSType::IOS}, {"unknown", OSType::UNKNOWN}};
 
 const std::unordered_map<std::string, Environment> STRING_ENVIRONMENT_MAP = {
     {"ohos", Environment::OHOS},
@@ -106,8 +103,7 @@ const std::unordered_map<std::string, uint8_t> DUMP_CHIR_MODE_MAP = {
 };
 
 const std::unordered_map<std::string, GlobalOptions::CandidateEmitCHIRPhase> EMIT_CHIR_PHASE_MAP = {
-    {"raw", GlobalOptions::CandidateEmitCHIRPhase::RAW},
-    {"opt", GlobalOptions::CandidateEmitCHIRPhase::OPT}};
+    {"raw", GlobalOptions::CandidateEmitCHIRPhase::RAW}, {"opt", GlobalOptions::CandidateEmitCHIRPhase::OPT}};
 
 const std::unordered_map<std::string, uint8_t> PRINT_BCHIR_MODE_MAP = {
     {"deserialized", uint8_t(GlobalOptions::PrintBCHIROption::DESERIALIED)},
@@ -233,10 +229,10 @@ bool ParseTargetTriple(GlobalOptions& opts, const std::string& triple)
         opts.target.env = env->second;
         if (opts.target.env == Environment::ANDROID) {
             opts.target.apiLevel = Triple::MIN_ANDROID_API;
-            Infoln("ANDROID API level is not suggested in the target. Use API level " +
-                opts.target.apiLevel + " by default.");
+            Infoln("ANDROID API level is not suggested in the target. Use API level " + opts.target.apiLevel +
+                " by default.");
         }
-    // If targeting Android, the env field may contains the API level like "android31"
+        // If targeting Android, the env field may contains the API level like "android31"
     } else if (envStr.rfind(ENVIRONMENT_STRING_MAP.at(Environment::ANDROID), 0) == 0) {
         opts.target.env = Environment::ANDROID;
         for (size_t i = 0; i < envStr.size(); ++i) {
@@ -254,11 +250,12 @@ bool ParseTargetTriple(GlobalOptions& opts, const std::string& triple)
                 // The minimum Android API level that cangjie supports.
                 if (num < 23 || num > 10000) {
                     Errorln("The Android API level is not supported in the target."
-                        " Please use a valid API level which is larger than 23.");
+                            " Please use a valid API level which is larger than 23.");
                 }
 #ifndef CANGJIE_ENABLE_GCOV
             } catch (std::exception const&) {
-                Errorln("The Android API level is illegal. Please use a valid API level which is greater than or equal to 26.");
+                Errorln("The Android API level is illegal. Please use a valid API level which is greater than or equal "
+                        "to 26.");
             }
 #endif
         }
@@ -320,7 +317,7 @@ ConditionalCompileConfigMode ParseConditionalCompileConfigMode(const std::string
     return equalNum == escapeEqualNum ? ConditionalCompileConfigMode::PATH : ConditionalCompileConfigMode::KEY_VALUE;
 }
 
-void RemoveEscapedSymbol(std::string &input, const std::string& from, const std::string& to)
+void RemoveEscapedSymbol(std::string& input, const std::string& from, const std::string& to)
 {
     size_t startPos = 0;
     while ((startPos = input.find(from, startPos)) != std::string::npos) {

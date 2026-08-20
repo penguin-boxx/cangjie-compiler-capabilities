@@ -243,7 +243,7 @@ bool TypeChecker::TypeCheckerImpl::CheckNormalFuncBody(ASTContext& ctx, FuncBody
     // Check and update return type for foreign functions.
     if (!Ty::IsTyCorrect(fb.retType->GetTy())) {
         if (!fb.TestAttr(Attribute::IS_CHECK_VISITED)) {
-            fb.EnableAttr(Attribute::IS_CHECK_VISITED); // Avoid re-enter funcDecl check, when function is invalid.
+            fb.EnableAttr(Attribute::IS_CHECK_VISITED);     // Avoid re-enter funcDecl check, when function is invalid.
             Synthesize({ctx, SynPos::NONE}, fb.body.get()); // Synthesize for other decl/expr in function body.
         }
         fb.SetTy(typeManager.GetFunctionTy(paramTys, fb.retType->GetTy(), {isCFunc, false, hasVariableLenArg}));
@@ -1419,7 +1419,8 @@ Ptr<Ty> TypeChecker::TypeCheckerImpl::SynthesizeWithNegCache(const CheckerContex
         return Synthesize(ctx, node);
     }
     CacheKey key = GetCacheKeyForSyn(ctx.Ctx(), node);
-    if (ctx.Ctx().typeCheckCache[node].synCache.count(key) != 0 && !ctx.Ctx().typeCheckCache[node].synCache[key].successful) {
+    if (ctx.Ctx().typeCheckCache[node].synCache.count(key) != 0 &&
+        !ctx.Ctx().typeCheckCache[node].synCache[key].successful) {
         auto& cache = ctx.Ctx().typeCheckCache[node].synCache[key];
         RestoreCached(ctx.Ctx(), node, cache);
         return cache.result;
@@ -1466,7 +1467,8 @@ bool TypeChecker::TypeCheckerImpl::CheckWithEffectiveCache(
     return CheckAndCache(ctx, target, node, key);
 }
 
-Ptr<Ty> TypeChecker::TypeCheckerImpl::SynthesizeWithEffectiveCache(const CheckerContext& ctx, Ptr<Node> node, bool recoverDiag)
+Ptr<Ty> TypeChecker::TypeCheckerImpl::SynthesizeWithEffectiveCache(
+    const CheckerContext& ctx, Ptr<Node> node, bool recoverDiag)
 {
     if (!typeManager.GetUnsolvedTyVars().empty() || !node) {
         return Synthesize(ctx, node);
@@ -1890,7 +1892,8 @@ void MarkImplicitUsedFunctions(const Package& pkg)
             {"arrayInitByCollection", "arrayInitByFunction", "composition", "handleException",
                 "createOverflowExceptionMsg", "createArithmeticExceptionMsg", "getCommandLineArgs"}},
         {AST_PACKAGE_NAME,
-            {MACRO_OBJECT_NAME, "refreshTokensPosition", "refreshPos", "unsafePointerCastFromUint8Array", "transformTokens"}}};
+            {MACRO_OBJECT_NAME, "refreshTokensPosition", "refreshPos", "unsafePointerCastFromUint8Array",
+                "transformTokens"}}};
     auto found = SPECIAL_EXPORTED_FUNCS.find(pkg.fullPackageName);
     if (found == SPECIAL_EXPORTED_FUNCS.end()) {
         return;

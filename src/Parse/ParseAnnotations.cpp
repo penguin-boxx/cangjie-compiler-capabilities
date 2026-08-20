@@ -151,10 +151,8 @@ void ParserImpl::ParseAnnotationArguments(Annotation& anno)
             builder.AddMainHintArguments("]");
             builder.AddHint(pos, "[");
             if (anno.kind == AnnotationKind::CUSTOM) {
-                builder.AddNote(
-                    "Argument syntax error. May be caused by missing macro definitions. "
-                    "If not, verify the annotation arguments are valid."
-                );
+                builder.AddNote("Argument syntax error. May be caused by missing macro definitions. "
+                                "If not, verify the annotation arguments are valid.");
             }
         }
     }
@@ -332,8 +330,7 @@ void ParserImpl::CheckObjCMirrorAnnotation(const Annotation& anno) const
     static const std::string OBJ_C_MIRROR_NAME = "@ObjCMirror";
     static const std::string OBJ_C_IMPL_NAME = "@ObjCImpl";
 
-    const auto& annotationName =
-        anno.kind == AnnotationKind::OBJ_C_MIRROR ? OBJ_C_MIRROR_NAME : OBJ_C_IMPL_NAME;
+    const auto& annotationName = anno.kind == AnnotationKind::OBJ_C_MIRROR ? OBJ_C_MIRROR_NAME : OBJ_C_IMPL_NAME;
     ffiParser->CheckZeroOrSingleStringLitArgAnnotation(anno, annotationName);
 }
 

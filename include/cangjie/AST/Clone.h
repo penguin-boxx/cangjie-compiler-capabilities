@@ -28,8 +28,7 @@ MacroInvocation CloneMacroInvocation(const MacroInvocation& me);
 OwnedPtr<Generic> CloneGeneric(const Generic& generic, const VisitFunc& visitor = DefaultVisitFunc);
 class ASTCloner {
 public:
-    template <typename T>
-    static std::vector<OwnedPtr<T>> CloneVector(const std::vector<OwnedPtr<T>>& nodes)
+    template <typename T> static std::vector<OwnedPtr<T>> CloneVector(const std::vector<OwnedPtr<T>>& nodes)
     {
         std::vector<OwnedPtr<T>> resNodes;
         for (auto& it : nodes) {

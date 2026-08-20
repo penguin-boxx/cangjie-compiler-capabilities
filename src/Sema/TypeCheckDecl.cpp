@@ -304,8 +304,7 @@ void TypeChecker::TypeCheckerImpl::CheckVarWithPatternDecl(ASTContext& ctx, VarW
     }
 }
 
-template <typename T>
-void TypeChecker::TypeCheckerImpl::SynchronizeTypeAndInitializer(const CheckerContext& ctx, T& vd)
+template <typename T> void TypeChecker::TypeCheckerImpl::SynchronizeTypeAndInitializer(const CheckerContext& ctx, T& vd)
 {
     if (vd.type != nullptr && vd.initializer == nullptr) {
         Synthesize(ctx, vd.type.get());
@@ -346,7 +345,7 @@ void TypeChecker::TypeCheckerImpl::SynchronizeTypeAndInitializer(const CheckerCo
         if (auto ctt = DynamicCast<AST::ClassThisTy*>(vd.initializer->GetTy()); ctt && ctt->decl) {
             vd.SetTy(typeManager.GetClassTy(*ctt->decl, ctt->typeArgs));
         } else if (auto fty = DynamicCast<AST::FuncTy*>(vd.initializer->GetTy());
-            fty && fty->isC && fty->hasVariableLenArg) {
+                   fty && fty->isC && fty->hasVariableLenArg) {
             vd.SetTy(TypeManager::GetInvalidTy());
             bool shouldDiag = vd.ShouldDiagnose() && !CanSkipDiag(*vd.initializer);
             if (shouldDiag) {
@@ -720,7 +719,8 @@ Ptr<Ty> TypeChecker::TypeCheckerImpl::SynFuncParam(ASTContext& ctx, FuncParam& f
     if (fp.type) {
         Synthesize({ctx, SynPos::NONE}, fp.type.get());
         if (!Ty::IsTyCorrect(fp.type->GetTy())) {
-            Synthesize({ctx, SynPos::EXPR_ARG}, fp.assignment.get()); // If fp has assignment, synthesize to report error.
+            Synthesize(
+                {ctx, SynPos::EXPR_ARG}, fp.assignment.get()); // If fp has assignment, synthesize to report error.
             return TypeManager::GetInvalidTy();
         }
         fp.SetTy(fp.type->GetTy());

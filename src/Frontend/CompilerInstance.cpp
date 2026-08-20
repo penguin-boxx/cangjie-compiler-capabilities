@@ -571,7 +571,7 @@ void UpdateMemberDeclMangleNameForCachedInfo(const RawMangled2DeclMap& rawMangle
     } else {
         CJC_ABORT();
     }
-    for (auto &m : memCache.members) {
+    for (auto& m : memCache.members) {
         UpdateMemberDeclMangleNameForCachedInfo(rawMangleName2DeclMap, m);
     }
 }
@@ -584,19 +584,19 @@ void UpdateTopLevelDeclMangleNameForCachedInfo(
     } else {
         CJC_ABORT();
     }
-    for (auto &m : topCache.members) {
+    for (auto& m : topCache.members) {
         UpdateMemberDeclMangleNameForCachedInfo(rawMangleName2DeclMap, m);
     }
 }
-}
+} // namespace
 
 void CompilerInstance::UpdateMangleNameForCachedInfo()
 {
-    for (auto &it : cachedInfo.curPkgASTCache) {
+    for (auto& it : cachedInfo.curPkgASTCache) {
         auto rawMangle = it.first;
         UpdateTopLevelDeclMangleNameForCachedInfo(rawMangleName2DeclMap, rawMangle, it.second);
     }
-    for (auto &it : cachedInfo.importedASTCache) {
+    for (auto& it : cachedInfo.importedASTCache) {
         auto rawMangle = it.first;
         UpdateTopLevelDeclMangleNameForCachedInfo(rawMangleName2DeclMap, rawMangle, it.second);
     }
@@ -807,8 +807,7 @@ void DoNewMangling(
                 if (lambda.TestAttr(Attribute::GENERIC) || !Ty::IsTyCorrect(lambda.GetTy())) {
                     return VisitAction::SKIP_CHILDREN;
                 }
-                lambda.mangledName = baseMangler.MangleLambda(lambda,
-                    filteredPrefix);
+                lambda.mangledName = baseMangler.MangleLambda(lambda, filteredPrefix);
                 return VisitAction::WALK_CHILDREN;
             },
             []([[maybe_unused]] const Annotation& anno) {
@@ -1249,8 +1248,8 @@ bool CompilerInstance::DetectCangjieHome()
     }
     // Detect from exepath.
     if (invocation.globalOptions.executablePath.empty()) {
-        diag.DiagnoseRefactor(DiagKindRefactor::frontend_failed_to_detect_cangjie_home,
-            DEFAULT_POSITION, "can not resolve executable path");
+        diag.DiagnoseRefactor(DiagKindRefactor::frontend_failed_to_detect_cangjie_home, DEFAULT_POSITION,
+            "can not resolve executable path");
         return false;
     } else {
         cangjieHome =

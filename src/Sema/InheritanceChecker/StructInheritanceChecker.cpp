@@ -288,8 +288,7 @@ void TypeChecker::TypeCheckerImpl::CheckInheritance(Package& pkg)
 
     auto movedMembers = checker.MoveStructInheritedMembers();
     // Ensure javaCache is empty before moving in (it should be if called at the correct point in pipeline).
-    CJC_ASSERT_WITH_MSG(this->structMemberMap.empty(),
-        "structMemberMap should be empty when moving inherited members");
+    CJC_ASSERT_WITH_MSG(this->structMemberMap.empty(), "structMemberMap should be empty when moving inherited members");
 
     this->structMemberMap = std::move(movedMembers);
 }
@@ -1064,7 +1063,7 @@ bool StructInheritanceChecker::CheckExtendMemberValid(const MemberSignature& par
         diag.DiagnoseRefactor(
             DiagKindRefactor::sema_extend_member_cannot_shadow, child, childRange, child.identifier, typeName);
     } else if (auto isExtended = IsExtendedDefaultImpl(parent, child);
-        isExtended || parent.decl->outerDecl->astKind == ASTKind::EXTEND_DECL) {
+               isExtended || parent.decl->outerDecl->astKind == ASTKind::EXTEND_DECL) {
         std::string type = DeclKindToString(*parent.decl);
         auto diagnose = diag.DiagnoseRefactor(
             DiagKindRefactor::sema_extend_function_cannot_overridden, child, childRange, type, child.identifier);

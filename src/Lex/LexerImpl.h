@@ -190,7 +190,7 @@ private:
     std::unordered_set<Position, PositionHash32> collectTokensFindCache;
     std::vector<Token> collectTokens;
     std::set<Token> tokenStream; // use set because ParseModifiers before import may cause the tokens of the first decl
-        // to be Scan()'ed multiple times.
+                                 // to be Scan()'ed multiple times.
     mutable bool success{true};                                     /// Used for diagnostic.
     mutable std::vector<std::pair<const char*, bool>> stringStarts; /// Used for diagnostic, string start position.
     mutable std::vector<const char*> interpolations; /// Used for diagnostic, string interpolation position.

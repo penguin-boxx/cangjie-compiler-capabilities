@@ -195,7 +195,7 @@ void RestoreTypes(std::vector<OwnedPtr<Type>>& src, std::vector<OwnedPtr<Type>>&
     }
     backup.clear();
 }
-}
+} // namespace
 
 void TypeChecker::TypeCheckerImpl::CheckRefTypeWithRealTarget(RefType& rt)
 {

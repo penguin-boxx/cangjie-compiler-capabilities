@@ -292,8 +292,7 @@ Ptr<Ty> ASTLoader::ASTLoaderImpl::LoadType(FormattedIndex type)
 
 bool ASTLoader::ASTLoaderImpl::GetPrimitiveTy(FormattedIndex type, const PackageFormat::SemaTy* typeObj)
 {
-    if (typeObj && typeObj->kind() >= PackageFormat::TypeKind_Unit &&
-        typeObj->kind() <= PackageFormat::TypeKind_Bool) {
+    if (typeObj && typeObj->kind() >= PackageFormat::TypeKind_Unit && typeObj->kind() <= PackageFormat::TypeKind_Bool) {
         auto astKind = GetASTTypeKind(typeObj->kind());
         CJC_ASSERT(astKind != TypeKind::TYPE_INVALID);
         auto t = TypeManager::GetPrimitiveTy(astKind);
@@ -381,9 +380,8 @@ void ASTLoader::ASTLoaderImpl::SetTypeTy(FormattedIndex type, const PackageForma
         if constexpr (std::is_same_v<TypeT, TypeAliasTy>) {
             ty = typeManager.GetTypeAliasTy(*typeDecl, typeArgs);
         } else if constexpr (std::is_same_v<TypeT, ClassTy>) {
-            ty = info->isThisTy()
-                ? typeManager.GetClassThisTy(*typeDecl, typeArgs)
-                : typeManager.GetClassTy(*typeDecl, typeArgs);
+            ty = info->isThisTy() ? typeManager.GetClassThisTy(*typeDecl, typeArgs)
+                                  : typeManager.GetClassTy(*typeDecl, typeArgs);
         } else if constexpr (std::is_same_v<TypeT, InterfaceTy>) {
             ty = typeManager.GetInterfaceTy(*typeDecl, typeArgs);
         } else if constexpr (std::is_same_v<TypeT, StructTy>) {
@@ -429,8 +427,7 @@ void ASTLoader::ASTLoaderImpl::LoadInheritedTypes(const PackageFormat::Decl& dec
     }
 }
 
-void ASTLoader::ASTLoaderImpl::LoadGenericConstraintsRef(
-    const PackageFormat::Generic* genericRef, Ptr<Generic> generic)
+void ASTLoader::ASTLoaderImpl::LoadGenericConstraintsRef(const PackageFormat::Generic* genericRef, Ptr<Generic> generic)
 {
     // Do not load constraints if the generic is incremental compiled node.
     if (generic == nullptr || genericRef == nullptr || generic->TestAttr(Attribute::INCRE_COMPILE)) {

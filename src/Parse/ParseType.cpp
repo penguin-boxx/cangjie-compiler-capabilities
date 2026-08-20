@@ -151,8 +151,7 @@ OwnedPtr<AST::Type> ParserImpl::ParseTupleType(
     return tupleType;
 }
 
-OwnedPtr<Type> ParserImpl::ParseTypeParameterInTupleType(
-    std::unordered_map<std::string, Position>& typeNameMap)
+OwnedPtr<Type> ParserImpl::ParseTypeParameterInTupleType(std::unordered_map<std::string, Position>& typeNameMap)
 {
     while (Skip(TokenKind::NL)) {
     }
@@ -194,12 +193,13 @@ OwnedPtr<AST::Type> ParserImpl::ParseTypeWithParen()
                 return;
             }
             types.emplace_back(ParseTypeParameterInTupleType(typeNameMap));
-        }, TokenKind::RPAREN);
+        },
+        TokenKind::RPAREN);
     // in a parameter type list, either all parameters must be named, or none of them; mixed is not allowed
-    if (std::any_of(types.begin(), types.end(),
-        [](const OwnedPtr<Type>& type) { return type->typeParameterName.empty(); }) &&
-        std::any_of(types.begin(), types.end(),
-        [](const OwnedPtr<Type>& type) { return !type->typeParameterName.empty(); })) {
+    if (std::any_of(
+            types.begin(), types.end(), [](const OwnedPtr<Type>& type) { return type->typeParameterName.empty(); }) &&
+        std::any_of(
+            types.begin(), types.end(), [](const OwnedPtr<Type>& type) { return !type->typeParameterName.empty(); })) {
         ParseDiagnoseRefactor(
             DiagKindRefactor::parse_all_parameters_must_be_named, MakeRange(types.front()->begin, types.back()->end));
     }
@@ -228,9 +228,8 @@ OwnedPtr<ParenType> ParserImpl::ParseParenType(
     const Position& lParenPos, const Position& rParenPos, OwnedPtr<Type> type)
 {
     if (!type->typeParameterName.empty()) {
-        auto builder =
-            ParseDiagnoseRefactor(DiagKindRefactor::parse_only_tuple_and_func_type_allow_type_parameter_name,
-                MakeRange(type->begin, type->begin + type->typeParameterName.size()), type->typeParameterName);
+        auto builder = ParseDiagnoseRefactor(DiagKindRefactor::parse_only_tuple_and_func_type_allow_type_parameter_name,
+            MakeRange(type->begin, type->begin + type->typeParameterName.size()), type->typeParameterName);
         builder.AddNote("only tuple type and function type support type parameter name");
     }
     OwnedPtr<ParenType> pt = MakeOwned<ParenType>();
@@ -298,12 +297,12 @@ OwnedPtr<AST::Type> ParserImpl::ParseType()
 {
     auto postType = ParsePrefixType();
     if (Seeing(TokenKind::ARROW)) {
-            if (postType->astKind == ASTKind::FUNC_TYPE) {
-                DiagRedundantArrowAfterFunc(*postType);
-                ConsumeUntilAny({TokenKind::RCURL, TokenKind::NL}, false);
-            } else {
-                DiagParseExpectedParenthis(postType);
-            }
+        if (postType->astKind == ASTKind::FUNC_TYPE) {
+            DiagRedundantArrowAfterFunc(*postType);
+            ConsumeUntilAny({TokenKind::RCURL, TokenKind::NL}, false);
+        } else {
+            DiagParseExpectedParenthis(postType);
+        }
     }
     return postType;
 }
@@ -349,7 +348,8 @@ std::pair<bool, std::vector<OwnedPtr<AST::Type>>> ParserImpl::ParseTypeArguments
             if (type && !type->TestAttr(Attribute::IS_BROKEN)) {
                 ret.emplace_back(std::move(type));
             }
-        }, TokenKind::GT);
+        },
+        TokenKind::GT);
     if (!Skip(TokenKind::GT) && !ret.empty()) {
         DiagExpectedRightDelimiter("<", leftAnglePos);
         ret.clear();

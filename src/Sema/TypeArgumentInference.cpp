@@ -56,11 +56,9 @@ std::string MakeOneBlameHint(const Blame& blame)
     auto ub = TryReplaceIdeal(blame.ub);
     switch (blame.style) {
         case BlameStyle::ARGUMENT:
-            return "of type '" + lb->String() +
-                "', should match parameter type '" + ub->String() + "'";
+            return "of type '" + lb->String() + "', should match parameter type '" + ub->String() + "'";
         case BlameStyle::RETURN:
-            return "of return type '" + lb->String() +
-                "', should match expected type '" + ub->String() + "'";
+            return "of return type '" + lb->String() + "', should match expected type '" + ub->String() + "'";
         case BlameStyle::CONSTRAINT:
             return "";
         default:
@@ -72,81 +70,69 @@ std::string MakeOneBlameHint(const Blame& blame)
 void MakeBlameMsg(DiagnosticBuilder& builder, const SolvingErrInfo& diagInfo)
 {
     switch (diagInfo.style) {
-        case SolvingErrStyle::NO_CONSTRAINT:
-            {
-                auto tyVar = StaticCast<GenericsTy*>(diagInfo.tyVar);
-                builder.AddNote(*tyVar->decl, MakeRangeForDeclIdentifier(*tyVar->decl),
-                    "no information known for type variable '" + tyVar->String() + "'");
-                break;
+        case SolvingErrStyle::NO_CONSTRAINT: {
+            auto tyVar = StaticCast<GenericsTy*>(diagInfo.tyVar);
+            builder.AddNote(*tyVar->decl, MakeRangeForDeclIdentifier(*tyVar->decl),
+                "no information known for type variable '" + tyVar->String() + "'");
+            break;
+        }
+        case SolvingErrStyle::ARG_MISMATCH: {
+            auto& blame = *diagInfo.blames[0].begin();
+            auto lb = TryReplaceIdeal(blame.lb);
+            auto ub = TryReplaceIdeal(blame.ub);
+            auto subDiag = SubDiagnostic("mismatched types");
+            subDiag.AddMainHint(MakeRange(blame.src->GetBegin(), blame.src->GetEnd()),
+                "of type '" + lb->String() + "', impossible to match parameter type '" + ub->String() + "'");
+            builder.AddNote(subDiag);
+            break;
+        }
+        case SolvingErrStyle::RET_MISMATCH: {
+            auto& blame = *diagInfo.blames[0].begin();
+            auto lb = TryReplaceIdeal(blame.lb);
+            auto ub = TryReplaceIdeal(blame.ub);
+            auto subDiag = SubDiagnostic("mismatched types");
+            subDiag.AddMainHint(MakeRange(blame.src->GetBegin(), blame.src->GetEnd()),
+                "of return type '" + lb->String() + "', impossible to match expected type '" + ub->String() + "'");
+            builder.AddNote(subDiag);
+            break;
+        }
+        case SolvingErrStyle::CONFLICTING_CONSTRAINTS: {
+            auto tyVar = StaticCast<GenericsTy*>(diagInfo.tyVar);
+            std::string constraintsMsg;
+            std::string indentStr = "\n      ";
+            for (auto lb0 : diagInfo.lbs) {
+                auto lb = TryReplaceIdeal(lb0);
+                constraintsMsg += indentStr + "'" + lb->String() + " <: " + tyVar->String() + "'";
             }
-        case SolvingErrStyle::ARG_MISMATCH:
-            {
-                auto& blame = *diagInfo.blames[0].begin();
-                auto lb = TryReplaceIdeal(blame.lb);
-                auto ub = TryReplaceIdeal(blame.ub);
-                auto subDiag = SubDiagnostic("mismatched types");
-                subDiag.AddMainHint(MakeRange(blame.src->GetBegin(), blame.src->GetEnd()),
-                    "of type '" + lb->String() +
-                    "', impossible to match parameter type '" + ub->String() + "'");
-                builder.AddNote(subDiag);
-                break;
+            for (auto ub0 : diagInfo.ubs) {
+                auto ub = TryReplaceIdeal(ub0);
+                constraintsMsg += indentStr + "'" + tyVar->String() + " <: " + ub->String() + "'";
             }
-        case SolvingErrStyle::RET_MISMATCH:
-            {
-                auto& blame = *diagInfo.blames[0].begin();
-                auto lb = TryReplaceIdeal(blame.lb);
-                auto ub = TryReplaceIdeal(blame.ub);
-                auto subDiag = SubDiagnostic("mismatched types");
-                subDiag.AddMainHint(MakeRange(blame.src->GetBegin(), blame.src->GetEnd()),
-                    "of return type '" + lb->String() +
-                    "', impossible to match expected type '" + ub->String() + "'");
-                builder.AddNote(subDiag);
-                break;
+            builder.AddNote(*tyVar->decl, MakeRangeForDeclIdentifier(*tyVar->decl),
+                "following constraints for type variable '" + tyVar->String() + "' cannot be solved:" + constraintsMsg);
+            size_t blameId = 0;
+            for (auto lb0 : diagInfo.lbs) {
+                auto lb = TryReplaceIdeal(lb0);
+                std::string msg = "constraint '" + lb->String() + " <: " + tyVar->String() + "' may come from:";
+                for (auto blame : diagInfo.blames[blameId]) {
+                    auto subDiag = SubDiagnostic(msg);
+                    subDiag.AddMainHint(MakeRange(blame.src->GetBegin(), blame.src->GetEnd()), MakeOneBlameHint(blame));
+                    builder.AddNote(subDiag);
+                }
+                blameId++;
             }
-        case SolvingErrStyle::CONFLICTING_CONSTRAINTS:
-            {
-                auto tyVar = StaticCast<GenericsTy*>(diagInfo.tyVar);
-                std::string constraintsMsg;
-                std::string indentStr = "\n      ";
-                for (auto lb0 : diagInfo.lbs) {
-                    auto lb = TryReplaceIdeal(lb0);
-                    constraintsMsg +=
-                        indentStr + "'" + lb->String() + " <: " + tyVar->String() + "'";
+            for (auto ub0 : diagInfo.ubs) {
+                auto ub = TryReplaceIdeal(ub0);
+                std::string msg = "constraint '" + tyVar->String() + " <: " + ub->String() + "' may come from:";
+                for (auto blame : diagInfo.blames[blameId]) {
+                    auto subDiag = SubDiagnostic(msg);
+                    subDiag.AddMainHint(MakeRange(blame.src->GetBegin(), blame.src->GetEnd()), MakeOneBlameHint(blame));
+                    builder.AddNote(subDiag);
                 }
-                for (auto ub0 : diagInfo.ubs) {
-                    auto ub = TryReplaceIdeal(ub0);
-                    constraintsMsg +=
-                        indentStr + "'" + tyVar->String() + " <: " + ub->String() + "'";
-                }
-                builder.AddNote(*tyVar->decl, MakeRangeForDeclIdentifier(*tyVar->decl),
-                    "following constraints for type variable '" + tyVar->String() +
-                        "' cannot be solved:" + constraintsMsg);
-                size_t blameId = 0;
-                for (auto lb0 : diagInfo.lbs) {
-                    auto lb = TryReplaceIdeal(lb0);
-                    std::string msg = "constraint '" + lb->String() + " <: " + tyVar->String() +
-                        "' may come from:";
-                    for (auto blame : diagInfo.blames[blameId]) {
-                        auto subDiag = SubDiagnostic(msg);
-                        subDiag.AddMainHint(
-                            MakeRange(blame.src->GetBegin(), blame.src->GetEnd()), MakeOneBlameHint(blame));
-                        builder.AddNote(subDiag);
-                    }
-                    blameId++;
-                }
-                for (auto ub0 : diagInfo.ubs) {
-                    auto ub = TryReplaceIdeal(ub0);
-                    std::string msg = "constraint '" + tyVar->String() + " <: " + ub->String() + "' may come from:";
-                    for (auto blame : diagInfo.blames[blameId]) {
-                        auto subDiag = SubDiagnostic(msg);
-                        subDiag.AddMainHint(
-                            MakeRange(blame.src->GetBegin(), blame.src->GetEnd()), MakeOneBlameHint(blame));
-                        builder.AddNote(subDiag);
-                    }
-                    blameId++;
-                }
-                break;
+                blameId++;
             }
+            break;
+        }
         case SolvingErrStyle::DEFAULT:
             break;
         default:
@@ -155,8 +141,8 @@ void MakeBlameMsg(DiagnosticBuilder& builder, const SolvingErrInfo& diagInfo)
     }
 }
 
-void DiagnoseForCallInference(DiagnosticEngine& diag, const CallExpr& ce, const FuncDecl& fd,
-    const SubstPack& maps, const SolvingErrInfo& diagInfo)
+void DiagnoseForCallInference(DiagnosticEngine& diag, const CallExpr& ce, const FuncDecl& fd, const SubstPack& maps,
+    const SolvingErrInfo& diagInfo)
 {
     CJC_ASSERT(fd.GetTy());
     CJC_NULLPTR_CHECK(ce.baseFunc);
@@ -234,8 +220,8 @@ std::optional<Ptr<AST::Ty>> UnsolvedAsQuest(TypeManager& tyMgr, const TyVars& ty
             paramTys.push_back(it);
         }
         if (auto retType = UnsolvedAsQuest(tyMgr, tyVarsToSolve, *funcTy->retTy)) {
-            Ptr<Ty> fin = tyMgr.GetFunctionTy(paramTys, *retType,
-                {funcTy->IsCFunc(), funcTy->isClosureTy, funcTy->hasVariableLenArg});
+            Ptr<Ty> fin = tyMgr.GetFunctionTy(
+                paramTys, *retType, {funcTy->IsCFunc(), funcTy->isClosureTy, funcTy->hasVariableLenArg});
             return fin;
         } else {
             return std::nullopt;
@@ -291,8 +277,7 @@ bool PrepareQuestParamTy(TypeManager& tyMgr, const std::vector<Ptr<Ty>>& paramsT
         stat.questParamTys[i] = nullptr;
         if (stat.failSet[i] && stat.ignoredEnumCtor.count(i) == 0) {
             // paramTy where the solution is substituted. Some placeholder type vars may not be solved.
-            auto paramTyPartial =
-                tyMgr.GetInstantiatedTy(paramsTy[i], *stat.solution);
+            auto paramTyPartial = tyMgr.GetInstantiatedTy(paramsTy[i], *stat.solution);
             // paramTy where the unsolved type vars are replaced by QuestTy
             auto paramTyQuest = UnsolvedAsQuest(tyMgr, stat.tyVarsToSolve, *paramTyPartial);
             if (paramTyQuest) {
@@ -331,8 +316,7 @@ std::vector<Blame> MakeArgBlames(const TyArgSynState& stat, const CallExpr& ce, 
     for (size_t i = 0; i < ce.args.size(); i++) {
         if (stat.ignoredEnumCtor.count(i) == 0 && Ty::IsTyCorrect(stat.argTys[i])) {
             CJC_ASSERT(j < argTys.size()); // should be guaranteed by ValidateArgTys
-            blames.push_back({
-                .src = ce.args[i].get(),
+            blames.push_back({.src = ce.args[i].get(),
                 .lb = argTys[j],
                 .ub = tyMgr.RecoverUnivTyVar(paramTys[j]),
                 .style = BlameStyle::ARGUMENT});
@@ -499,9 +483,8 @@ ErrOrSubst TypeChecker::TypeCheckerImpl::PrepareTyArgsSynthesis(
         // 3. prepare input pack & infer type args
         auto retBlame = Blame{
             .src = &ce, .lb = typeManager.RecoverUnivTyVar(funcRetTy), .ub = retTyUB, .style = BlameStyle::RETURN};
-        argPack = {stat.tyVarsToSolve,
-            validArgTys, paramTys, MakeArgBlames(stat, ce, validArgTys, paramTys, typeManager),
-            funcRetTy, stat.retTarget, retBlame};
+        argPack = {stat.tyVarsToSolve, validArgTys, paramTys,
+            MakeArgBlames(stat, ce, validArgTys, paramTys, typeManager), funcRetTy, stat.retTarget, retBlame};
         auto synCtx = LocalTypeArgumentSynthesis(typeManager, argPack, ctx.gcBlames, false);
         stat.solution = synCtx.SynthesizeTypeArguments(true);
         size_t newUnsolvedCount = stat.solution ? synCtx.CountUnsolvedTyVars(*stat.solution) : 0;

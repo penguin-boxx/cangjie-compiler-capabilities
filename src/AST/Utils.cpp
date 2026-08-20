@@ -237,7 +237,7 @@ void SetOuterFunctionDecl(AST::Decl& decl)
     if (auto fd = DynamicCast<AST::FuncDecl*>(&decl)) {
         root = fd->funcBody.get();
     } else if (auto vd = DynamicCast<AST::VarDecl*>(&decl);
-        vd && (vd->TestAttr(Attribute::GLOBAL) || (vd->outerDecl && vd->outerDecl->IsNominalDecl()))) {
+               vd && (vd->TestAttr(Attribute::GLOBAL) || (vd->outerDecl && vd->outerDecl->IsNominalDecl()))) {
         // As for decls in lambda expr, their outerDecl is lambda's left decl, may be a VarDecl(only global var or
         // member var). Because lambda is expr in AST, not a decl, so we can't set lambda as outerDecl.
         root = vd->initializer.get();
@@ -429,10 +429,10 @@ bool DoesNotHaveEnumSubpattern(const LetPatternDestructor& let)
     return true;
 }
 
-#define ATTR_ACCESS_MAP \
-    ATTR_WITH_LEVEL(Attribute::PRIVATE, AccessLevel::PRIVATE) \
-    ATTR_WITH_LEVEL(Attribute::INTERNAL, AccessLevel::INTERNAL) \
-    ATTR_WITH_LEVEL(Attribute::PROTECTED, AccessLevel::PROTECTED) \
+#define ATTR_ACCESS_MAP                                                                                                \
+    ATTR_WITH_LEVEL(Attribute::PRIVATE, AccessLevel::PRIVATE)                                                          \
+    ATTR_WITH_LEVEL(Attribute::INTERNAL, AccessLevel::INTERNAL)                                                        \
+    ATTR_WITH_LEVEL(Attribute::PROTECTED, AccessLevel::PROTECTED)                                                      \
     ATTR_WITH_LEVEL(Attribute::PUBLIC, AccessLevel::PUBLIC)
 
 AccessLevel GetAccessLevel(const Node& node)
@@ -504,11 +504,7 @@ inline bool NeedPoint(const std::string& str)
 }
 
 void ExtractArgumentsOfDeprecatedAnno(
-    const Ptr<AST::Annotation> annotation,
-    std::string& message,
-    std::string& since,
-    bool& strict
-)
+    const Ptr<AST::Annotation> annotation, std::string& message, std::string& since, bool& strict)
 {
     for (auto& arg : annotation->args) {
         if (auto lce = DynamicCast<AST::LitConstExpr*>(arg->expr.get()); lce) {
@@ -616,9 +612,8 @@ std::vector<VarDeclWithPosition> GetVarsInitializationOrderWithPositions(const D
         idx++;
     }
 
-    std::sort(specificDecls.begin(), specificDecls.end(), [](const auto& lhs, const auto& rhs) {
-        return lhs.decl->begin < rhs.decl->begin;
-    });
+    std::sort(specificDecls.begin(), specificDecls.end(),
+        [](const auto& lhs, const auto& rhs) { return lhs.decl->begin < rhs.decl->begin; });
 
     std::vector<VarDeclWithPosition> resultDecls;
     auto specificDeclsIt = specificDecls.begin();
@@ -761,9 +756,9 @@ void InsertMirrorVarProp(ClassDecl& decl, Attribute attrToBeSet)
         InsertPropConvertedByField(decl, *var, attrToBeSet);
     }
     // Delete the original field
-    members.erase(std::remove_if(members.begin(), members.end(), [](auto& node) {
-        return node.get()->astKind == ASTKind::VAR_DECL;
-        }), members.end());
+    members.erase(std::remove_if(members.begin(), members.end(),
+                      [](auto& node) { return node.get()->astKind == ASTKind::VAR_DECL; }),
+        members.end());
 }
 
 } // namespace Cangjie::AST
@@ -777,7 +772,7 @@ void SetPositionAndCurFileByProvidedNode(Node& consumer, Node& provider)
     consumer.begin = provider.begin;
     consumer.end = provider.end;
 }
-}
+} // namespace
 
 namespace Cangjie::Interop::Java {
 bool IsImpl(const Node& node)
@@ -805,9 +800,7 @@ bool IsJObject(const Decl& decl)
 
 bool IsJObject(const Decl& decl, const std::string& packageName)
 {
-    return IsMirror(decl) &&
-        decl.identifier.Val() == INTEROP_JOBJECT_NAME &&
-        packageName == INTEROP_JAVA_LANG_PACKAGE;
+    return IsMirror(decl) && decl.identifier.Val() == INTEROP_JOBJECT_NAME && packageName == INTEROP_JAVA_LANG_PACKAGE;
 }
 
 bool IsMirror(const Node& node)

@@ -261,10 +261,11 @@ void TypeChecker::TypeCheckerImpl::CollectDeclMapAndCheckRedefinitionForOneSymbo
             sym.node->curFile != found.front()->curFile;
         bool oneIsFromCommonPart =
             sym.node->TestAttr(Attribute::FROM_COMMON_PART) != found.front()->TestAttr(Attribute::FROM_COMMON_PART);
-        bool multiPlat = oneIsFromCommonPart &&
-            sym.node->TestAttr(Cangjie::AST::Attribute::COMMON) && found.front()->TestAttr(Attribute::SPECIFIC);
-        multiPlat = multiPlat || (oneIsFromCommonPart &&
-          sym.node->TestAttr(Attribute::SPECIFIC) && found.front()->TestAttr(Attribute::COMMON));
+        bool multiPlat = oneIsFromCommonPart && sym.node->TestAttr(Cangjie::AST::Attribute::COMMON) &&
+            found.front()->TestAttr(Attribute::SPECIFIC);
+        multiPlat = multiPlat ||
+            (oneIsFromCommonPart && sym.node->TestAttr(Attribute::SPECIFIC) &&
+                found.front()->TestAttr(Attribute::COMMON));
         if (!privateGlobalInDifferentFile && !multiPlat) {
             DiagRedefinitionWithFoundNode(diag, StaticCast<Decl>(*sym.node), *found.front());
         }
@@ -321,8 +322,8 @@ void TypeChecker::TypeCheckerImpl::CheckConflictDeclWithSubPackage(const Package
     for (auto decl : toplevelDecls) {
         if (subPkgNames.count(decl->identifier) != 0) {
             auto fullSubName = pkg.fullPackageName + "." + decl->identifier;
-            diag.DiagnoseRefactor(DiagKindRefactor::sema_conflict_with_sub_package, *decl,
-                MakeRange(decl->identifier), decl->identifier.Val(), fullSubName);
+            diag.DiagnoseRefactor(DiagKindRefactor::sema_conflict_with_sub_package, *decl, MakeRange(decl->identifier),
+                decl->identifier.Val(), fullSubName);
         }
     }
 }
@@ -408,18 +409,17 @@ Ptr<Ty> TypeChecker::TypeCheckerImpl::GetTyFromASTType(ASTContext& ctx, RefType&
     // Remove all non-type decls.
     Utils::EraseIf(targets, [](Ptr<const Decl> d) { return !d || !d->IsTypeDecl(); });
 
-    std::sort(targets.begin(), targets.end(),
-        [](Ptr<const Decl> d1, Ptr<const Decl> d2) {
-            if (d1->scopeLevel > d2->scopeLevel) {
+    std::sort(targets.begin(), targets.end(), [](Ptr<const Decl> d1, Ptr<const Decl> d2) {
+        if (d1->scopeLevel > d2->scopeLevel) {
+            return true;
+        } else if (d1->scopeLevel == d2->scopeLevel) {
+            // Ranking overloads also by specific > common
+            if (d1->TestAttr(Attribute::SPECIFIC)) {
                 return true;
-            } else if (d1->scopeLevel == d2->scopeLevel) {
-                // Ranking overloads also by specific > common
-                if (d1->TestAttr(Attribute::SPECIFIC)) {
-                    return true;
-                }
             }
-            return false;
-        });
+        }
+        return false;
+    });
 
     Ptr<Decl> target{nullptr};
     if (targets.empty()) {
@@ -1425,9 +1425,9 @@ void TypeChecker::TypeCheckerImpl::AddAssumptionForExtendDecls(ASTContext& ctx)
     }
 }
 
-void TypeChecker::TypeCheckerImpl::AddUpperBoundOnTypeParameters(
-    ASTContext& ctx, const Generic& generic, const Decl& typeTarget, MultiTypeSubst& revTypeMapping,
-    TyVarUB& allAssumptionMap, const TypeSubst& typeArgAppliedMap)
+void TypeChecker::TypeCheckerImpl::AddUpperBoundOnTypeParameters(ASTContext& ctx, const Generic& generic,
+    const Decl& typeTarget, MultiTypeSubst& revTypeMapping, TyVarUB& allAssumptionMap,
+    const TypeSubst& typeArgAppliedMap)
 {
     for (auto& typeParameter : generic.typeParameters) {
         auto genericTy = DynamicCast<GenericsTy*>(typeParameter->GetTy());
@@ -1536,8 +1536,8 @@ void TypeChecker::TypeCheckerImpl::PreCheckFuncRedefinitionForEnum(const std::ve
         auto funcTy = DynamicCast<FuncTy*>(func->GetTy());
         auto paramTys = funcTy ? funcTy->paramTys : GetParamTys(*func);
         if (paramNum.find(paramTys.size()) != paramNum.end()) {
-            diag.Diagnose(*func, DiagKind::sema_duplicated_item_in_enum,
-                func->identifier.Val().c_str(), ed->identifier.Val().c_str());
+            diag.Diagnose(*func, DiagKind::sema_duplicated_item_in_enum, func->identifier.Val().c_str(),
+                ed->identifier.Val().c_str());
         } else {
             paramNum.insert(paramTys.size());
         }
@@ -1913,9 +1913,7 @@ MemSig MemDecl2Sig(Decl& d)
 {
     if (auto fd = DynamicCast<FuncDecl*>(&d)) {
         auto generic = fd->GetGeneric();
-        return MemSig{fd->identifier,
-            false,
-            fd->funcBody->paramLists[0]->params.size(),
+        return MemSig{fd->identifier, false, fd->funcBody->paramLists[0]->params.size(),
             generic ? generic->typeParameters.size() : 0};
     } else {
         return MemSig{d.identifier, true};

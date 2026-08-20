@@ -47,11 +47,11 @@ enum class TypeKind {
 #include "cangjie/AST/TypeKind.inc"
 #undef TYPE_KIND
     /** NOTE: Following type kinds are only used during type checking, and will not appeared on user's code. */
-    TYPE_ANY,            /**< Temporary Any type, will be replaced when start type checking. */
-    TYPE_INTERSECTION,   /**< The intersection type. */
-    TYPE_UNION,          /**< The union type. */
-    TYPE_QUEST,          /**< The quest type. If type is not annotated) mark quest first. */
-    TYPE_INITIAL,        /**< Initial type for any 'Ptr<Ty>' 's initialization. */
+    TYPE_ANY,          /**< Temporary Any type, will be replaced when start type checking. */
+    TYPE_INTERSECTION, /**< The intersection type. */
+    TYPE_UNION,        /**< The union type. */
+    TYPE_QUEST,        /**< The quest type. If type is not annotated) mark quest first. */
+    TYPE_INITIAL,      /**< Initial type for any 'Ptr<Ty>' 's initialization. */
 };
 
 inline const std::map<TokenKind, TokenKind> COMPOUND_ASSIGN_EXPR_MAP = {{TokenKind::ADD_ASSIGN, TokenKind::ADD},

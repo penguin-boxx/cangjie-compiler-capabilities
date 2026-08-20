@@ -204,8 +204,8 @@ bool IsGenericInCommonSerialization(bool serializingCommon, const Decl& decl)
     if (auto fd = DynamicCast<const AST::FuncDecl*>(&decl); shouldSerialize && fd) {
         // `static init` never gets deserialized (LoadDecl) when compiling platform part
         // so, this declaration is skipped to avoid other decls becoming dependent to never loaded declaration.
-        shouldSerialize = !(fd->TestAttr(AST::Attribute::STATIC, AST::Attribute::CONSTRUCTOR) &&
-            fd->identifier == STATIC_INIT_FUNC);
+        shouldSerialize =
+            !(fd->TestAttr(AST::Attribute::STATIC, AST::Attribute::CONSTRUCTOR) && fd->identifier == STATIC_INIT_FUNC);
     }
     return shouldSerialize;
 }
@@ -383,7 +383,7 @@ inline bool CanSkip4CJMP(const Decl& decl, bool serializingCommon)
  * @brief Get the import package name by import spec.
  * @param importSpec The import spec.
  * @return The import package name.
-*/
+ */
 std::string GetImportPackageNameByImportSpec(const AST::ImportSpec& importSpec)
 {
     if (importSpec.IsImportMulti()) {
@@ -408,7 +408,7 @@ std::string GetImportPackageNameByImportSpec(const AST::ImportSpec& importSpec)
 void CollectAnnotations(const Decl& decl, std::vector<Ptr<Expr>>& fullExportExprs)
 {
     if (auto classDecl = DynamicCast<ClassDecl>(&decl)) {
-        for (auto &it : classDecl->annotations) {
+        for (auto& it : classDecl->annotations) {
             if (it->astKind == AST::ASTKind::ANNOTATION && it->args.size() > 0) {
                 fullExportExprs.emplace_back(it->args.front()->expr);
             }
@@ -558,7 +558,7 @@ void ASTWriter::ASTWriterImpl::SaveOptions(bool debug, GlobalOptions::Optimizati
  */
 void ASTWriter::ASTWriterImpl::PreSaveFullExportDecls(Package& package)
 {
-    for (auto &file : package.files) {
+    for (auto& file : package.files) {
         if (file->package && file->package->hasCommon) {
             serializingCommon = true;
             break;
@@ -621,7 +621,7 @@ void ASTWriter::ASTWriterImpl::PreSaveFullExportDecls(Package& package)
     for (auto decl : fullExportDecls) {
         (void)GetDeclIndex(decl);
     }
-    for (auto &expr : fullExportExprs) {
+    for (auto& expr : fullExportExprs) {
         SaveExpr(*expr);
     }
 }
@@ -647,8 +647,7 @@ inline bool ASTWriter::ASTWriterImpl::NeedToExportDecl(Ptr<const Decl> decl)
 // all dependent file declarations goes before declaration of file that depend.
 // NOTE: File dependency defined in specification.
 void ASTWriter::ASTWriterImpl::DFSCollectFilesDeclarations(Ptr<File> file,
-    std::unordered_set<File*>& alreadyVisitedFiles,
-    std::vector<Ptr<const Decl>>& topLevelDeclsOrdered,
+    std::unordered_set<File*>& alreadyVisitedFiles, std::vector<Ptr<const Decl>>& topLevelDeclsOrdered,
     std::unordered_set<Ty*>& usedTys)
 {
     if (alreadyVisitedFiles.find(file) != alreadyVisitedFiles.end()) {
@@ -755,7 +754,7 @@ void ASTWriter::SetSerializingCommon()
 {
     pImpl->SetSerializingCommon();
 }
- 
+
 void ASTWriter::ASTWriterImpl::SetSerializingCommon()
 {
     serializingCommon = true;
@@ -885,7 +884,7 @@ flatbuffers::Offset<PackageFormat::Imports> ASTWriter::ASTWriterImpl::SaveFileIm
 TFeatureIdOffset ASTWriter::ASTWriterImpl::CreateFeatureId(const FeatureId& featureId)
 {
     std::vector<std::string> identifiers;
-    for (auto identifier: featureId.identifiers) {
+    for (auto identifier : featureId.identifiers) {
         identifiers.push_back(identifier);
     }
 
@@ -895,7 +894,7 @@ TFeatureIdOffset ASTWriter::ASTWriterImpl::CreateFeatureId(const FeatureId& feat
 TFeaturesDirectiveOffset ASTWriter::ASTWriterImpl::SaveFeaturesDirective(Ptr<FeaturesDirective> fd)
 {
     auto features = std::vector<TFeatureIdOffset>();
-    for (auto& featureId: fd->featuresSet->content) {
+    for (auto& featureId : fd->featuresSet->content) {
         features.push_back(CreateFeatureId(featureId));
     }
 
@@ -961,8 +960,7 @@ FormattedIndex ASTWriter::SaveType(Ptr<const Ty> pType) const
 
 namespace {
 
-template <typename T>
-std::optional<Ptr<const Ty>> TryGetSpecificImplementationTy(const Ptr<const Ty>& pType)
+template <typename T> std::optional<Ptr<const Ty>> TryGetSpecificImplementationTy(const Ptr<const Ty>& pType)
 {
     auto ty = StaticCast<T*>(pType);
     if (ty->decl && ty == ty->decl->GetTy() && ty->decl->specificImplementation) {
@@ -1354,8 +1352,7 @@ TFuncBodyOffset ASTWriter::ASTWriterImpl::SaveFuncBody(const FuncBody& funcBody)
     // NOTE: desugared param function has same 'outerDecl' and 'GLOBAL' attribute will its owner function.
     // also note that generic decls are handled in the beginning already
     bool isGenericCJMP = fd && IsGenericInCommonSerialization(serializingCommon, *fd);
-    bool shouldExportBody = config.exportContent && exportFuncBody &&
-        (!fd || CanBeSrcExported(*fd) || isGenericCJMP);
+    bool shouldExportBody = config.exportContent && exportFuncBody && (!fd || CanBeSrcExported(*fd) || isGenericCJMP);
     bool validBody = shouldExportBody && Ty::IsTyCorrect(funcBody.GetTy()) && funcBody.body;
     auto bodyIdx = validBody ? SaveExpr(*funcBody.body) : INVALID_FORMAT_INDEX;
     // CaptureKind is need if the 'funcBody' is exported.
@@ -1570,8 +1567,7 @@ TDeclOffset ASTWriter::ASTWriterImpl::SaveUnsupportDecl(const DeclInfo& declInfo
 }
 
 flatbuffers::Offset<flatbuffers::Vector<AttrSizeType>> ASTWriter::ASTWriterImpl::SaveAttributes(
-    const AttributePack& attrs
-)
+    const AttributePack& attrs)
 {
     std::vector<AttrSizeType> attrVec;
     for (auto it : attrs.GetRawAttrs()) {
@@ -1610,7 +1606,7 @@ std::vector<TFullIdOffset> ASTWriter::ASTWriterImpl::CollectInitializationDepend
             }
         }
     }
-    
+
     return dependencies;
 }
 

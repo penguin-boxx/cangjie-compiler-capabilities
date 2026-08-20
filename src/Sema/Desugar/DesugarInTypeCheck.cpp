@@ -135,8 +135,8 @@ OwnedPtr<Expr> CreateArgumentForCompoundAssignOverload(
     return binaryExpr;
 }
 
-void DesugarPrimaryCtorHandleSuper(const Decl& decl, const PrimaryCtorDecl& fd,
-    const OwnedPtr<FuncBody>& funcBody, std::vector<OwnedPtr<Node>>::iterator& it)
+void DesugarPrimaryCtorHandleSuper(const Decl& decl, const PrimaryCtorDecl& fd, const OwnedPtr<FuncBody>& funcBody,
+    std::vector<OwnedPtr<Node>>::iterator& it)
 {
     if (decl.astKind != ASTKind::CLASS_DECL || !fd.funcBody->body || fd.funcBody->body->body.empty()) {
         return;
@@ -335,8 +335,8 @@ void DesugarOperatorOverloadExpr(ASTContext& ctx, UnaryExpr& ue)
     ctx.RemoveTypeCheckCache(*callBase);
     callBase->baseExpr = std::move(ue.expr);
     callBase->field = SrcIdentifier{TOKENS[static_cast<int64_t>(ue.op)]};
-    callBase->field.SetPos(ue.operatorPos, ue.operatorPos +
-        strlen(TOKENS[static_cast<int64_t>(ue.op)])); // Requried for LSP usage.
+    callBase->field.SetPos(
+        ue.operatorPos, ue.operatorPos + strlen(TOKENS[static_cast<int64_t>(ue.op)])); // Requried for LSP usage.
     callExpr->baseFunc = std::move(callBase);
     callExpr->sourceExpr = &ue;
     callExpr->begin = ue.begin;

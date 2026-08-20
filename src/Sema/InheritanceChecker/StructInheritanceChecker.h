@@ -161,7 +161,8 @@ private:
      * key: generic decl with instantiated type, value: pair of member signatures to report diagnose.
      */
     std::map<std::pair<Ptr<const Decl>, const std::vector<Ptr<Ty>>>,
-        std::vector<std::pair<MemberSignature, MemberSignature>>> genericMembersForInstantiatedDecl;
+        std::vector<std::pair<MemberSignature, MemberSignature>>>
+        genericMembersForInstantiatedDecl;
     std::vector<std::tuple<Ptr<const Node>, Ptr<const Decl>, const std::vector<Ptr<Ty>>>> instTriggerInfos;
     std::stack<TypeSubst> institutionMaps;
     bool infiniteInstantiationOccured{false};

@@ -423,10 +423,10 @@ public:
         SrcCodeCacheInfo(const SrcCodeCacheInfo& info) = default;
         SrcCodeCacheInfo& operator=(SrcCodeCacheInfo&& info) = default;
         SrcCodeCacheInfo& operator=(const SrcCodeCacheInfo& info) = default;
-        SrcCodeCacheInfo(const std::string& code) : code(code) {};
-        SrcCodeCacheInfo(std::string&& code) : code(std::move(code)) {};
-        SrcCodeCacheInfo(SrcCodeChangeState state, const std::string& code) : state(state), code(code) {};
-        SrcCodeCacheInfo(SrcCodeChangeState state, std::string&& code) : state(state), code(std::move(code)) {};
+        SrcCodeCacheInfo(const std::string& code) : code(code){};
+        SrcCodeCacheInfo(std::string&& code) : code(std::move(code)){};
+        SrcCodeCacheInfo(SrcCodeChangeState state, const std::string& code) : state(state), code(code){};
+        SrcCodeCacheInfo(SrcCodeChangeState state, std::string&& code) : state(state), code(std::move(code)){};
     };
     // the source code cache map use for LSP and cjdb. Key is path, Value is source change state and source code.
     std::unordered_map<std::string, SrcCodeCacheInfo> bufferCache;

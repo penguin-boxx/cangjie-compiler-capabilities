@@ -25,11 +25,7 @@ using ErrMsg = std::stack<std::string>;
 using ErrOrTy = std::variant<ErrMsg, Ptr<AST::Ty>>;
 
 namespace {
-enum class Uniformity {
-    UNIFORMED,
-    MIXED,
-    ALL_IRRELEVANT
-};
+enum class Uniformity { UNIFORMED, MIXED, ALL_IRRELEVANT };
 
 Uniformity CheckFuncUniformity(const std::set<Ptr<Ty>>& tys)
 {
@@ -121,12 +117,10 @@ Ptr<AST::Ty> JoinAndMeet::BatchJoin(const std::set<Ptr<Ty>>& tys)
 {
     auto isSubtype = [this](Ptr<Ty> ty1, Ptr<Ty> ty2) { return tyMgr.IsSubtype(ty1, ty2); };
     auto isSupertype = [this](Ptr<Ty> ty1, Ptr<Ty> ty2) { return tyMgr.IsSubtype(ty2, ty1); };
-    auto doBatchJoin = [this](const std::set<Ptr<AST::Ty>>& tys) {return BatchJoin(tys);};
-    auto doBatchMeet = [this](const std::set<Ptr<AST::Ty>>& tys) {return BatchMeet(tys);};
-    DualMode joinMode = {.bound = tyMgr.GetAnyTy(),
-        .coFunc = doBatchJoin,
-        .contraFunc = doBatchMeet,
-        .coSubtyFunc = isSubtype};
+    auto doBatchJoin = [this](const std::set<Ptr<AST::Ty>>& tys) { return BatchJoin(tys); };
+    auto doBatchMeet = [this](const std::set<Ptr<AST::Ty>>& tys) { return BatchMeet(tys); };
+    DualMode joinMode = {
+        .bound = tyMgr.GetAnyTy(), .coFunc = doBatchJoin, .contraFunc = doBatchMeet, .coSubtyFunc = isSubtype};
     std::set<Ptr<Ty>> realTys;
     std::function<void(Ptr<Ty>)> insertRealTy = [this, &realTys, &insertRealTy](Ptr<Ty> ty) {
         if (auto tyVar = DynamicCast<TyVar*>(ty); (tyVar && Utils::In(tyVar, ignoredTyVars)) || ty->IsNothing()) {
@@ -290,8 +284,8 @@ Ptr<AST::Ty> JoinAndMeet::BatchMeet(const std::set<Ptr<Ty>>& tys)
 {
     auto isSubtype = [this](Ptr<Ty> ty1, Ptr<Ty> ty2) { return tyMgr.IsSubtype(ty1, ty2); };
     auto isSupertype = [this](Ptr<Ty> ty1, Ptr<Ty> ty2) { return tyMgr.IsSubtype(ty2, ty1); };
-    auto doBatchJoin = [this](const std::set<Ptr<AST::Ty>>& tys) {return BatchJoin(tys);};
-    auto doBatchMeet = [this](const std::set<Ptr<AST::Ty>>& tys) {return BatchMeet(tys);};
+    auto doBatchJoin = [this](const std::set<Ptr<AST::Ty>>& tys) { return BatchJoin(tys); };
+    auto doBatchMeet = [this](const std::set<Ptr<AST::Ty>>& tys) { return BatchMeet(tys); };
     DualMode meetMode = {.bound = TypeManager::GetInvalidTy(),
         .coFunc = doBatchMeet,
         .contraFunc = doBatchJoin,
