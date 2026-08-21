@@ -715,20 +715,26 @@ bool CompilerInstance::PerformCapabilityCheck()
 {
     // Checked exceptions (experimental): capability argument checking (/3.5) over the
     // typed AST. Must run before desugar destroys 'TryExpr' structure and before instantiation.
-    if (!invocation.globalOptions.enableChexc) {
+    // Effect requirements follow the effect-handler feature, on an axis of its own: wherever it is
+    // enabled, a 'perform' without a handler is an error at every exception-checking level, so the
+    // pass runs for effects alone as well.
+    bool checkExceptions = invocation.globalOptions.enableChexc;
+    if (!checkExceptions && !invocation.globalOptions.enableEH) {
         return true;
     }
     Utils::ProfileRecorder recorder("Main Stage", "Capability Check");
     auto errorCountBefore = diag.GetErrorCount();
     bool asWarning = invocation.globalOptions.chexcSeverity == GlobalOptions::ChexcSeverity::CS_WARN;
-    Sema::ReportCapabilityMissHandler missHandler(diag, asWarning);
+    Sema::ReportCapabilityMissHandler missHandler(diag, asWarning, checkExceptions);
     CJC_NULLPTR_CHECK(typeManager);
     CJC_NULLPTR_CHECK(importManager);
     for (auto& srcPkg : GetSourcePackages()) {
         CJC_NULLPTR_CHECK(srcPkg);
         // Capability parameter inference runs first and its results act as the declared clauses
-        // of the declarations it covers (parameters before arguments).
-        auto inferred = Sema::InferCapabilities(*typeManager, *importManager, *srcPkg, diag);
+        // of the declarations it covers (parameters before arguments). Effect requirements are
+        // never inferred, so with exception checking off there is nothing to infer.
+        auto inferred = checkExceptions ? Sema::InferCapabilities(*typeManager, *importManager, *srcPkg, diag)
+                                        : Sema::InferredCapabilities{};
         // The clause components of types are completed between capability
         // parameter inference and capability argument checking, so a declaration's own type is
         // the single source of its list. Keep these three calls adjacent.

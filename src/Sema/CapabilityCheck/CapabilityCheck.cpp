@@ -61,11 +61,11 @@ using SupplyScope = std::vector<Ptr<Ty>>;
 /// Consulted when the lexical scope stack has no suitable supply; used for the every-constructor
 /// rule of instance field initializers. Null means no further supplies.
 using RootSupply = std::function<bool(Ptr<Ty>)>;
-/// Assumption imports, per file: the exception types imposed on every call into
-/// each named package. Keyed per file because that is where an import — and with it the consumer's
-/// trust claim about the dependency — lives.
+/// Assumption imports: the exception types imposed on every call into each named package. The
+/// claim is package-scoped -- one file's annotated import binds the whole consuming package, since
+/// the trust relationship is the package's, not the file's -- so the lists of every annotated
+/// import in the package are unioned per dependency.
 using AssumedThrows = std::unordered_map<std::string, std::vector<Ptr<Ty>>>;
-using AssumedThrowsByFile = std::unordered_map<Ptr<const File>, AssumedThrows>;
 
 /**
  * Collects the assumption imports of a package.
@@ -76,9 +76,9 @@ using AssumedThrowsByFile = std::unordered_map<Ptr<const File>, AssumedThrows>;
  * whether the import names the package ('import legacy.db.*') or a declaration in it
  * ('import legacy.db.query').
  */
-AssumedThrowsByFile CollectAssumedThrows(const Package& pkg, const ImportManager& importManager)
+AssumedThrows CollectAssumedThrows(const Package& pkg, const ImportManager& importManager)
 {
-    AssumedThrowsByFile byFile;
+    AssumedThrows assumed;
     for (auto& file : pkg.files) {
         if (!file) {
             continue;
@@ -104,7 +104,7 @@ AssumedThrowsByFile CollectAssumedThrows(const Package& pkg, const ImportManager
                     continue;
                 }
                 for (auto& name : import->content.GetPossiblePackageNames()) {
-                    auto& entry = byFile[file.get()][name];
+                    auto& entry = assumed[name];
                     for (auto cap : caps) {
                         if (Ty::IsTyCorrect(cap) && !Utils::In(cap, entry)) {
                             entry.emplace_back(cap);
@@ -114,7 +114,7 @@ AssumedThrowsByFile CollectAssumedThrows(const Package& pkg, const ImportManager
             }
         }
     }
-    return byFile;
+    return assumed;
 }
 
 /// Effects: an entry is an effect requirement iff it is a 'Command' subtype, and
@@ -145,7 +145,7 @@ bool IsCommandTy(TypeManager& typeManager, const ImportManager& importManager, P
 class CapabilityChecker {
 public:
     CapabilityChecker(TypeManager& typeManager, const ImportManager& importManager,
-        Sema::CapabilityMissHandler& missHandler, const AssumedThrowsByFile& assumed,
+        Sema::CapabilityMissHandler& missHandler, const AssumedThrows& assumed,
         const Sema::InferredCapabilities& inferred = {})
         : typeManager(typeManager),
           importManager(importManager),
@@ -304,7 +304,6 @@ private:
             return;
         }
         CJC_ASSERT(supplies.empty());
-        currentFile = fd.curFile;
         rootSupply = nullptr;
         // The enclosing class's captured capabilities are in scope throughout a member that has
         // a receiver to carry them. A static member, a static initializer and a
@@ -328,7 +327,6 @@ private:
             return;
         }
         CJC_ASSERT(supplies.empty());
-        currentFile = vd.curFile;
         rootSupply = std::move(root);
         // Only an INSTANCE field initializer runs with a receiver; a static one has no
         // capability scope at all. 'root' is non-null exactly for
@@ -615,18 +613,8 @@ private:
         if (assumed.empty() || !ce.resolvedFunction) {
             return;
         }
-        // The claim belongs to the file that wrote the import. A node the desugar rebuilt may have
-        // lost its file, in which case the enclosing declaration's file is the same one.
-        Ptr<const File> file = currentFile;
-        if (ce.curFile) {
-            file = ce.curFile;
-        }
-        auto byFile = assumed.find(file);
-        if (byFile == assumed.end()) {
-            return;
-        }
-        auto entry = byFile->second.find(ce.resolvedFunction->fullPackageName);
-        if (entry == byFile->second.end()) {
+        auto entry = assumed.find(ce.resolvedFunction->fullPackageName);
+        if (entry == assumed.end()) {
             return;
         }
         for (auto cap : entry->second) {
@@ -746,7 +734,7 @@ private:
     const ImportManager& importManager;
     Sema::CapabilityMissHandler& missHandler;
     /// Assumption imports of the package being checked, indexed by the file they appear in.
-    const AssumedThrowsByFile& assumed;
+    const AssumedThrows& assumed;
     std::vector<SupplyScope> supplies;
     RootSupply rootSupply;
     // Lists inferred for declarations without an authoritative clause.
@@ -754,7 +742,6 @@ private:
     // Set while collecting one declaration's residual demands: its own inferred list is not a supply.
     Ptr<const Decl> collectingFor{nullptr};
     // File of the declaration being checked; the fallback for a call site that lost its own.
-    Ptr<const File> currentFile{nullptr};
 };
 /// Collects residual demands instead of diagnosing them (miss-handler seam).
 class CollectingMissHandler : public Sema::CapabilityMissHandler {
@@ -825,7 +812,11 @@ private:
         if (!fd.funcBody || !fd.funcBody->body) {
             return false;
         }
-        if (fd.TestAttr(Attribute::PUBLIC) || fd.TestAttr(Attribute::PROTECTED)) {
+        // The rule is the declaration's own modifier, not the effective visibility the text
+        // defines: inferring a 'public' method of an 'internal' class is only safe once an
+        // inferred override is re-checked against the declaration it overrides, which is the same
+        // machinery the static-member rule waits on.
+        if (Sema::IsExportedDecl(fd)) {
             return false;
         }
         // No capability scope encloses a finalizer -- it may run after the supplying handlers are
@@ -1087,7 +1078,7 @@ private:
     std::unordered_set<size_t> reportedPolymorphic;
     Sema::InferredCapabilities inferred;
     /// Assumption imports of the package, shared with every checker below.
-    AssumedThrowsByFile assumed;
+    AssumedThrows assumed;
     std::vector<size_t> tarjanIndex;
     std::vector<size_t> tarjanLow;
     std::vector<bool> onStack;
@@ -1097,13 +1088,25 @@ private:
 } // namespace
 
 namespace Cangjie::Sema {
+bool IsExportedDecl(const Decl& decl)
+{
+    if (decl.TestAttr(Attribute::PUBLIC) || decl.TestAttr(Attribute::PROTECTED)) {
+        return true;
+    }
+    // Interface members are public contracts whether or not the modifier is written.
+    return decl.outerDecl && decl.outerDecl->astKind == ASTKind::INTERFACE_DECL;
+}
+
 void ReportCapabilityMissHandler::HandleMiss(const CapabilityDemand& demand)
 {
     CJC_NULLPTR_CHECK(demand.demandSite);
+    if (!demand.isEffect && !reportExceptions) {
+        return; // Exception checking is off: the clauses impose no obligations.
+    }
     auto tyName = Ty::ToString(demand.exceptionTy);
-    // Effects: an effect capability is named 'Handler<C>', not 'CanThrow<E>'.
-    auto kind = demand.isEffect ? (asWarning ? DiagKindRefactor::sema_chexc_missing_handler_capability_warn
-                                             : DiagKindRefactor::sema_chexc_missing_handler_capability)
+    // Effects: an effect capability is named 'Handler<C>', not 'CanThrow<E>', and a missing one is
+    // an error at every exception-checking level -- there is no migration level for a 'perform'.
+    auto kind = demand.isEffect ? DiagKindRefactor::sema_chexc_missing_handler_capability
                                 : (asWarning ? DiagKindRefactor::sema_chexc_missing_capability_warn
                                              : DiagKindRefactor::sema_chexc_missing_capability);
     auto builder = diag.DiagnoseRefactor(kind, *demand.demandSite, tyName, tyName);

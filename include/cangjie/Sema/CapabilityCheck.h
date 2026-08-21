@@ -59,7 +59,15 @@ public:
  */
 class ReportCapabilityMissHandler : public CapabilityMissHandler {
 public:
-    ReportCapabilityMissHandler(DiagnosticEngine& diag, bool asWarning) : diag(diag), asWarning(asWarning)
+    /**
+     * @p asWarning downgrades exception misses to warnings (the 'warn' checking level).
+     * @p reportExceptions is false when exception checking is off: the clauses still parse and
+     * still mean what they say, but impose no obligations, while effect requirements are reported
+     * whenever the effect-handler feature is on -- and always as errors, since an unhandled
+     * 'perform' fails at run time and has no migration level.
+     */
+    ReportCapabilityMissHandler(DiagnosticEngine& diag, bool asWarning, bool reportExceptions = true)
+        : diag(diag), asWarning(asWarning), reportExceptions(reportExceptions)
     {
     }
     void HandleMiss(const CapabilityDemand& demand) override;
@@ -67,7 +75,18 @@ public:
 private:
     DiagnosticEngine& diag;
     bool asWarning;
+    bool reportExceptions;
 };
+
+/**
+ * True when @p decl leaves its module, so its capability list is authoritative and never inferred.
+ * The test is the declaration's own modifier plus interface membership -- an interface member is a
+ * public contract whether or not the modifier is written. The text defines this over *effective*
+ * visibility (the narrowest of the declaration's own modifier and its enclosing declarations'),
+ * which additionally infers, say, a `public` method of an `internal` class; that widening waits on
+ * re-checking an inferred override against the declaration it overrides.
+ */
+bool IsExportedDecl(const AST::Decl& decl);
 
 /**
  * Capability lists inferred for declarations without an authoritative clause.

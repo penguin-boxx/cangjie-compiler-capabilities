@@ -29,6 +29,7 @@
 #include "Plugin/PluginCustomAnnoChecker.h"
 #include "SearchSymbol.h"
 #include "TypeCheckUtil.h"
+#include "cangjie/Sema/CapabilityCheck.h"
 
 #include "cangjie/AST/Clone.h"
 #include "cangjie/AST/Create.h"
@@ -188,10 +189,25 @@ void TypeChecker::TypeCheckerImpl::ReplaceFuncRetTyWithThis(FuncBody& fb, Ptr<Ty
     }
 }
 
+bool TypeChecker::TypeCheckerImpl::IsUncheckedBoundedGeneric(const Ty& genericTy)
+{
+    auto generics = DynamicCast<const GenericsTy*>(&genericTy);
+    if (!generics) {
+        return false;
+    }
+    return std::any_of(generics->upperBounds.begin(), generics->upperBounds.end(), [this](auto bound) {
+        return Ty::IsTyCorrect(bound) && TypeCheckUtil::IsUncheckedExceptionTy(typeManager, importManager, bound);
+    });
+}
+
 void TypeChecker::TypeCheckerImpl::ChkThrowsClauseTypes(
-    ASTContext& ctx, ThrowsClause& clause, const std::string& clauseKeyword)
+    ASTContext& ctx, ThrowsClause& clause, const std::string& clauseKeyword, bool allowCommands)
 {
     auto exception = importManager.GetCoreDecl<ClassDecl>(CLASS_EXCEPTION);
+    auto command = importManager.GetImportedDecl(EFFECT_PACKAGE_NAME, CLASS_COMMAND);
+    auto isCommandEntry = [this, &command](Ptr<Ty> capTy) {
+        return command && Ty::IsTyCorrect(command->GetTy()) && !promotion.Promote(*capTy, *command->GetTy()).empty();
+    };
     for (auto& capType : clause.capTypes) {
         CJC_NULLPTR_CHECK(capType);
         CheckReferenceTypeLegality(ctx, *capType);
@@ -215,15 +231,20 @@ void TypeChecker::TypeCheckerImpl::ChkThrowsClauseTypes(
             auto entryName = expanded ? Ty::ToString(capTy) : capType->ToString();
             bool isExceptionSubtype = (capTy->IsClass() || capTy->IsGeneric()) && exception &&
                 typeManager.IsSubtype(capTy, exception->GetTy());
+            // A 'captures' clause may name commands as well: an instance captures the handler
+            // capabilities its methods need exactly as it captures exception ones.
+            if (!isExceptionSubtype && allowCommands && isCommandEntry(capTy)) {
+                continue;
+            }
             if (!isExceptionSubtype) {
                 diag.DiagnoseRefactor(
                     DiagKindRefactor::sema_chexc_clause_type_not_exception, *capType, entryName, clauseKeyword);
-            } else if (!capTy->IsGeneric() &&
-                TypeCheckUtil::IsUncheckedExceptionTy(typeManager, importManager, capTy)) {
+            } else if (capTy->IsGeneric() ? IsUncheckedBoundedGeneric(*capTy)
+                                          : TypeCheckUtil::IsUncheckedExceptionTy(typeManager, importManager, capTy)) {
                 // A concrete unchecked exception type never needs a capability, so listing it is
-                // misleading and rejected. Type parameters are
-                // exempt: a requirement instantiating to an unchecked type is trivially
-                // satisfied instead.
+                // misleading and rejected. A type parameter is admitted -- a requirement that
+                // instantiates to an unchecked type is trivially satisfied instead -- unless its
+                // own bound is unchecked, which makes every instantiation of it one.
                 diag.DiagnoseRefactor(
                     DiagKindRefactor::sema_chexc_unchecked_type_in_clause, *capType, entryName, clauseKeyword);
             }
@@ -242,7 +263,7 @@ void TypeChecker::TypeCheckerImpl::ChkCapturesClauseOfDecl(ASTContext& ctx, Inhe
         CJC_NULLPTR_CHECK(capType);
         Synthesize({ctx, SynPos::NONE}, capType.get());
     }
-    ChkThrowsClauseTypes(ctx, *decl.capturesClause, "captures");
+    ChkThrowsClauseTypes(ctx, *decl.capturesClause, "captures", true);
     // A capturing class/struct cannot use a primary constructor (author ruling, forward
     // compatible with Modal CangJie where primary constructors are always '~local'); it
     // declares explicit 'init' constructors instead.
@@ -318,19 +339,6 @@ void TypeChecker::TypeCheckerImpl::ChkPerformsClauseTypes(ASTContext& ctx, Throw
     }
 }
 
-namespace {
-/// A declaration is exported when other packages may see its signature: its capability list is then
-/// authoritative and must not depend on inference.
-bool IsExportedDecl(const FuncDecl& fd)
-{
-    if (fd.TestAttr(Attribute::PUBLIC) || fd.TestAttr(Attribute::PROTECTED)) {
-        return true;
-    }
-    // Interface members are public contracts whether or not the modifier is written.
-    return fd.outerDecl && fd.outerDecl->astKind == ASTKind::INTERFACE_DECL;
-}
-} // namespace
-
 void TypeChecker::TypeCheckerImpl::ChkThrowsClauseOfFuncBody(ASTContext& ctx, FuncBody& fb)
 {
     // No capability scope encloses a finalizer: it may run long after the handlers that supplied
@@ -351,7 +359,7 @@ void TypeChecker::TypeCheckerImpl::ChkThrowsClauseOfFuncBody(ASTContext& ctx, Fu
         return;
     }
     // The '...' marker opens the list to inference, which an exported list must never depend on.
-    if (fb.throwsClause->hasEllipsis && fb.funcDecl && IsExportedDecl(*fb.funcDecl)) {
+    if (fb.throwsClause->hasEllipsis && fb.funcDecl && Sema::IsExportedDecl(*fb.funcDecl)) {
         diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_ellipsis_on_exported, *fb.throwsClause);
     }
     if (isFinalizer) {

@@ -97,6 +97,10 @@ ERROR(parse_empty_capability_clause_combined,
     "the empty clause pins the list as empty")
 ERROR(parse_empty_capability_list_not_alone, "'()' is only allowed as the whole capability list",
     "remove '()', or the entries it is mixed with")
+ERROR(parse_empty_assume_throws_list, "'@AssumeThrows[]' assumes nothing",
+    "drop the brackets to assume 'Exception', or list the exception types to assume")
+ERROR(parse_ellipsis_in_performs_clause, "'...' is not allowed in a 'performs' clause",
+    "effect requirements are never inferred: every 'performs' list is written")
 ERROR(parse_performs_clause_after_throws, "a 'performs' clause must precede the 'throws' clause")
 ERROR(parse_expected_exception_type_after_captures, "expected exception type after 'captures', found %s",
     "expected exception type here")

@@ -420,6 +420,13 @@ void ParserImpl::ParseAssumeThrowsAnnotation(Annotation& anno)
         while (true) {
             while (Skip(TokenKind::NL)) {
             }
+            // The empty list is rejected: an assumption that assumes nothing is either a mistake
+            // or the bare form written the long way, and the bare form already means 'Exception'.
+            if (Seeing(TokenKind::RSQUARE) && clause->capTypes.empty()) {
+                ParseDiagnoseRefactor(DiagKindRefactor::parse_empty_assume_throws_list, anno.lsquarePos);
+                anno.EnableAttr(Attribute::IS_BROKEN);
+                break;
+            }
             if (!SeeingAny(GetTypeFirst()) && !SeeingContextualKeyword()) {
                 ParseDiagnoseRefactor(
                     DiagKindRefactor::parse_expected_exception_type_after_throws, lookahead, ConvertToken(lookahead));

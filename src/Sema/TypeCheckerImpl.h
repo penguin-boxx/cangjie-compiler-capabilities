@@ -1314,7 +1314,11 @@ private:
      * and no concrete entry may be an unchecked exception type.
      * @p clauseKeyword names the clause in diagnostics ("throws" or "captures").
      */
-    void ChkThrowsClauseTypes(ASTContext& ctx, AST::ThrowsClause& clause, const std::string& clauseKeyword = "throws");
+    void ChkThrowsClauseTypes(ASTContext& ctx, AST::ThrowsClause& clause, const std::string& clauseKeyword = "throws",
+        bool allowCommands = false);
+    /// True when every instantiation of @p genericTy is an unchecked exception type -- one of its
+    /// own bounds already is -- so an entry naming it can never require a capability.
+    bool IsUncheckedBoundedGeneric(const AST::Ty& genericTy);
     /** Checked exceptions: diagnose 'throws' clauses on foreign/C functions and CFunc types. */
     void ChkThrowsClauseOfFuncBody(ASTContext& ctx, AST::FuncBody& fb);
     /// Effects: validate that every 'performs' entry is a 'Command' subtype.

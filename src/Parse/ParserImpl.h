@@ -192,14 +192,16 @@ private:
         return Utils::In(GetContextualKeyword(), [this](const TokenKind& kind) { return Seeing(kind); });
     }
     /**
-     * Checked exceptions: 'throws' and 'captures' are recognized by spelling at
-     * the few positions where a clause may start, and stay ordinary identifiers everywhere
-     * else — reserving them would break existing code (`std.unittest.mock` exports a public
-     * `throws` function). Only recognized when the feature is enabled.
+     * Checked exceptions: 'throws', 'performs' and 'captures' are recognized by spelling at the
+     * few positions where a clause may start, and stay ordinary identifiers everywhere else —
+     * reserving them would break existing code (`std.unittest.mock` exports a public `throws`
+     * function). The grammar is unconditional: every clause position is a parse error today, so
+     * recognizing them there changes no valid program, and what depends on the feature flag is
+     * what the clauses mean — obligations and metadata — not whether they parse.
      */
     inline bool SeeingChexcClause(const std::string& keyword)
     {
-        return enableChexc && Seeing(TokenKind::IDENTIFIER) && lookahead.Value() == keyword;
+        return Seeing(TokenKind::IDENTIFIER) && lookahead.Value() == keyword;
     }
     inline bool SeeingPrimaryKeyWordContext(TokenKind tk)
     {

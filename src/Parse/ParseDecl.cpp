@@ -2419,6 +2419,11 @@ void ParserImpl::ParseCapabilityClauses(FuncBody& fb)
             ParseDiagnoseRefactor(DiagKindRefactor::parse_performs_clause_after_throws, clausePos);
         }
         auto clause = ParseThrowsClause(true);
+        if (isPerforms && clause->hasEllipsis) {
+            // Effect requirements are never inferred, so there is nothing for the marker to open.
+            ParseDiagnoseRefactor(DiagKindRefactor::parse_ellipsis_in_performs_clause, clausePos);
+            clause->hasEllipsis = false;
+        }
         auto& slot = isPerforms ? fb.performsClause : fb.throwsClause;
         if (!slot) {
             slot = std::move(clause);
