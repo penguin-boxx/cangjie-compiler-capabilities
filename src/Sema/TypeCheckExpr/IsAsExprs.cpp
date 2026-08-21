@@ -41,8 +41,7 @@ Ptr<Ty> TypeChecker::TypeCheckerImpl::CastTargetTy(Type& target)
     }).Walk();
     auto pessimistic = TypeCheckUtil::ReadCastTargetPessimistically(typeManager, exception->GetTy(), targetTy);
     if (pessimistic.rejected) {
-        diag.DiagnoseRefactor(
-            DiagKindRefactor::sema_chexc_cast_target_invariant_func, target, Ty::ToString(targetTy));
+        diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_cast_target_invariant_func, target, Ty::ToString(targetTy));
         return targetTy;
     }
     return pessimistic.ty;

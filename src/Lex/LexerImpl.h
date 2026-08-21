@@ -149,8 +149,8 @@ private:
     const char* pInputEnd{nullptr}; // point to end of input file
     const char* pCurrent{nullptr};  // point to the current character
     const char* pResetCurrent{nullptr};
-    int32_t currentChar{-1};  // currently processing character
-    bool ehEnabled{false};    // EH keywords enabled flag (replaces dynamic tokenMap modification)
+    int32_t currentChar{-1}; // currently processing character
+    bool ehEnabled{false};   // EH keywords enabled flag (replaces dynamic tokenMap modification)
     unsigned lineResetOffsetsFromBase{0};
     TokenKind tokenKind{TokenKind::ILLEGAL};
     Position pos;

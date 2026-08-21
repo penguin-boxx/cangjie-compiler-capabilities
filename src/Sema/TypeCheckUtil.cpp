@@ -313,8 +313,7 @@ bool ContainsFuncTy(Ptr<const Ty> ty, std::unordered_set<Ptr<const Ty>>& seen)
         ty->typeArgs.begin(), ty->typeArgs.end(), [&seen](auto arg) { return ContainsFuncTy(arg, seen); });
 }
 
-Ptr<Ty> ReadPessimistically(
-    TypeManager& tyMgr, Ptr<Ty> exceptionTy, Ptr<Ty> ty, bool covariant, bool& rejected)
+Ptr<Ty> ReadPessimistically(TypeManager& tyMgr, Ptr<Ty> exceptionTy, Ptr<Ty> ty, bool covariant, bool& rejected)
 {
     if (!Ty::IsTyCorrect(ty)) {
         return ty;
