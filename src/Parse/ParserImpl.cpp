@@ -112,8 +112,9 @@ bool Parser::IsEHEnabled() const
 
 Parser& Parser::SetChexcEnabled(bool enabled)
 {
+    // Parser-side only: 'throws' and 'captures' stay ordinary identifiers in the lexer and are
+    // recognized by spelling at the few positions a clause may start (SeeingChexcClause).
     impl->enableChexc = enabled;
-    impl->lexer->SetChexcEnabled(enabled);
     return *this;
 }
 

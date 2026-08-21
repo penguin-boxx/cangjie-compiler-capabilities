@@ -605,8 +605,8 @@ private:
     OwnedPtr<AST::FuncType> ParseFuncType(
         std::vector<OwnedPtr<AST::Type>> types, const Position& lParenPos, const Position& rParenPos);
     /**
-     * Parse a checked-exception `throws` clause (experimental, requires the THROWS token which only
-     * exists with '--enable-chexc'). Grammar:
+     * Parse a checked-exception `throws` clause (experimental, gated on '--enable-chexc';
+     * recognized by spelling at clause positions, see SeeingChexcClause). Grammar:
      *   declarations (@p isDeclClause true): `throws (T {, T})` | `throws ()` | `throws T {, T}`
      *   function types (@p isDeclClause false): `throws (T {, T})` | `throws ()` | `throws T`
      * The `...` marker is parsed but rejected with a diagnostic.
@@ -614,7 +614,7 @@ private:
     OwnedPtr<AST::ThrowsClause> ParseThrowsClause(bool isDeclClause);
     /**
      * Parse a checked-exception `captures` clause on a class or struct header (experimental,
-     * requires the CAPTURES token which only exists with '--enable-chexc';).
+     * recognized by spelling at clause positions, see SeeingChexcClause).
      * Grammar: `captures T {, T}` (bare list only). Reuses the ThrowsClause node shape.
      */
     OwnedPtr<AST::ThrowsClause> ParseCapturesClause();

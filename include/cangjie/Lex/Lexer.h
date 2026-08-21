@@ -140,13 +140,6 @@ public:
     */
     void SetEHEnabled(bool enabled) const;
 
-    /**
-     * @brief Enable lexing of the checked-exceptions keyword (`throws`)
-     *
-     * @param enabled Whether to enable or disable `throws` lexing
-     */
-    void SetChexcEnabled(bool enabled) const;
-
     // Parse/Macro.
     const std::vector<StringPart>& GetStrParts(const Token& t);
     /// Read all tokens until the END token, excluded. After this, the Lexer cannot yield any more token.
