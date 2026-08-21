@@ -536,8 +536,13 @@ private:
     void DiagMissingPropertyBody(AST::PropDecl& prop);
     void ParsePropBody(const std::set<AST::Modifier>& modifiers, AST::PropDecl& propDecl);
     OwnedPtr<AST::FuncDecl> ParsePropMemberDecl(const std::set<AST::Modifier>& modifiers);
-    /// Parse 'performs' then 'throws' clauses of a function body.
+    /// Parse the 'performs' and 'throws' clauses of a function body, in that fixed order.
+    /// Several clauses of one kind are allowed; their entries union into one list.
     void ParseCapabilityClauses(AST::FuncBody& fb);
+    /// Union the entries of a second capability clause into the first; @p extra is left empty.
+    static void MergeCapabilityClause(AST::ThrowsClause& into, AST::ThrowsClause& extra);
+    /// True for a clause that pins an empty list -- `throws ()`, written with no entries and no `...`.
+    static bool IsPinnedEmptyClause(const AST::ThrowsClause& clause);
     void ParseFuncGenericConstraints(const AST::FuncBody& fb);
     void ParsePropMemberBody(const ScopeKind& scopeKind, AST::FuncBody& fb);
     void ParseFuncParameters(const ScopeKind& scopeKind, AST::FuncBody& fb);
@@ -614,7 +619,7 @@ private:
      */
     OwnedPtr<AST::ThrowsClause> ParseCapturesClause();
     /**
-     * If the lookahead is `captures`, parse the clause into @p decl (diagnosing duplicates).
+     * Parse every `captures` clause the lookahead offers into @p decl, unioning their entries.
      * Called at each admissible clause position of a class/struct header: its position relative
      * to the superclass list and `where` block is arbitrary.
      */

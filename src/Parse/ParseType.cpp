@@ -213,7 +213,7 @@ OwnedPtr<AST::Type> ParserImpl::ParseTypeWithParen()
     }
     // Checked exceptions (experimental): a contextual `throws` after ')' also selects the
     // function-type path, e.g. `(A) throws (E1, E2) -> R`. The clause must be followed by '->'.
-    // Effects: 'performs' does the same and precedes 'throws' (9.1 rule 8), so
+    // Effects: 'performs' does the same and precedes 'throws', so
     // `(A) performs H throws E -> R` stacks both.
     if (SeeingChexcClause("performs") || SeeingChexcClause("throws")) {
         OwnedPtr<ThrowsClause> performsClause;
@@ -293,13 +293,33 @@ OwnedPtr<FuncType> ParserImpl::ParseFuncType(
 
 OwnedPtr<AST::ThrowsClause> ParserImpl::ParseThrowsClause(bool isDeclClause)
 {
-    CJC_ASSERT(SeeingChexcClause("throws"));
+    CJC_ASSERT(SeeingChexcClause("throws") || SeeingChexcClause("performs"));
     auto clause = MakeOwned<ThrowsClause>();
     ChainScope cs(*this, clause.get());
     Next(); // Consume `throws`.
     clause->throwsPos = lastToken.Begin();
     clause->begin = clause->throwsPos;
     clause->end = lastToken.End();
+    // `()` is the empty entry list and is legal only as the whole list -- never nested in or mixed
+    // with other entries. Detected here so the error names the real problem instead of the missing
+    // '->' that `ParseType` would report for the unit type. `() -> R` still parses as a type.
+    auto seeingEmptyEntry = [this]() {
+        return Seeing({TokenKind::LPAREN, TokenKind::RPAREN}) &&
+            !Seeing({TokenKind::LPAREN, TokenKind::RPAREN, TokenKind::ARROW});
+    };
+    auto parseEntry = [this, &clause, &seeingEmptyEntry]() {
+        if (seeingEmptyEntry()) {
+            auto begin = lookahead.Begin();
+            Next(); // Consume '('.
+            Next(); // Consume ')'.
+            ParseDiagnoseRefactor(
+                DiagKindRefactor::parse_empty_capability_list_not_alone, MakeRange(begin, lastToken.End()));
+            // Not an authoritative empty list: the clause is malformed, not pinned.
+            clause->EnableAttr(Attribute::IS_BROKEN);
+            return;
+        }
+        (void)clause->capTypes.emplace_back(ParseType());
+    };
     auto diagnoseEllipsis = [this, isDeclClause, &clause]() {
         // On a declaration `...` re-enables capability parameter inference, whose result is
         // unioned with the listed entries. A functional type's list is always
@@ -318,7 +338,7 @@ OwnedPtr<AST::ThrowsClause> ParserImpl::ParseThrowsClause(bool isDeclClause)
         clause->leftParenPos = lastToken.Begin();
         ParseZeroOrMoreSepTrailing(
             [&clause](const Position& commaPos) { clause->commaPosVector.emplace_back(commaPos); },
-            [this, &clause, &diagnoseEllipsis]() {
+            [this, &clause, &diagnoseEllipsis, &parseEntry]() {
                 while (Skip(TokenKind::NL)) {
                 }
                 if (Seeing(TokenKind::RPAREN) && !clause->capTypes.empty()) {
@@ -328,7 +348,7 @@ OwnedPtr<AST::ThrowsClause> ParserImpl::ParseThrowsClause(bool isDeclClause)
                     diagnoseEllipsis();
                     return;
                 }
-                (void)clause->capTypes.emplace_back(ParseType());
+                parseEntry();
             },
             TokenKind::RPAREN);
         if (!Skip(TokenKind::RPAREN)) {
@@ -357,7 +377,7 @@ OwnedPtr<AST::ThrowsClause> ParserImpl::ParseThrowsClause(bool isDeclClause)
             if (Seeing(TokenKind::ELLIPSIS)) {
                 diagnoseEllipsis();
             } else {
-                (void)clause->capTypes.emplace_back(ParseType());
+                parseEntry();
             }
             if (!Skip(TokenKind::COMMA)) {
                 break;

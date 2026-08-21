@@ -8,7 +8,7 @@
  * @file
  *
  * This file declares the checked-exception capability checking pass (experimental, behind
- * '--experimental --enable-checked-exceptions'; proposal sections 3.3 and 3.5).
+ * '--experimental --enable-checked-exceptions').
  */
 
 #ifndef CANGJIE_SEMA_CAPABILITYCHECK_H

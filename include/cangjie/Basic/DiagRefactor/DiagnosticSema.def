@@ -444,6 +444,17 @@ ERROR(sema_chexc_performs_in_main, "'main' cannot declare a 'performs' clause",
 ERROR(sema_chexc_assume_throws_not_on_import, "'@AssumeThrows' is only allowed on an 'import'",
     "an assumption applies to a whole imported package")
 
+ERROR(sema_chexc_ellipsis_on_exported,
+    "'...' is not allowed in the 'throws' clause of an exported declaration",
+    "an exported capability list must not depend on inference")
+
+ERROR(sema_chexc_cast_target_invariant_func,
+    "'%s' cannot be a runtime cast target: it has a function type in an invariant position",
+    "a cast cannot see capability lists, and a type argument can be neither widened nor narrowed")
+ERROR(sema_chexc_clause_in_cast_target,
+    "a capability clause is not allowed in a runtime cast target",
+    "the target is written without clauses and read as requiring 'throws Exception'")
+
 ERROR(sema_chexc_polymorphic_recursion,
     "Cannot infer capability parameters for '%s': the recursion re-enters it at the growing "
     "instantiation '%s'",

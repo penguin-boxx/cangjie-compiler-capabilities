@@ -191,6 +191,29 @@ std::vector<Ptr<AST::Ty>> ExpandCapabilityList(const std::vector<OwnedPtr<AST::T
 
 std::vector<Ptr<AST::Ty>> GetFuncBodyCapTys(const AST::FuncBody& fb);
 
+/** Outcome of reading a runtime-cast target pessimistically. */
+struct PessimisticTarget {
+    /** The type the cast or type pattern binds at. */
+    Ptr<AST::Ty> ty{nullptr};
+    /** A function type sits in an invariant position of the target, which has no sound reading. */
+    bool rejected{false};
+};
+
+/**
+ * Checked exceptions: read the target of a runtime cast (`as`) or type pattern pessimistically, by
+ * position. The runtime sees erased shapes, so a cast cannot verify a capability list: read
+ * optimistically it would launder a `() throws E -> R` value into a clause-free `() -> R`.
+ * A function type in a COVARIANT position therefore receives `throws Exception` -- the least type
+ * among those erasing to the written one, so the cast is sound whatever the value's clauses were --
+ * while one in a CONTRAVARIANT position keeps the empty list it spells. The target itself is
+ * covariant; a function type's result and a tuple's components keep the enclosing polarity, a
+ * function type's parameters flip it: in `() -> (() -> R)` the inner type receives the requirement,
+ * in `(() -> R) -> Unit` it stays empty. A type argument of a generic is invariant and has no sound
+ * reading; a function type inside one is reported via PessimisticTarget::rejected. CFunc types
+ * carry no capabilities and are left alone.
+ */
+PessimisticTarget ReadCastTargetPessimistically(TypeManager& tyMgr, Ptr<AST::Ty> exceptionTy, Ptr<AST::Ty> targetTy);
+
 /**
  * Checked exceptions: the capability list of @p accessor (its elaborated 'throws' clause),
  * instantiated for a use site whose receiver has type @p receiverTy. @p receiverTy may be null

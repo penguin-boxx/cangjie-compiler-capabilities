@@ -1335,7 +1335,7 @@ void StructInheritanceChecker::CheckPropertyInheritance(const MemberSignature& p
 }
 
 /**
- * Proposal 3.8 covers property accessors as well as methods, but accessors are not member
+ * The override rule covers property accessors as well as methods, but accessors are not member
  * signatures of their own, so they never reach the method override path. Pair them up here.
  */
 void StructInheritanceChecker::CheckPropertyThrowsClauses(const PropDecl& parentProp, const PropDecl& childProp) const

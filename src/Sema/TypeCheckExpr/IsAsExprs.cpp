@@ -7,9 +7,46 @@
 #include "TypeCheckerImpl.h"
 
 #include "Diags.h"
+#include "TypeCheckUtil.h"
+
+#include "cangjie/AST/Walker.h"
+#include "cangjie/Utils/ConstantsUtils.h"
 
 using namespace Cangjie;
 using namespace Sema;
+
+Ptr<Ty> TypeChecker::TypeCheckerImpl::CastTargetTy(Type& target)
+{
+    // Checked exceptions: a runtime type test cannot see capability lists, so the target is read
+    // pessimistically -- otherwise the cast would launder a '() throws E -> R' value into a
+    // clause-free '() -> R'. An 'is' test binds nothing and is left alone. Off with the feature,
+    // the written type is the type.
+    auto targetTy = target.GetTy();
+    if (!ci->invocation.globalOptions.enableChexc || !Ty::IsTyCorrect(targetTy)) {
+        return targetTy;
+    }
+    auto exception = importManager.GetCoreDecl<ClassDecl>(CLASS_EXCEPTION);
+    if (!exception) {
+        return targetTy;
+    }
+    // The target is written without clauses: the reading below decides them, so a written one would
+    // be silently overwritten.
+    Walker(&target, [this](Ptr<Node> node) {
+        auto funcType = DynamicCast<FuncType*>(node.get());
+        if (funcType && (funcType->throwsClause || funcType->performsClause)) {
+            auto& clause = funcType->throwsClause ? *funcType->throwsClause : *funcType->performsClause;
+            diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_clause_in_cast_target, clause);
+        }
+        return VisitAction::WALK_CHILDREN;
+    }).Walk();
+    auto pessimistic = TypeCheckUtil::ReadCastTargetPessimistically(typeManager, exception->GetTy(), targetTy);
+    if (pessimistic.rejected) {
+        diag.DiagnoseRefactor(
+            DiagKindRefactor::sema_chexc_cast_target_invariant_func, target, Ty::ToString(targetTy));
+        return targetTy;
+    }
+    return pessimistic.ty;
+}
 
 Ptr<Ty> TypeChecker::TypeCheckerImpl::SynIsExpr(ASTContext& ctx, IsExpr& ie)
 {
@@ -47,7 +84,9 @@ Ptr<Ty> TypeChecker::TypeCheckerImpl::SynAsExpr(ASTContext& ctx, AsExpr& ae)
         Ty::IsTyCorrect(Synthesize({ctx, SynPos::NONE}, ae.asType.get())) && ReplaceIdealTy(*ae.leftExpr)) {
         auto optionDecl = RawStaticCast<EnumDecl*>(importManager.GetCoreDecl("Option"));
         if (optionDecl) {
-            ae.SetTy(typeManager.GetEnumTy(*optionDecl, {ae.asType->GetTy()}));
+            // The runtime test still uses the written type -- capability lists are erased, so both
+            // read the same shape -- while the value handed back is read pessimistically.
+            ae.SetTy(typeManager.GetEnumTy(*optionDecl, {CastTargetTy(*ae.asType)}));
         } else {
             diag.Diagnose(ae, DiagKind::sema_no_core_object);
             ae.SetTy(TypeManager::GetInvalidTy());

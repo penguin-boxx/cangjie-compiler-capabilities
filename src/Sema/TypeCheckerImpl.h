@@ -820,6 +820,12 @@ private:
     bool ChkFuncParam(ASTContext& ctx, AST::Ty& target, AST::FuncParam& fp);
     Ptr<AST::Ty> SynIsExpr(ASTContext& ctx, AST::IsExpr& ie);
     bool ChkIsExpr(ASTContext& ctx, AST::Ty& target, AST::IsExpr& ie);
+    /**
+ * Checked exceptions: the type a runtime cast or type pattern binds at, read pessimistically from
+ * the written @p target. Diagnoses a clause written in the target and a function type in an
+ * invariant position of it.
+ */
+    Ptr<AST::Ty> CastTargetTy(AST::Type& target);
     Ptr<AST::Ty> SynAsExpr(ASTContext& ctx, AST::AsExpr& ae);
     bool ChkAsExpr(ASTContext& ctx, AST::Ty& target, AST::AsExpr& ae);
     Ptr<AST::Ty> SynOptionalChainExpr(const CheckerContext& ctx, AST::OptionalChainExpr& oce);

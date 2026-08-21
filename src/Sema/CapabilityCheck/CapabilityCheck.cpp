@@ -8,7 +8,7 @@
  * @file
  *
  * This file implements checked-exception capability argument checking (experimental, behind
- * '--experimental --enable-checked-exceptions'; proposal sections 3.3 and 3.5).
+ * '--experimental --enable-checked-exceptions').
  *
  * Per callable body the pass walks the typed AST with a stack of capability scopes (supplies)
  * and checks every demand against it:
@@ -331,7 +331,7 @@ private:
         currentFile = vd.curFile;
         rootSupply = std::move(root);
         // Only an INSTANCE field initializer runs with a receiver; a static one has no
-        // capability scope at all (3.9 rule 1). 'root' is non-null exactly for
+        // capability scope at all. 'root' is non-null exactly for
         // instance fields.
         auto captures = rootSupply ? OwnerCaptures(vd) : SupplyScope{};
         PushCaptures(captures);
@@ -818,14 +818,20 @@ public:
     }
 
 private:
-    /// Proposal 6.3.1: inference applies to declarations that are not part of the exported
-    /// surface and carry no authoritative clause. A clause ending in `...` keeps inference on.
+    /// Inference applies to declarations that are not part of the exported surface and carry no
+    /// authoritative clause. A clause ending in `...` keeps inference on.
     static bool IsEligible(const FuncDecl& fd)
     {
         if (!fd.funcBody || !fd.funcBody->body) {
             return false;
         }
         if (fd.TestAttr(Attribute::PUBLIC) || fd.TestAttr(Attribute::PROTECTED)) {
+            return false;
+        }
+        // No capability scope encloses a finalizer -- it may run after the supplying handlers are
+        // gone -- so it is not a declaration a list can be inferred for either: a checked throw
+        // inside one has nothing to discharge it and is reported at the throw.
+        if (fd.IsFinalizer()) {
             return false;
         }
         // Interface members are contracts: their lists are written explicitly.
@@ -836,7 +842,7 @@ private:
         // virtually, so the override rule applies to it — but override checking runs during type
         // check, before inference, and would not see an inferred list. Requiring an explicit
         // clause here keeps the two consistent; a post-inference re-check would let these be
-        // inferred too (see notes/audit-report.md MF8).
+        // inferred too.
         if (fd.TestAttr(Attribute::STATIC) && !fd.TestAttr(Attribute::PRIVATE) && fd.outerDecl &&
             fd.outerDecl->astKind == ASTKind::CLASS_DECL) {
             return false;
@@ -912,7 +918,7 @@ private:
     }
 
     /**
-     * Proposal 6.3.4: a cycle that re-enters a member at a growing generic instantiation has no
+     * A cycle that re-enters a member at a growing generic instantiation has no
      * finite candidate universe, so inference is rejected and explicit clauses are required.
      *
      * Only calls that stay inside the cycle can grow a type argument on every turn, so the check

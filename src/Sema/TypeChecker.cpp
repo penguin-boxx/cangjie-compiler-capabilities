@@ -220,8 +220,8 @@ void TypeChecker::TypeCheckerImpl::ChkThrowsClauseTypes(
                     DiagKindRefactor::sema_chexc_clause_type_not_exception, *capType, entryName, clauseKeyword);
             } else if (!capTy->IsGeneric() &&
                 TypeCheckUtil::IsUncheckedExceptionTy(typeManager, importManager, capTy)) {
-                // Proposal 3.2 rule 5: a concrete unchecked exception type never needs a
-                // capability, so listing it is misleading and rejected. Type parameters are
+                // A concrete unchecked exception type never needs a capability, so listing it is
+                // misleading and rejected. Type parameters are
                 // exempt: a requirement instantiating to an unchecked type is trivially
                 // satisfied instead.
                 diag.DiagnoseRefactor(
@@ -318,20 +318,45 @@ void TypeChecker::TypeCheckerImpl::ChkPerformsClauseTypes(ASTContext& ctx, Throw
     }
 }
 
+namespace {
+/// A declaration is exported when other packages may see its signature: its capability list is then
+/// authoritative and must not depend on inference.
+bool IsExportedDecl(const FuncDecl& fd)
+{
+    if (fd.TestAttr(Attribute::PUBLIC) || fd.TestAttr(Attribute::PROTECTED)) {
+        return true;
+    }
+    // Interface members are public contracts whether or not the modifier is written.
+    return fd.outerDecl && fd.outerDecl->astKind == ASTKind::INTERFACE_DECL;
+}
+} // namespace
+
 void TypeChecker::TypeCheckerImpl::ChkThrowsClauseOfFuncBody(ASTContext& ctx, FuncBody& fb)
 {
+    // No capability scope encloses a finalizer: it may run long after the handlers that supplied
+    // the capabilities are gone, so it carries no clause of either kind.
+    bool isFinalizer = fb.funcDecl && fb.funcDecl->IsFinalizer();
     if (fb.performsClause) {
         // No default effect handler exists, so 'main' cannot carry effect requirements the way it
         // may carry exception ones (policy table).
         if (fb.funcDecl && fb.funcDecl->identifier == MAIN_INVOKE) {
             diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_performs_in_main, *fb.performsClause);
         }
+        if (isFinalizer) {
+            diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_clause_on_cfunc, *fb.performsClause, "a finalizer");
+        }
         ChkPerformsClauseTypes(ctx, *fb.performsClause);
     }
     if (!fb.throwsClause) {
         return;
     }
-    if (fb.funcDecl && fb.funcDecl->TestAttr(Attribute::FOREIGN)) {
+    // The '...' marker opens the list to inference, which an exported list must never depend on.
+    if (fb.throwsClause->hasEllipsis && fb.funcDecl && IsExportedDecl(*fb.funcDecl)) {
+        diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_ellipsis_on_exported, *fb.throwsClause);
+    }
+    if (isFinalizer) {
+        diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_clause_on_cfunc, *fb.throwsClause, "a finalizer");
+    } else if (fb.funcDecl && fb.funcDecl->TestAttr(Attribute::FOREIGN)) {
         diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_clause_on_cfunc, *fb.throwsClause, "a foreign function");
     } else if (fb.TestAttr(Attribute::C)) {
         diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_clause_on_cfunc, *fb.throwsClause, "a 'CFunc' function");

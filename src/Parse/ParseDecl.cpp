@@ -1286,14 +1286,14 @@ void ParserImpl::ParseInheritedTypes(InheritableDecl& decl)
 
 void ParserImpl::TryParseCapturesClause(InheritableDecl& decl)
 {
-    if (!SeeingChexcClause("captures")) {
-        return;
-    }
-    if (decl.capturesClause) {
-        ParseDiagnoseRefactor(DiagKindRefactor::parse_duplicate_captures_clause, lookahead.Begin());
-        (void)ParseCapturesClause(); // Parse and drop the duplicate to recover.
-    } else {
-        decl.capturesClause = ParseCapturesClause();
+    // Several `captures` clauses union their entries, exactly as several `throws` clauses do.
+    while (SeeingChexcClause("captures")) {
+        auto clause = ParseCapturesClause();
+        if (!decl.capturesClause) {
+            decl.capturesClause = std::move(clause);
+        } else {
+            MergeCapabilityClause(*decl.capturesClause, *clause);
+        }
     }
 }
 
@@ -2283,7 +2283,7 @@ void ParserImpl::ParsePropMemberBody(const ScopeKind& scopeKind, FuncBody& fb)
         }
     }
     // Checked exceptions (experimental): property accessors may carry capability clauses,
-    // e.g. `get() throws GException { ... }` (proposal rule: clauses on all callables), with
+    // e.g. `get() throws GException { ... }` -- clauses are allowed on every callable -- with
     // 'performs' preceding 'throws' -- enforced by the shared helper.
     ParseCapabilityClauses(fb);
     if (!Seeing(TokenKind::LCURL)) {
@@ -2374,45 +2374,63 @@ void ParserImpl::ParseFuncParameters(const ScopeKind& scopeKind, FuncBody& fb)
     }
 }
 
+bool ParserImpl::IsPinnedEmptyClause(const ThrowsClause& clause)
+{
+    // The only spelling that yields no entries and no marker is `throws ()`: a bare `throws`
+    // with nothing after it is diagnosed as a missing type and marked broken.
+    return clause.capTypes.empty() && !clause.hasEllipsis && !clause.TestAttr(Attribute::IS_BROKEN);
+}
+
+void ParserImpl::MergeCapabilityClause(ThrowsClause& into, ThrowsClause& extra)
+{
+    for (auto& capType : extra.capTypes) {
+        (void)into.capTypes.emplace_back(std::move(capType));
+    }
+    extra.capTypes.clear();
+    for (auto& commaPos : extra.commaPosVector) {
+        (void)into.commaPosVector.emplace_back(commaPos);
+    }
+    // Any occurrence of the marker opens the combined list to inference, idempotently.
+    into.hasEllipsis = into.hasEllipsis || extra.hasEllipsis;
+    if (extra.TestAttr(Attribute::IS_BROKEN)) {
+        into.EnableAttr(Attribute::IS_BROKEN);
+    }
+    if (into.end < extra.end) {
+        into.end = extra.end;
+    }
+}
+
 /**
  * Checked exceptions and effects: parse the capability clauses of a function body, in the fixed
- * order 'performs' then 'throws'. Called on both sides of the generic
- * constraints, which may precede or follow the clauses; a clause seen twice
- * is diagnosed and dropped so the rest of the declaration still parses.
+ * order 'performs' then 'throws'. Called on both sides of the generic constraints, which may
+ * precede or follow the clauses. A declaration may carry several clauses of one kind -- generated
+ * code appends a clause instead of merging into an existing one, and conditional compilation emits
+ * one per branch -- so their entries union into one list.
  */
 void ParserImpl::ParseCapabilityClauses(FuncBody& fb)
 {
-    if (SeeingChexcClause("performs")) {
-        if (fb.performsClause) {
-            ParseDiagnoseRefactor(DiagKindRefactor::parse_duplicate_performs_clause, lookahead.Begin());
-            (void)ParseThrowsClause(true);
-        } else {
-            // Seen on the second call, after the constraints: 'throws ... where ... performs'
-            // still violates the fixed order.
-            if (fb.throwsClause) {
-                ParseDiagnoseRefactor(DiagKindRefactor::parse_performs_clause_after_throws, lookahead.Begin());
-            }
-            fb.performsClause = ParseThrowsClause(true);
+    while (SeeingChexcClause("performs") || SeeingChexcClause("throws")) {
+        bool isPerforms = SeeingChexcClause("performs");
+        auto clausePos = lookahead.Begin();
+        // 'throws E performs H', or 'throws E where ... performs H' across the two calls: the
+        // fixed order is violated. Diagnosed at the offending clause, then parsed anyway so the
+        // semantic checks still see the declared requirements.
+        if (isPerforms && fb.throwsClause) {
+            ParseDiagnoseRefactor(DiagKindRefactor::parse_performs_clause_after_throws, clausePos);
         }
-    }
-    if (SeeingChexcClause("throws")) {
-        if (fb.throwsClause) {
-            ParseDiagnoseRefactor(DiagKindRefactor::parse_duplicate_throws_clause, lookahead.Begin());
-            (void)ParseThrowsClause(true);
-        } else {
-            fb.throwsClause = ParseThrowsClause(true);
+        auto clause = ParseThrowsClause(true);
+        auto& slot = isPerforms ? fb.performsClause : fb.throwsClause;
+        if (!slot) {
+            slot = std::move(clause);
+            continue;
         }
-    }
-    // 'throws E performs H' with no constraints between: the fixed order is violated within one
-    // run. Diagnosed here, where the position is the offending clause; parsed anyway so the
-    // semantic checks still see the declared requirements.
-    if (SeeingChexcClause("performs")) {
-        ParseDiagnoseRefactor(DiagKindRefactor::parse_performs_clause_after_throws, lookahead.Begin());
-        if (fb.performsClause) {
-            (void)ParseThrowsClause(true);
-        } else {
-            fb.performsClause = ParseThrowsClause(true);
+        // `throws ()` asserts that the callable requires nothing, pinning the list against future
+        // edits; combining it with another clause contradicts the pin.
+        if (IsPinnedEmptyClause(*slot) || IsPinnedEmptyClause(*clause)) {
+            ParseDiagnoseRefactor(DiagKindRefactor::parse_empty_capability_clause_combined, clausePos,
+                isPerforms ? "performs" : "throws");
         }
+        MergeCapabilityClause(*slot, *clause);
     }
 }
 

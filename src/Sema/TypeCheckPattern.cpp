@@ -329,11 +329,14 @@ bool TypeChecker::TypeCheckerImpl::ChkTypePattern(ASTContext& ctx, Ty& target, T
         p.needRuntimeTypeCheck = IsNeedRuntimeCheck(typeManager, target, *p.type->GetTy());
         p.matchBeforeRuntime = false;
     }
-    if (!ChkPattern(ctx, *p.type->GetTy(), *p.pattern)) {
+    // The runtime test above uses the written type; the binding below is read pessimistically, so a
+    // function type reached through the pattern carries the capability requirement it may hide.
+    auto bindTy = CastTargetTy(*p.type);
+    if (!ChkPattern(ctx, *bindTy, *p.pattern)) {
         p.SetTy(TypeManager::GetInvalidTy());
         return false;
     }
-    p.SetTy(p.type->GetTy());
+    p.SetTy(bindTy);
     return true;
 }
 
