@@ -901,11 +901,31 @@ bool TypeManager::IsFuncSubtype(const Ty& leaf, const Ty& root)
     return false;
 }
 
+namespace {
+/// True when @p ty is, or contains, a type-inference placeholder. Capability lists take no part in
+/// type-argument inference, so comparing them must never bind one: a placeholder entry neither
+/// covers a requirement nor is itself checked. Without this, subtyping would solve through a
+/// capability list what unification deliberately refuses to solve.
+bool HasPlaceholder(Ptr<const Ty> ty)
+{
+    if (!ty) {
+        return false;
+    }
+    if (auto tyVar = DynamicCast<const GenericsTy*>(ty); tyVar && tyVar->isPlaceholder) {
+        return true;
+    }
+    return std::any_of(ty->typeArgs.begin(), ty->typeArgs.end(), [](auto arg) { return HasPlaceholder(arg); });
+}
+} // namespace
+
 bool TypeManager::IsCapTysSubsumed(const std::vector<Ptr<Ty>>& subCapTys, const std::vector<Ptr<Ty>>& superCapTys)
 {
     return std::all_of(subCapTys.begin(), subCapTys.end(), [this, &superCapTys](Ptr<Ty> subCap) {
+        if (HasPlaceholder(subCap)) {
+            return true; // nothing to check yet, and nothing to bind
+        }
         return std::any_of(superCapTys.begin(), superCapTys.end(),
-            [this, subCap](Ptr<Ty> superCap) { return IsSubtype(subCap, superCap); });
+            [this, subCap](Ptr<Ty> superCap) { return !HasPlaceholder(superCap) && IsSubtype(subCap, superCap); });
     });
 }
 

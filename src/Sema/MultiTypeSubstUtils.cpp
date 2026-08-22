@@ -48,6 +48,26 @@ std::set<Ptr<Ty>> GetDirectMappingTys(
 }
 
 // remove mappings not useful(either directly or transitively used) in tys
+namespace {
+/// The type parameters of @p candidates that @p ty actually uses. Unlike 'Ty::GetGenericTyArgs',
+/// this looks past 'typeArgs' into a functional type's capability list: a list sits outside
+/// 'typeArgs' so that capabilities never reach code generation, but a type parameter reachable only
+/// through one is still used by the type, and dropping its mapping here would leave the raw
+/// instantiation placeholder in the list, where nothing can discharge it. Deciding *which*
+/// substitutions are needed is not deciding type arguments -- those still ignore capability lists.
+std::set<Ptr<GenericsTy>> CollectUsedTyVars(Ptr<Ty> ty, const std::set<Ptr<TyVar>>& candidates)
+{
+    std::set<Ptr<GenericsTy>> used = ty->GetGenericTyArgs(candidates);
+    for (auto tv : GetAllGenericTys(ty)) {
+        auto generics = DynamicCast<GenericsTy*>(tv);
+        if (generics && candidates.count(generics) > 0) {
+            used.emplace(generics);
+        }
+    }
+    return used;
+}
+} // namespace
+
 SubstPack FilterUnusedMapping(const SubstPack& mapping, const std::set<Ptr<Ty>>& tys)
 {
     std::set<Ptr<TyVar>> allu;
@@ -61,7 +81,7 @@ SubstPack FilterUnusedMapping(const SubstPack& mapping, const std::set<Ptr<Ty>>&
     }
     // collect inst tyvars directly used
     for (auto ty : tys) {
-        for (auto tvu : ty->GetGenericTyArgs(allu)) {
+        for (auto tvu : CollectUsedTyVars(ty, allu)) {
             reachable.emplace(StaticCast<TyVar*>(mapping.u2i.at(tvu)));
         }
     }
@@ -100,7 +120,7 @@ MultiTypeSubst FilterUnusedMapping(const MultiTypeSubst& mapping, const std::set
     std::queue<Ptr<TyVar>> worklist;
     // collect tyvars directly used
     for (auto ty : tys) {
-        reachable.merge(ty->GetGenericTyArgs(all));
+        reachable.merge(CollectUsedTyVars(ty, all));
     }
     for (auto tv : reachable) {
         worklist.push(tv);
