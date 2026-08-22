@@ -1286,13 +1286,15 @@ void ParserImpl::ParseInheritedTypes(InheritableDecl& decl)
 
 void ParserImpl::TryParseCapturesClause(InheritableDecl& decl)
 {
-    // Several `captures` clauses union their entries, exactly as several `throws` clauses do.
+    // A class carries at most one `captures` clause, like one `where`; a second is diagnosed and
+    // dropped so the rest of the header still parses.
     while (SeeingChexcClause("captures")) {
+        auto clausePos = lookahead.Begin();
         auto clause = ParseCapturesClause();
         if (!decl.capturesClause) {
             decl.capturesClause = std::move(clause);
         } else {
-            MergeCapabilityClause(*decl.capturesClause, *clause);
+            ParseDiagnoseRefactor(DiagKindRefactor::parse_duplicate_captures_clause, clausePos);
         }
     }
 }
@@ -2374,38 +2376,11 @@ void ParserImpl::ParseFuncParameters(const ScopeKind& scopeKind, FuncBody& fb)
     }
 }
 
-bool ParserImpl::IsPinnedEmptyClause(const ThrowsClause& clause)
-{
-    // The only spelling that yields no entries and no marker is `throws ()`: a bare `throws`
-    // with nothing after it is diagnosed as a missing type and marked broken.
-    return clause.capTypes.empty() && !clause.hasEllipsis && !clause.TestAttr(Attribute::IS_BROKEN);
-}
-
-void ParserImpl::MergeCapabilityClause(ThrowsClause& into, ThrowsClause& extra)
-{
-    for (auto& capType : extra.capTypes) {
-        (void)into.capTypes.emplace_back(std::move(capType));
-    }
-    extra.capTypes.clear();
-    for (auto& commaPos : extra.commaPosVector) {
-        (void)into.commaPosVector.emplace_back(commaPos);
-    }
-    // Any occurrence of the marker opens the combined list to inference, idempotently.
-    into.hasEllipsis = into.hasEllipsis || extra.hasEllipsis;
-    if (extra.TestAttr(Attribute::IS_BROKEN)) {
-        into.EnableAttr(Attribute::IS_BROKEN);
-    }
-    if (into.end < extra.end) {
-        into.end = extra.end;
-    }
-}
-
 /**
  * Checked exceptions and effects: parse the capability clauses of a function body, in the fixed
  * order 'performs' then 'throws'. Called on both sides of the generic constraints, which may
- * precede or follow the clauses. A declaration may carry several clauses of one kind -- generated
- * code appends a clause instead of merging into an existing one, and conditional compilation emits
- * one per branch -- so their entries union into one list.
+ * precede or follow the clauses. A declaration carries at most one clause of each kind, like
+ * 'where'; a second is diagnosed and dropped so the rest of the declaration still parses.
  */
 void ParserImpl::ParseCapabilityClauses(FuncBody& fb)
 {
@@ -2418,24 +2393,20 @@ void ParserImpl::ParseCapabilityClauses(FuncBody& fb)
         if (isPerforms && fb.throwsClause) {
             ParseDiagnoseRefactor(DiagKindRefactor::parse_performs_clause_after_throws, clausePos);
         }
-        auto clause = ParseThrowsClause(true);
-        if (isPerforms && clause->hasEllipsis) {
-            // Effect requirements are never inferred, so there is nothing for the marker to open.
-            ParseDiagnoseRefactor(DiagKindRefactor::parse_ellipsis_in_performs_clause, clausePos);
-            clause->hasEllipsis = false;
-        }
         auto& slot = isPerforms ? fb.performsClause : fb.throwsClause;
-        if (!slot) {
-            slot = std::move(clause);
+        if (slot) {
+            ParseDiagnoseRefactor(isPerforms ? DiagKindRefactor::parse_duplicate_performs_clause
+                                             : DiagKindRefactor::parse_duplicate_throws_clause,
+                clausePos);
+            (void)ParseThrowsClause(true); // Parse and drop the duplicate to recover.
             continue;
         }
-        // `throws ()` asserts that the callable requires nothing, pinning the list against future
-        // edits; combining it with another clause contradicts the pin.
-        if (IsPinnedEmptyClause(*slot) || IsPinnedEmptyClause(*clause)) {
-            ParseDiagnoseRefactor(DiagKindRefactor::parse_empty_capability_clause_combined, clausePos,
-                isPerforms ? "performs" : "throws");
+        slot = ParseThrowsClause(true);
+        if (isPerforms && slot->hasEllipsis) {
+            // Effect requirements are never inferred, so there is nothing for the marker to open.
+            ParseDiagnoseRefactor(DiagKindRefactor::parse_ellipsis_in_clause, clausePos, "performs");
+            slot->hasEllipsis = false;
         }
-        MergeCapabilityClause(*slot, *clause);
     }
 }
 

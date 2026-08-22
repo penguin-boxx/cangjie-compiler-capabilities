@@ -301,70 +301,31 @@ void ExpandCapabilityEntry(Ptr<Ty> ty, std::vector<Ptr<Ty>>& out, std::unordered
     out.emplace_back(ty);
 }
 
-bool ContainsFuncTy(Ptr<const Ty> ty, std::unordered_set<Ptr<const Ty>>& seen)
+bool ContainsFuncTyImpl(Ptr<const Ty> ty, std::unordered_set<Ptr<const Ty>>& seen)
 {
     if (!ty || !seen.emplace(ty).second) {
         return false;
     }
-    if (ty->IsFunc()) {
+    if (auto alias = DynamicCast<const TypeAliasTy*>(ty); alias && alias->declPtr && alias->declPtr->type) {
+        // An alias is transparent here: what it names is what the cast would test.
+        return ContainsFuncTyImpl(alias->declPtr->type->GetTy(), seen);
+    }
+    if (auto funcTy = DynamicCast<const FuncTy*>(ty); funcTy && !funcTy->isC) {
         return true;
     }
     return std::any_of(
-        ty->typeArgs.begin(), ty->typeArgs.end(), [&seen](auto arg) { return ContainsFuncTy(arg, seen); });
-}
-
-Ptr<Ty> ReadPessimistically(TypeManager& tyMgr, Ptr<Ty> exceptionTy, Ptr<Ty> ty, bool covariant, bool& rejected)
-{
-    if (!Ty::IsTyCorrect(ty)) {
-        return ty;
-    }
-    if (auto alias = DynamicCast<TypeAliasTy*>(ty); alias && alias->declPtr && alias->declPtr->type) {
-        // An alias is transparent here: what it names is what the cast tests.
-        return ReadPessimistically(tyMgr, exceptionTy, alias->declPtr->type->GetTy(), covariant, rejected);
-    }
-    if (auto funcTy = DynamicCast<FuncTy*>(ty); funcTy && !funcTy->isC) {
-        // A result keeps the enclosing polarity, a parameter flips it.
-        auto retTy = ReadPessimistically(tyMgr, exceptionTy, funcTy->retTy, covariant, rejected);
-        std::vector<Ptr<Ty>> paramTys;
-        for (auto paramTy : funcTy->paramTys) {
-            (void)paramTys.emplace_back(ReadPessimistically(tyMgr, exceptionTy, paramTy, !covariant, rejected));
-        }
-        FuncTy::Config cfg{funcTy->isC, funcTy->isClosureTy, funcTy->hasVariableLenArg, funcTy->noCast};
-        std::vector<Ptr<Ty>> capTys;
-        if (covariant) {
-            (void)capTys.emplace_back(exceptionTy);
-        }
-        return tyMgr.GetFunctionTy(paramTys, retTy, cfg, capTys);
-    }
-    if (auto tupleTy = DynamicCast<TupleTy*>(ty)) {
-        std::vector<Ptr<Ty>> elemTys;
-        for (auto elemTy : tupleTy->typeArgs) {
-            (void)elemTys.emplace_back(ReadPessimistically(tyMgr, exceptionTy, elemTy, covariant, rejected));
-        }
-        return tyMgr.GetTupleTy(elemTys);
-    }
-    // A type argument of a generic type is invariant -- CangJie has no declaration-site variance --
-    // so a function type inside one can be neither widened nor narrowed: no sound reading exists.
-    std::unordered_set<Ptr<const Ty>> seen;
-    for (auto arg : ty->typeArgs) {
-        if (ContainsFuncTy(arg, seen)) {
-            rejected = true;
-            break;
-        }
-    }
-    return ty;
+        ty->typeArgs.begin(), ty->typeArgs.end(), [&seen](auto arg) { return ContainsFuncTyImpl(arg, seen); });
 }
 
 } // namespace
 
-PessimisticTarget ReadCastTargetPessimistically(TypeManager& tyMgr, Ptr<Ty> exceptionTy, Ptr<Ty> targetTy)
+bool ContainsFuncTy(Ptr<Ty> targetTy)
 {
-    if (!Ty::IsTyCorrect(targetTy) || !Ty::IsTyCorrect(exceptionTy)) {
-        return {targetTy, false};
+    if (!Ty::IsTyCorrect(targetTy)) {
+        return false;
     }
-    PessimisticTarget result;
-    result.ty = ReadPessimistically(tyMgr, exceptionTy, targetTy, true, result.rejected);
-    return result;
+    std::unordered_set<Ptr<const Ty>> seen;
+    return ContainsFuncTyImpl(targetTy, seen);
 }
 
 std::vector<Ptr<Ty>> ExpandCapabilityList(const std::vector<OwnedPtr<Type>>& capTypes)

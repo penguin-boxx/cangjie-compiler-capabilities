@@ -17,34 +17,21 @@ using namespace Sema;
 
 Ptr<Ty> TypeChecker::TypeCheckerImpl::CastTargetTy(Type& target)
 {
-    // Checked exceptions: a runtime type test cannot see capability lists, so the target is read
-    // pessimistically -- otherwise the cast would launder a '() throws E -> R' value into a
-    // clause-free '() -> R'. An 'is' test binds nothing and is left alone. Off with the feature,
-    // the written type is the type.
+    // Checked exceptions: a runtime type test sees the erased shape, so nothing verifies a
+    // capability list -- reading a function type in a cast target as clause-free would launder a
+    // '() throws E -> R' value into a '() -> R' one. The base design therefore rejects any target
+    // containing a function type, in any position; relaxations that make such casts usable are an
+    // extension. A parameter-typed target ('x as Box<T>') is accepted: rejecting it would break
+    // ordinary generic code, and an instantiation with a function type is an unchecked boundary.
+    // Off with the feature, the written type is the type.
     auto targetTy = target.GetTy();
     if (!ci->invocation.globalOptions.enableChexc || !Ty::IsTyCorrect(targetTy)) {
         return targetTy;
     }
-    auto exception = importManager.GetCoreDecl<ClassDecl>(CLASS_EXCEPTION);
-    if (!exception) {
-        return targetTy;
+    if (TypeCheckUtil::ContainsFuncTy(targetTy)) {
+        diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_cast_target_func, target, Ty::ToString(targetTy));
     }
-    // The target is written without clauses: the reading below decides them, so a written one would
-    // be silently overwritten.
-    Walker(&target, [this](Ptr<Node> node) {
-        auto funcType = DynamicCast<FuncType*>(node.get());
-        if (funcType && (funcType->throwsClause || funcType->performsClause)) {
-            auto& clause = funcType->throwsClause ? *funcType->throwsClause : *funcType->performsClause;
-            diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_clause_in_cast_target, clause);
-        }
-        return VisitAction::WALK_CHILDREN;
-    }).Walk();
-    auto pessimistic = TypeCheckUtil::ReadCastTargetPessimistically(typeManager, exception->GetTy(), targetTy);
-    if (pessimistic.rejected) {
-        diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_cast_target_invariant_func, target, Ty::ToString(targetTy));
-        return targetTy;
-    }
-    return pessimistic.ty;
+    return targetTy;
 }
 
 Ptr<Ty> TypeChecker::TypeCheckerImpl::SynIsExpr(ASTContext& ctx, IsExpr& ie)

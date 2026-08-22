@@ -1331,6 +1331,8 @@ private:
      * primary constructors on capturing declarations (they cannot capture; author ruling).
      */
     void ChkCapturesClauseOfDecl(ASTContext& ctx, AST::InheritableDecl& decl);
+    /// Checked exceptions: a subclass of a capturing class must capture at least what it captures.
+    void ChkCapturesSuperclassCoverage(const AST::ClassDecl& cd) const;
     void AddRetTypeNode(AST::FuncBody& fb) const;
     bool CheckBodyRetType(ASTContext& ctx, AST::FuncBody& fb);
     void CheckFuncParamList(ASTContext& ctx, AST::FuncParamList& fpl);

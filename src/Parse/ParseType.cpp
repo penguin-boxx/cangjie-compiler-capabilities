@@ -293,7 +293,7 @@ OwnedPtr<FuncType> ParserImpl::ParseFuncType(
 
 OwnedPtr<AST::ThrowsClause> ParserImpl::ParseThrowsClause(bool isDeclClause)
 {
-    CJC_ASSERT(SeeingChexcClause("throws") || SeeingChexcClause("performs"));
+    CJC_ASSERT(SeeingChexcClause("throws") || SeeingChexcClause("performs") || SeeingChexcClause("captures"));
     auto clause = MakeOwned<ThrowsClause>();
     ChainScope cs(*this, clause.get());
     Next(); // Consume `throws`.
@@ -395,30 +395,17 @@ OwnedPtr<AST::ThrowsClause> ParserImpl::ParseThrowsClause(bool isDeclClause)
 
 OwnedPtr<AST::ThrowsClause> ParserImpl::ParseCapturesClause()
 {
-    // Checked exceptions: the `captures` clause of a class or struct header.
-    // Reuses the ThrowsClause node shape; the grammar is the bare comma-separated list only:
-    // `captures E1, E2` (no parenthesized or ellipsis forms).
+    // Checked exceptions: the `captures` clause of a class or struct header. Its entries are those
+    // of a declaration `throws` clause -- nested lists, aliases, and `()` for the empty list, which
+    // is equivalent to omitting the clause. Only the `...` marker has no meaning here: a capture
+    // set is never inferred.
     CJC_ASSERT(SeeingChexcClause("captures"));
-    auto clause = MakeOwned<ThrowsClause>();
-    ChainScope cs(*this, clause.get());
-    Next(); // Consume `captures`.
-    clause->throwsPos = lastToken.Begin();
-    clause->begin = clause->throwsPos;
-    clause->end = lastToken.End();
-    if (!SeeingAny(GetTypeFirst()) && !SeeingContextualKeyword()) {
-        ParseDiagnoseRefactor(
-            DiagKindRefactor::parse_expected_exception_type_after_captures, lookahead, ConvertToken(lookahead));
-        clause->EnableAttr(Attribute::IS_BROKEN);
-        return clause;
+    auto clausePos = lookahead.Begin();
+    auto clause = ParseThrowsClause(true);
+    if (clause->hasEllipsis) {
+        ParseDiagnoseRefactor(DiagKindRefactor::parse_ellipsis_in_clause, clausePos, "captures");
+        clause->hasEllipsis = false;
     }
-    while (true) {
-        (void)clause->capTypes.emplace_back(ParseType());
-        if (!Skip(TokenKind::COMMA)) {
-            break;
-        }
-        clause->commaPosVector.emplace_back(lastToken.Begin());
-    }
-    clause->end = clause->capTypes.back()->end;
     return clause;
 }
 

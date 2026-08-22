@@ -252,28 +252,69 @@ void TypeChecker::TypeCheckerImpl::ChkThrowsClauseTypes(
     }
 }
 
-void TypeChecker::TypeCheckerImpl::ChkCapturesClauseOfDecl(ASTContext& ctx, InheritableDecl& decl)
+void TypeChecker::TypeCheckerImpl::ChkCapturesSuperclassCoverage(const ClassDecl& cd) const
 {
-    if (!decl.capturesClause) {
+    // Every subclass of a capturing class is itself a capturing class: its list must cover the
+    // superclass's, each superclass entry covered by an own entry of the same kind, possibly a more
+    // general one. Restating keeps the instance's whole handler dependency readable in one header
+    // and keeps checking local -- a body is checked against its own class's list, never against the
+    // ancestor chain.
+    auto super = cd.GetSuperClassDecl();
+    if (!super) {
         return;
     }
-    // Elaborate the clause's types (collected in the declaration's scope, so they may refer to
-    // its generic parameters), then validate them exactly like 'throws' entries.
-    for (auto& capType : decl.capturesClause->capTypes) {
-        CJC_NULLPTR_CHECK(capType);
-        Synthesize({ctx, SynPos::NONE}, capType.get());
+    auto superCaps = TypeCheckUtil::GetDeclCapturesCapTys(*super);
+    if (superCaps.empty()) {
+        return;
     }
-    ChkThrowsClauseTypes(ctx, *decl.capturesClause, "captures", true);
-    // A capturing class/struct cannot use a primary constructor (author ruling, forward
-    // compatible with Modal CangJie where primary constructors are always '~local'); it
-    // declares explicit 'init' constructors instead.
+    auto ownCaps = TypeCheckUtil::GetDeclCapturesCapTys(cd);
+    for (auto superCap : superCaps) {
+        if (!Ty::IsTyCorrect(superCap) || typeManager.IsCapTysSubsumed({superCap}, ownCaps)) {
+            continue;
+        }
+        auto builder = diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_subclass_captures_missing,
+            MakeRangeForDeclIdentifier(cd), cd.identifier.Val(), Ty::ToString(superCap));
+        builder.AddNote(MakeRangeForDeclIdentifier(*super), "the superclass captures it here");
+    }
+}
+
+void TypeChecker::TypeCheckerImpl::ChkCapturesClauseOfDecl(ASTContext& ctx, InheritableDecl& decl)
+{
+    if (decl.capturesClause) {
+        // Elaborate the clause's types (collected in the declaration's scope, so they may refer to
+        // its generic parameters), then validate them exactly like 'throws' entries.
+        for (auto& capType : decl.capturesClause->capTypes) {
+            CJC_NULLPTR_CHECK(capType);
+            Synthesize({ctx, SynPos::NONE}, capType.get());
+        }
+        ChkThrowsClauseTypes(ctx, *decl.capturesClause, "captures", true);
+    }
+    if (auto cd = DynamicCast<const ClassDecl*>(&decl)) {
+        ChkCapturesSuperclassCoverage(*cd);
+    }
+    // A clause that is statically empty -- written '()' or an alias that expands to nothing -- is
+    // equivalent to omitting it: the type is not capturing, and none of the rules below apply.
+    if (TypeCheckUtil::GetDeclCapturesCapTys(decl).empty()) {
+        return;
+    }
+    auto typeName = decl.astKind == ASTKind::CLASS_DECL ? "class" : "struct";
+    // A capturing type has no primary constructor -- always '~local' -- and no implicit default
+    // constructor either: every constructor requires the captured capabilities at its call site,
+    // so there has to be one to carry the requirement.
+    bool hasCtor = false;
     for (auto& member : decl.GetMemberDecls()) {
         CJC_NULLPTR_CHECK(member);
         if (member->astKind == ASTKind::PRIMARY_CTOR_DECL) {
-            auto typeName = decl.astKind == ASTKind::CLASS_DECL ? "class" : "struct";
             diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_primary_ctor_on_capturing,
                 MakeRangeForDeclIdentifier(*member), typeName, decl.identifier.Val());
+            hasCtor = true;
+        } else if (member->TestAttr(Attribute::CONSTRUCTOR) && !member->TestAttr(Attribute::COMPILER_ADD)) {
+            hasCtor = true;
         }
+    }
+    if (!hasCtor) {
+        diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_capturing_needs_ctor, MakeRangeForDeclIdentifier(decl),
+            typeName, decl.identifier.Val());
     }
 }
 

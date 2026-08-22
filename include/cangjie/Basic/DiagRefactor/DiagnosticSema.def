@@ -448,12 +448,18 @@ ERROR(sema_chexc_ellipsis_on_exported,
     "'...' is not allowed in the 'throws' clause of an exported declaration",
     "an exported capability list must not depend on inference")
 
-ERROR(sema_chexc_cast_target_invariant_func,
-    "'%s' cannot be a runtime cast target: it has a function type in an invariant position",
-    "a cast cannot see capability lists, and a type argument can be neither widened nor narrowed")
-ERROR(sema_chexc_clause_in_cast_target,
-    "a capability clause is not allowed in a runtime cast target",
-    "the target is written without clauses and read as requiring 'throws Exception'")
+ERROR(sema_chexc_cast_target_func,
+    "'%s' cannot be a runtime cast target: it contains a function type",
+    "erasure leaves no capability list to check, so such a cast would launder the requirements of "
+    "the value it accepts")
+ERROR(sema_chexc_subclass_captures_missing,
+    "'%s' must capture '%s': every subclass of a capturing class captures at least what its "
+    "superclass does",
+    "add it to the 'captures' clause, or a type that covers it")
+ERROR(sema_chexc_capturing_needs_ctor,
+    "%s '%s' has a 'captures' clause and must declare an 'init' constructor",
+    "a capturing type has no implicit default constructor: its constructors require the captured "
+    "capabilities at their call sites")
 
 ERROR(sema_chexc_polymorphic_recursion,
     "Cannot infer capability parameters for '%s': the recursion re-enters it at the growing "
