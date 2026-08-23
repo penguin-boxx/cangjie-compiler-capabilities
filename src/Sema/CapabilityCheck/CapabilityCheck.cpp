@@ -1260,14 +1260,54 @@ void ReportCapabilityMissHandler::HandleMiss(const CapabilityDemand& demand)
     if (!demand.isEffect && !reportExceptions) {
         return; // Exception checking is off: the clauses impose no obligations.
     }
-    auto tyName = Ty::ToString(demand.exceptionTy);
-    // Effects: an effect capability is named 'Handler<C>', not 'CanThrow<E>', and a missing one is
-    // an error at every exception-checking level -- there is no migration level for a 'perform'.
-    auto kind = demand.isEffect ? DiagKindRefactor::sema_chexc_missing_handler_capability
-                                : (asWarning ? DiagKindRefactor::sema_chexc_missing_capability_warn
-                                             : DiagKindRefactor::sema_chexc_missing_capability);
-    auto builder = diag.DiagnoseRefactor(kind, *demand.demandSite, tyName, tyName);
-    builder.AddMainHintArguments(demand.requiredBy);
+    // Held until the package has been walked: several misses at one site have to be reported
+    // together (see 'Finish').
+    pending.emplace_back(demand);
+}
+
+void ReportCapabilityMissHandler::Finish()
+{
+    auto batch = std::move(pending);
+    pending.clear();
+    // Group by site AND kind: effects are always errors while exceptions follow the level, so a
+    // site that misses both cannot be one diagnostic.
+    std::vector<std::pair<std::pair<Ptr<const Node>, bool>, std::vector<const CapabilityDemand*>>> groups;
+    for (auto& demand : batch) {
+        auto key = std::make_pair(Ptr<const Node>(demand.demandSite), demand.isEffect);
+        auto it = std::find_if(groups.begin(), groups.end(), [&key](auto& g) { return g.first == key; });
+        if (it == groups.end()) {
+            groups.emplace_back(key, std::vector<const CapabilityDemand*>{&demand});
+        } else {
+            it->second.emplace_back(&demand);
+        }
+    }
+    for (auto& [key, demands] : groups) {
+        auto& first = *demands.front();
+        // Effects: an effect capability is named 'Handler<C>', not 'CanThrow<E>', and a missing one
+        // is an error at every exception-checking level -- there is no migration level for a
+        // 'perform'.
+        if (demands.size() == 1) {
+            auto tyName = Ty::ToString(first.exceptionTy);
+            auto kind = first.isEffect ? DiagKindRefactor::sema_chexc_missing_handler_capability
+                                       : (asWarning ? DiagKindRefactor::sema_chexc_missing_capability_warn
+                                                    : DiagKindRefactor::sema_chexc_missing_capability);
+            auto builder = diag.DiagnoseRefactor(kind, *first.demandSite, tyName, tyName);
+            builder.AddMainHintArguments(first.requiredBy);
+            continue;
+        }
+        std::string names;
+        std::string types;
+        const std::string capability = first.isEffect ? "Handler<" : "CanThrow<";
+        for (auto demand : demands) {
+            auto tyName = Ty::ToString(demand->exceptionTy);
+            names += (names.empty() ? "" : ", ") + ("'" + tyName + "'");
+            types += (types.empty() ? "" : ", ") + ("'" + capability + tyName + ">'");
+        }
+        auto kind = (!first.isEffect && asWarning) ? DiagKindRefactor::sema_chexc_missing_capabilities_warn
+                                                   : DiagKindRefactor::sema_chexc_missing_capabilities;
+        auto builder = diag.DiagnoseRefactor(kind, *first.demandSite, names, types);
+        builder.AddMainHintArguments("required by " + first.requiredBy);
+    }
 }
 
 void CheckInferredOverrides(
@@ -1361,5 +1401,7 @@ void CheckCapabilities(TypeManager& typeManager, const ImportManager& importMana
 {
     auto assumed = CollectAssumedThrows(pkg, importManager);
     CapabilityChecker(typeManager, importManager, missHandler, assumed, inferred, &diag).CheckPackage(pkg);
+    // A handler that batches its misses reports them now that the package is walked.
+    missHandler.Finish();
 }
 } // namespace Cangjie::Sema

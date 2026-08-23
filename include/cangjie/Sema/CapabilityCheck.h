@@ -50,6 +50,10 @@ class CapabilityMissHandler {
 public:
     virtual ~CapabilityMissHandler() = default;
     virtual void HandleMiss(const CapabilityDemand& demand) = 0;
+    /// Called once the package has been walked, for handlers that batch what they collected.
+    virtual void Finish()
+    {
+    }
 };
 
 /**
@@ -70,12 +74,26 @@ public:
         : diag(diag), asWarning(asWarning), reportExceptions(reportExceptions)
     {
     }
+    ~ReportCapabilityMissHandler() override
+    {
+        Finish();
+    }
     void HandleMiss(const CapabilityDemand& demand) override;
+    /**
+     * Emits one diagnostic per requirement site, naming every capability missing there. The
+     * compiler's diagnostic set deduplicates by position and severity alone, so several
+     * diagnostics at one site collapse into the first -- a call missing three capabilities would
+     * report one, and the next only after that one is fixed. Batching keeps them all visible,
+     * which is what burning warnings down during migration needs.
+     */
+    void Finish() override;
 
 private:
     DiagnosticEngine& diag;
     bool asWarning;
     bool reportExceptions;
+    /// Misses in the order they were found, grouped by site when they are reported.
+    std::vector<CapabilityDemand> pending;
 };
 
 /**

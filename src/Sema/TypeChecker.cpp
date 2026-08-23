@@ -345,13 +345,11 @@ void TypeChecker::TypeCheckerImpl::ChkImportedCapabilityMetadata(Package& pkg)
                     }
                     continue;
                 }
-                // An assumption stands in for lists the dependency does not have. Where it has
-                // verified ones, the two are contradictory: the assumption would override what the
-                // compiler proved, in whichever direction the author guessed wrong. Only 'error'
-                // counts as verified -- a package built at 'warn' is mid-migration, its lists are
-                // knowingly incomplete, and that is exactly when an assumption is still the tool
-                // for the job.
-                if (assumes && checkExceptions && info.level == PackageCapabilityInfo::Level::ERROR) {
+                // An assumption stands in for the lists a dependency does not have. A package that
+                // records lists of its own -- verified at 'error' or trusted at 'warn' -- has them,
+                // and the two would contradict each other: the assumption would override what the
+                // dependency states, in whichever direction the author guessed wrong.
+                if (assumes && checkExceptions && info.level != PackageCapabilityInfo::Level::OFF) {
                     diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_assume_on_checked_package, *import, name);
                 }
             }
