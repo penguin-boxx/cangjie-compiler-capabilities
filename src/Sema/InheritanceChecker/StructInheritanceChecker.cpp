@@ -1391,6 +1391,9 @@ void StructInheritanceChecker::CheckThrowsClauseCompatible(const AST::FuncDecl& 
     if (parentFunc.TestAttr(Attribute::CONSTRUCTOR) || childFunc.TestAttr(Attribute::CONSTRUCTOR)) {
         return;
     }
+    // The pair is remembered for the capability pass: a list this declaration only acquires by
+    // inference is compared against the overridden one there, since inference runs later.
+    typeManager.RecordOverride(childFunc, parentFunc);
     for (auto capTy : childTy.capTys) {
         if (typeManager.IsCapTysSubsumed({capTy}, parentTy.capTys)) {
             continue;

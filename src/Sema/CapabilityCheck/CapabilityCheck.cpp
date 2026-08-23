@@ -42,6 +42,7 @@
 #include <utility>
 #include <vector>
 
+#include "Diags.h"
 #include "TypeCheckUtil.h"
 #include "cangjie/AST/ASTCasting.h"
 #include "cangjie/AST/Utils.h"
@@ -838,10 +839,6 @@ private:
         if (!fd.funcBody || !fd.funcBody->body) {
             return false;
         }
-        // The rule is the declaration's own modifier, not the effective visibility the text
-        // defines: inferring a 'public' method of an 'internal' class is only safe once an
-        // inferred override is re-checked against the declaration it overrides, which is the same
-        // machinery the static-member rule waits on.
         if (Sema::IsExportedDecl(fd)) {
             return false;
         }
@@ -853,15 +850,6 @@ private:
         }
         // Interface members are contracts: their lists are written explicitly.
         if (fd.outerDecl && fd.outerDecl->astKind == ASTKind::INTERFACE_DECL) {
-            return false;
-        }
-        // A non-private static class member can be redefined by a subclass and is dispatched
-        // virtually, so the override rule applies to it — but override checking runs during type
-        // check, before inference, and would not see an inferred list. Requiring an explicit
-        // clause here keeps the two consistent; a post-inference re-check would let these be
-        // inferred too.
-        if (fd.TestAttr(Attribute::STATIC) && !fd.TestAttr(Attribute::PRIVATE) && fd.outerDecl &&
-            fd.outerDecl->astKind == ASTKind::CLASS_DECL) {
             return false;
         }
         auto& clause = fd.funcBody->throwsClause;
@@ -1144,11 +1132,18 @@ private:
 namespace Cangjie::Sema {
 bool IsExportedDecl(const Decl& decl)
 {
-    if (decl.TestAttr(Attribute::PUBLIC) || decl.TestAttr(Attribute::PROTECTED)) {
-        return true;
+    // Effective visibility: the narrowest of the declaration's own modifier and those of its
+    // enclosing declarations, so a 'public' method of an 'internal' class does not leave the module
+    // and is inferred, while a 'private init' of a 'public' class is inferred too.
+    for (auto current = Ptr<const Decl>(&decl); current; current = current->outerDecl) {
+        if (current->outerDecl && current->outerDecl->astKind == ASTKind::INTERFACE_DECL) {
+            continue; // an interface member is a public contract, written modifier or not
+        }
+        if (!current->TestAttr(Attribute::PUBLIC) && !current->TestAttr(Attribute::PROTECTED)) {
+            return false;
+        }
     }
-    // Interface members are public contracts whether or not the modifier is written.
-    return decl.outerDecl && decl.outerDecl->astKind == ASTKind::INTERFACE_DECL;
+    return true;
 }
 
 void ReportCapabilityMissHandler::HandleMiss(const CapabilityDemand& demand)
@@ -1165,6 +1160,38 @@ void ReportCapabilityMissHandler::HandleMiss(const CapabilityDemand& demand)
                                              : DiagKindRefactor::sema_chexc_missing_capability);
     auto builder = diag.DiagnoseRefactor(kind, *demand.demandSite, tyName, tyName);
     builder.AddMainHintArguments(demand.requiredBy);
+}
+
+void CheckInferredOverrides(TypeManager& typeManager, const InferredCapabilities& inferred, DiagnosticEngine& diag)
+{
+    // A declaration's list depends on its own body only, never on its overriders -- so an override
+    // that INFERS more than the declaration it overrides is an error, exactly as a written one is.
+    // Written lists are compared during type check; these could not be, because inference runs
+    // after it, so the pairs recorded there are consumed here.
+    for (auto& [decl, caps] : inferred) {
+        if (!decl || caps.empty()) {
+            continue;
+        }
+        for (auto parent : typeManager.GetOverridden(*decl)) {
+            auto parentTy = DynamicCast<FuncTy*>(parent->GetTy());
+            if (!parentTy) {
+                continue;
+            }
+            for (auto capTy : caps) {
+                if (!Ty::IsTyCorrect(capTy) || typeManager.IsCapTysSubsumed({capTy}, parentTy->capTys)) {
+                    continue;
+                }
+                auto builder = diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_override_missing_capability,
+                    MakeRangeForDeclIdentifier(*decl), Ty::ToString(capTy), decl->identifier.Val());
+                builder.AddMainHintArguments(Ty::ToString(capTy));
+                builder.AddNote(MakeRangeForDeclIdentifier(*parent),
+                    parentTy->capTys.empty()
+                        ? "the overridden or implemented declaration has no 'throws' clause, and this "
+                          "one's list was inferred from its body"
+                        : "the overridden or implemented declaration is declared here");
+            }
+        }
+    }
 }
 
 void CompleteInferredCapabilityTypes(TypeManager& typeManager, const InferredCapabilities& inferred)

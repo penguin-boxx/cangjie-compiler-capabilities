@@ -77,6 +77,25 @@ public:
         AST::FuncTy::Config cfg = {false, false, false, false}, const std::vector<Ptr<AST::Ty>>& capTys = {});
 
     /**
+     * Checked exceptions: remember that @p child overrides or implements @p parent. Override
+     * checking runs during type check, before capability parameter inference, so an inferred list
+     * has no overridden list to be checked against at that point; the pairs recorded here let the
+     * capability pass do it afterwards ("an inferred override requiring more than the overridden
+     * list is an error").
+     */
+    void RecordOverride(const AST::FuncDecl& child, const AST::FuncDecl& parent)
+    {
+        overriddenDecls[&child].emplace_back(&parent);
+    }
+    /// The declarations @p child overrides or implements, as recorded during type check.
+    const std::vector<Ptr<const AST::FuncDecl>>& GetOverridden(const AST::FuncDecl& child) const
+    {
+        static const std::vector<Ptr<const AST::FuncDecl>> none;
+        auto found = overriddenDecls.find(&child);
+        return found == overriddenDecls.end() ? none : found->second;
+    }
+
+    /**
      * Checked exceptions: the semantic form of a capability list -- a duplicate entry, or one
      * covered by a more general entry of the same list, is not part of the list. Every comparison
      * and every consumer works on this form, so coverage-equivalent lists behave identically. A
@@ -388,6 +407,10 @@ public:
         AST::Ty& ty, bool needSubstituteGeneric = false, const TypeSubst& typeMapping = {});
 
 private:
+    /// Checked exceptions: override/implementation pairs, filled during type check (see
+    /// RecordOverride) and consumed after capability parameter inference.
+    std::unordered_map<Ptr<const AST::FuncDecl>, std::vector<Ptr<const AST::FuncDecl>>> overriddenDecls;
+
     friend class TyVarScope;
     friend class InstCtxScope;
 #ifdef CANGJIE_CODEGEN_CJNATIVE_BACKEND

@@ -80,11 +80,9 @@ private:
 
 /**
  * True when @p decl leaves its module, so its capability list is authoritative and never inferred.
- * The test is the declaration's own modifier plus interface membership -- an interface member is a
- * public contract whether or not the modifier is written. The text defines this over *effective*
- * visibility (the narrowest of the declaration's own modifier and its enclosing declarations'),
- * which additionally infers, say, a `public` method of an `internal` class; that widening waits on
- * re-checking an inferred override against the declaration it overrides.
+ * The test is *effective* visibility -- the narrowest of the declaration's own modifier and those of
+ * its enclosing declarations -- plus interface membership, an interface member being a public
+ * contract whether or not the modifier is written.
  */
 bool IsExportedDecl(const AST::Decl& decl);
 
@@ -114,6 +112,13 @@ InferredCapabilities InferCapabilities(
  * every call site — call sites read the map instead.
  */
 void CompleteInferredCapabilityTypes(TypeManager& typeManager, const InferredCapabilities& inferred);
+
+/**
+ * Checked exceptions: report every inferred list that requires more than the declaration it
+ * overrides or implements. Written lists are compared during type check; an inferred one cannot be,
+ * because inference runs after it -- so the override pairs recorded then are consumed here.
+ */
+void CheckInferredOverrides(TypeManager& typeManager, const InferredCapabilities& inferred, DiagnosticEngine& diag);
 
 /**
  * Run capability argument checking over every callable body and initializer of @p pkg on the
