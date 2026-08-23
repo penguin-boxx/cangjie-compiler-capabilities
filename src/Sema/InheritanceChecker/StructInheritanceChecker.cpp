@@ -1407,12 +1407,21 @@ void StructInheritanceChecker::CheckThrowsClauseCompatible(const AST::FuncDecl& 
             !TypeCheckUtil::IsCommandTy(typeManager, importManager, capTy);
         auto kind = asWarning ? DiagKindRefactor::sema_chexc_override_missing_capability_warn
                               : DiagKindRefactor::sema_chexc_override_missing_capability;
+        // A property accessor has no identifier in source and a compiler-generated one has no
+        // position at all; the property is what a diagnostic can point at. An imported declaration
+        // has no position either, so the note is dropped rather than emitted at position zero.
+        auto blame = GetDiagnosableDecl(childFunc);
+        if (!blame) {
+            continue;
+        }
         auto builder = diag.DiagnoseRefactor(
-            kind, MakeRangeForDeclIdentifier(childFunc), Ty::ToString(capTy), childFunc.identifier.Val());
+            kind, MakeRangeForDeclIdentifier(*blame), Ty::ToString(capTy), GetDiagnosableDeclName(childFunc));
         builder.AddMainHintArguments(Ty::ToString(capTy));
-        builder.AddNote(MakeRangeForDeclIdentifier(parentFunc),
-            parentTy.capTys.empty() ? "the overridden or implemented declaration has no 'throws' clause"
-                                    : "the overridden or implemented declaration is declared here");
+        if (auto parentBlame = GetDiagnosableDecl(parentFunc)) {
+            builder.AddNote(MakeRangeForDeclIdentifier(*parentBlame),
+                parentTy.capTys.empty() ? "the overridden or implemented declaration has no 'throws' clause"
+                                        : "the overridden or implemented declaration is declared here");
+        }
     }
 }
 

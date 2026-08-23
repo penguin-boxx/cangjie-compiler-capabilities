@@ -1224,18 +1224,28 @@ void CheckInferredOverrides(
                 if (!Ty::IsTyCorrect(capTy) || typeManager.IsCapTysSubsumed({capTy}, parentTy->capTys)) {
                     continue;
                 }
+                // A property accessor is not what the author wrote and a compiler-generated one has
+                // no position at all; the property is. A declaration overridden across a package
+                // boundary is rebuilt from the '.cjo' and has no position either -- the message
+                // names it, only the second location is lost.
+                auto blame = GetDiagnosableDecl(*decl);
+                if (!blame) {
+                    continue;
+                }
                 // The checking level applies here as everywhere: at 'warn' the violation is
                 // reported and the package still builds.
                 auto kind = asWarning ? DiagKindRefactor::sema_chexc_override_missing_capability_warn
                                       : DiagKindRefactor::sema_chexc_override_missing_capability;
                 auto builder = diag.DiagnoseRefactor(
-                    kind, MakeRangeForDeclIdentifier(*decl), Ty::ToString(capTy), decl->identifier.Val());
+                    kind, MakeRangeForDeclIdentifier(*blame), Ty::ToString(capTy), GetDiagnosableDeclName(*decl));
                 builder.AddMainHintArguments(Ty::ToString(capTy));
-                builder.AddNote(MakeRangeForDeclIdentifier(*parent),
-                    parentTy->capTys.empty()
-                        ? "the overridden or implemented declaration has no 'throws' clause, and this "
-                          "one's list was inferred from its body"
-                        : "the overridden or implemented declaration is declared here");
+                if (auto parentBlame = GetDiagnosableDecl(*parent)) {
+                    builder.AddNote(MakeRangeForDeclIdentifier(*parentBlame),
+                        parentTy->capTys.empty()
+                            ? "the overridden or implemented declaration has no 'throws' clause, and this "
+                              "one's list was inferred from its body"
+                            : "the overridden or implemented declaration is declared here");
+                }
             }
         }
     }
