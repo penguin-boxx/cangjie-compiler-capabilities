@@ -76,6 +76,15 @@ public:
     Ptr<AST::FuncTy> GetFunctionTy(const std::vector<Ptr<AST::Ty>>& paramTys, Ptr<AST::Ty> retTy,
         AST::FuncTy::Config cfg = {false, false, false, false}, const std::vector<Ptr<AST::Ty>>& capTys = {});
 
+    /**
+     * Checked exceptions: the semantic form of a capability list -- a duplicate entry, or one
+     * covered by a more general entry of the same list, is not part of the list. Every comparison
+     * and every consumer works on this form, so coverage-equivalent lists behave identically. A
+     * list still holding an inference placeholder is returned unchanged: comparing it would bind
+     * the placeholder, and capability lists take no part in type-argument inference.
+     */
+    std::vector<Ptr<AST::Ty>> NormalizeCapTys(const std::vector<Ptr<AST::Ty>>& capTys);
+
     Ptr<AST::ArrayTy> GetArrayTy(Ptr<AST::Ty> elemTy, unsigned int dims);
     Ptr<AST::VArrayTy> GetVArrayTy(AST::Ty& elemTy, int64_t size);
     Ptr<AST::PointerTy> GetPointerTy(Ptr<AST::Ty> elemTy);

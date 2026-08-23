@@ -24,6 +24,7 @@
 #include "cangjie/AST/ScopeManagerApi.h"
 #include "cangjie/AST/Utils.h"
 #include "cangjie/Utils/CheckUtils.h"
+#include "cangjie/Utils/Utils.h"
 
 namespace Cangjie {
 using namespace AST;
@@ -917,6 +918,34 @@ bool HasPlaceholder(Ptr<const Ty> ty)
     return std::any_of(ty->typeArgs.begin(), ty->typeArgs.end(), [](auto arg) { return HasPlaceholder(arg); });
 }
 } // namespace
+
+std::vector<Ptr<Ty>> TypeManager::NormalizeCapTys(const std::vector<Ptr<Ty>>& capTys)
+{
+    if (capTys.size() < 2) {
+        return capTys;
+    }
+    // While type arguments are still being solved, a placeholder entry must not be compared: the
+    // comparison would bind it, and capability lists take no part in type-argument inference. Such
+    // a list is normalized once it is instantiated.
+    if (std::any_of(capTys.begin(), capTys.end(), [](auto cap) { return HasPlaceholder(cap); })) {
+        return capTys;
+    }
+    std::vector<Ptr<Ty>> kept;
+    for (auto cap : capTys) {
+        if (!Ty::IsTyCorrect(cap)) {
+            kept.emplace_back(cap); // an invalid entry is left alone; its error is reported already
+            continue;
+        }
+        // Keep the maximal entries. An entry equal to one already kept -- mutual subtypes -- is
+        // dropped by the same test, which is what deduplication needs.
+        bool covered = std::any_of(capTys.begin(), capTys.end(),
+            [this, cap](Ptr<Ty> other) { return Ty::IsTyCorrect(other) && other != cap && IsSubtype(cap, other); });
+        if (!covered && !Utils::In(cap, kept)) {
+            kept.emplace_back(cap);
+        }
+    }
+    return kept;
+}
 
 bool TypeManager::IsCapTysSubsumed(const std::vector<Ptr<Ty>>& subCapTys, const std::vector<Ptr<Ty>>& superCapTys)
 {

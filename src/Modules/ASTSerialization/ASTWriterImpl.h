@@ -235,20 +235,11 @@ private:
      */
     std::vector<Ptr<AST::Ty>> NormalizeCapTys(const std::vector<Ptr<AST::Ty>>& capTys)
     {
-        std::vector<Ptr<AST::Ty>> kept;
-        for (auto cap : capTys) {
-            if (!AST::Ty::IsTyCorrect(cap)) {
-                continue;
-            }
-            // Keep the maximal entries. An entry equal to one already kept (mutual subtypes)
-            // is dropped by the same test, which is what deduplication needs.
-            bool subsumed = std::any_of(capTys.begin(), capTys.end(), [this, cap](Ptr<AST::Ty> other) {
-                return AST::Ty::IsTyCorrect(other) && other != cap && typeManager.IsSubtype(cap, other);
-            });
-            if (!subsumed && !Utils::In(cap, kept)) {
-                kept.emplace_back(cap);
-            }
-        }
+        // The semantic form is the type checker's (duplicates and covered entries are not part of
+        // the list); the exported form adds a stable order, so that reordering a clause in source
+        // is not a metadata change. Ordering is by name rather than by pointer, which would vary
+        // run to run.
+        auto kept = typeManager.NormalizeCapTys(capTys);
         std::stable_sort(kept.begin(), kept.end(),
             [](Ptr<AST::Ty> a, Ptr<AST::Ty> b) { return AST::Ty::ToString(a) < AST::Ty::ToString(b); });
         return kept;
