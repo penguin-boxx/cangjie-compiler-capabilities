@@ -2081,9 +2081,14 @@ bool TypeManager::IsFuncDeclSubType(const AST::FuncDecl& decl, const AST::FuncDe
 
 bool TypeManager::IsFuncTySubType(const AST::FuncTy& type1, const AST::FuncTy& type2)
 {
-    // Checked exceptions: capability lists compare by set subsumption.
-    return IsFuncParameterTypesIdentical(type1.paramTys, type2.paramTys) && IsSubtype(type1.retTy, type2.retTy) &&
-        IsCapTysSubsumed(type1.capTys, type2.capTys);
+    // Deliberately blind to capability lists. This predicate PAIRS a declaration with the one it
+    // implements -- for instantiation, for the override map, for the common type of a mocked
+    // parameter -- and pairing is a question about shape: two functions never differ in capability
+    // list alone, since a list takes no part in overload resolution. Whether the pairing then
+    // satisfies coverage is a separate rule, reported by the override checks; when that rule is
+    // relaxed to a warning, the violating override must still resolve to its implementation, or
+    // the call is left on an abstract declaration that has no body to link against.
+    return IsFuncParameterTypesIdentical(type1.paramTys, type2.paramTys) && IsSubtype(type1.retTy, type2.retTy);
 }
 #endif
 

@@ -1398,8 +1398,17 @@ void StructInheritanceChecker::CheckThrowsClauseCompatible(const AST::FuncDecl& 
         if (typeManager.IsCapTysSubsumed({capTy}, parentTy.capTys)) {
             continue;
         }
-        auto builder = diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_override_missing_capability,
-            MakeRangeForDeclIdentifier(childFunc), Ty::ToString(capTy), childFunc.identifier.Val());
+        // The level applies to this rule as it does to every other capability diagnostic: at 'warn'
+        // the program is still built, so the violating override has to stay an override -- pairing
+        // is blind to capability lists precisely so that it can. An effect entry is never
+        // downgraded: effect requirements are checked on their own axis, at one severity. With
+        // exception checking off the rule is ordinary type compatibility, so it stays an error.
+        bool asWarning = opts.enableChexc && opts.chexcSeverity == GlobalOptions::ChexcSeverity::CS_WARN &&
+            !TypeCheckUtil::IsCommandTy(typeManager, importManager, capTy);
+        auto kind = asWarning ? DiagKindRefactor::sema_chexc_override_missing_capability_warn
+                              : DiagKindRefactor::sema_chexc_override_missing_capability;
+        auto builder = diag.DiagnoseRefactor(
+            kind, MakeRangeForDeclIdentifier(childFunc), Ty::ToString(capTy), childFunc.identifier.Val());
         builder.AddMainHintArguments(Ty::ToString(capTy));
         builder.AddNote(MakeRangeForDeclIdentifier(parentFunc),
             parentTy.capTys.empty() ? "the overridden or implemented declaration has no 'throws' clause"
