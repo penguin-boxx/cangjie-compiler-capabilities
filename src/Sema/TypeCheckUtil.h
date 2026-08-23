@@ -214,6 +214,19 @@ std::vector<Ptr<AST::Ty>> GetInstantiatedAccessorCapTys(
  * whose types failed elaboration are skipped.
  */
 std::vector<Ptr<AST::Ty>> GetDeclCapturesCapTys(const AST::Decl& decl);
+
+/**
+ * Checked exceptions: true when @p ty is a capturing class or struct -- one whose declaration
+ * carries a `captures` clause with at least one entry after alias expansion. Its instances store
+ * capabilities and are `local!`-only.
+ */
+bool IsCapturingTy(Ptr<AST::Ty> ty);
+/**
+ * Effects: whether @p ty is an effect command type, i.e. a subtype of the effect package's
+ * 'Command' class. The exception and command roots are disjoint, so this is what tells the two
+ * kinds of entry in one capability list apart. False when the effect package is absent.
+ */
+bool IsCommandTy(TypeManager& typeManager, const ImportManager& importManager, Ptr<AST::Ty> ty);
 /**
  * Checked exceptions: whether @p ty is an unchecked exception type, i.e. a subtype of the core
  * 'UncheckedException' class. Tolerant of the class's absence (bootstrapping

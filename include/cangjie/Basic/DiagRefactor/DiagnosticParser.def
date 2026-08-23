@@ -96,6 +96,8 @@ ERROR(parse_empty_capability_list_not_alone, "'()' is only allowed as the whole 
     "remove '()', or the entries it is mixed with")
 ERROR(parse_empty_assume_throws_list, "'@AssumeThrows[]' assumes nothing",
     "drop the brackets to assume 'Exception', or list the exception types to assume")
+ERROR(parse_ellipsis_not_last, "'...' must be the last entry of a 'throws' clause",
+    "it may appear at most once, at the end")
 ERROR(parse_ellipsis_in_clause, "'...' is not allowed in a '%s' clause",
     "only an inferable 'throws' list can be opened to inference")
 ERROR(parse_duplicate_throws_clause, "duplicate 'throws' clause",

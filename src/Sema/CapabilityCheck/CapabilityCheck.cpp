@@ -119,41 +119,17 @@ AssumedThrows CollectAssumedThrows(const Package& pkg, const ImportManager& impo
     return assumed;
 }
 
-/// Effects: an entry is an effect requirement iff it is a 'Command' subtype, and
-/// an exception requirement iff it is an 'Exception' subtype. The two roots are disjoint, which is
-/// what lets one capability list carry both kinds (decision D17).
-bool IsCommandTy(TypeManager& typeManager, const ImportManager& importManager, Ptr<Ty> ty)
-{
-    if (!Ty::IsTyCorrect(ty)) {
-        return false;
-    }
-    auto command = importManager.GetImportedDecl(EFFECT_PACKAGE_NAME, CLASS_COMMAND);
-    if (!command) {
-        return false; // No effect handlers in this build: nothing is a command.
-    }
-    // Compare DECLARATIONS, not types: 'Command' is generic, so a subtype test against the
-    // uninstantiated 'Command<T>' fails for a concrete 'C <: Command<Int64>'.
-    if (Ty::GetDeclPtrOfTy(ty) == command) {
-        return true;
-    }
-    for (auto superTy : typeManager.GetAllSuperTys(*ty)) {
-        if (Ty::GetDeclPtrOfTy(superTy) == command) {
-            return true;
-        }
-    }
-    return false;
-}
-
 class CapabilityChecker {
 public:
     CapabilityChecker(TypeManager& typeManager, const ImportManager& importManager,
         Sema::CapabilityMissHandler& missHandler, const AssumedThrows& assumed,
-        const Sema::InferredCapabilities& inferred = {})
+        const Sema::InferredCapabilities& inferred = {}, Ptr<DiagnosticEngine> diag = nullptr)
         : typeManager(typeManager),
           importManager(importManager),
           missHandler(missHandler),
           assumed(assumed),
-          inferred(inferred)
+          inferred(inferred),
+          diag(diag)
     {
     }
 
@@ -300,6 +276,29 @@ private:
         }
     }
 
+    /// The escape hatch: 'std.core.unsafeAssumeHandled<E, R>' is a compiler intrinsic with a
+    /// library-visible signature. Inside it -- and nowhere else -- a capability for its own 'E' is
+    /// fabricated, which is what lets it invoke a callback that requires one. No source operation
+    /// fabricates capabilities; this is the one declaration that gets one for free.
+    static bool IsEscapeHatch(const FuncDecl& fd)
+    {
+        return fd.identifier == UNSAFE_ASSUME_HANDLED && fd.fullPackageName == CORE_PACKAGE_NAME;
+    }
+
+    SupplyScope FabricatedCapabilities(const FuncDecl& fd) const
+    {
+        SupplyScope caps;
+        if (!IsEscapeHatch(fd) || !fd.funcBody || !fd.funcBody->generic) {
+            return caps;
+        }
+        for (auto& param : fd.funcBody->generic->typeParameters) {
+            if (param && Ty::IsTyCorrect(param->GetTy())) {
+                (void)caps.emplace_back(param->GetTy());
+            }
+        }
+        return caps;
+    }
+
     void CheckCallable(FuncDecl& fd)
     {
         if (!fd.funcBody) {
@@ -307,6 +306,11 @@ private:
         }
         CJC_ASSERT(supplies.empty());
         rootSupply = nullptr;
+        auto fabricated = FabricatedCapabilities(fd);
+        bool hasFabricated = !fabricated.empty();
+        if (hasFabricated) {
+            supplies.emplace_back(std::move(fabricated));
+        }
         // The enclosing class's captured capabilities are in scope throughout a member that has
         // a receiver to carry them. A static member, a static initializer and a
         // finalizer have none, and a checked throw is forbidden there. Derived
@@ -320,6 +324,9 @@ private:
         // beginning of the body".
         WalkScoped(fd.funcBody.get());
         PopCaptures(captures);
+        if (hasFabricated) {
+            supplies.pop_back();
+        }
         CJC_ASSERT(supplies.empty());
     }
 
@@ -427,6 +434,17 @@ private:
             case ASTKind::SPAWN_EXPR:
                 HandleSpawn(StaticCast<SpawnExpr&>(*node));
                 return VisitAction::SKIP_CHILDREN;
+            case ASTKind::RESUME_EXPR: {
+                // Effects: 'resume r throwing e' injects 'e' at the suspended 'perform' site, so it
+                // is a requirement site classified by the static type of 'e', exactly as 'throw e'
+                // is. It resolves in the handler body's enclosing scopes -- which is what the
+                // supply stack holds here, a 'handle' body being outside its own try's scope.
+                auto& re = StaticCast<ResumeExpr&>(*node);
+                if (re.throwingExpr && Ty::IsTyCorrect(re.throwingExpr->GetTy())) {
+                    Demand(re.throwingExpr->GetTy(), re, "this 'resume ... throwing' expression");
+                }
+                return VisitAction::WALK_CHILDREN;
+            }
             case ASTKind::THROW_EXPR: {
                 auto& te = StaticCast<ThrowExpr&>(*node);
                 if (te.expr && Ty::IsTyCorrect(te.expr->GetTy())) {
@@ -577,6 +595,25 @@ private:
         rootSupply = std::move(savedRoot);
     }
 
+    /// The escape hatch is a no-op when its type argument is unchecked: an unchecked exception
+    /// never required a capability, so nothing is being assumed away. Worth saying, since the call
+    /// reads as if it were.
+    void WarnUselessEscapeHatch(const CallExpr& ce) const
+    {
+        if (!ce.resolvedFunction || !IsEscapeHatch(*ce.resolvedFunction)) {
+            return;
+        }
+        auto ref = DynamicCast<RefExpr*>(ce.baseFunc.get());
+        if (!ref || ref->typeArguments.empty()) {
+            return;
+        }
+        auto assumedTy = ref->typeArguments.front()->GetTy();
+        if (diag && Ty::IsTyCorrect(assumedTy) &&
+            TypeCheckUtil::IsUncheckedExceptionTy(typeManager, importManager, assumedTy)) {
+            diag->DiagnoseRefactor(DiagKindRefactor::sema_chexc_useless_escape_hatch, ce, Ty::ToString(assumedTy));
+        }
+    }
+
     void HandleCall(CallExpr& ce)
     {
         // Both resolved-function calls and function-value calls: the callee expression's type
@@ -584,6 +621,7 @@ private:
         if (!ce.baseFunc) {
             return;
         }
+        WarnUselessEscapeHatch(ce);
         auto funcTy = DynamicCast<FuncTy*>(ce.baseFunc->GetTy());
         if (!funcTy) {
             return;
@@ -740,7 +778,7 @@ private:
             auto exception = importManager.GetCoreDecl<ClassDecl>(CLASS_EXCEPTION);
             bool underException = exception && Ty::IsTyCorrect(exception->GetTy()) &&
                 typeManager.IsSubtype(exceptionTy, exception->GetTy());
-            if (!underException && !IsCommandTy(typeManager, importManager, exceptionTy)) {
+            if (!underException && !TypeCheckUtil::IsCommandTy(typeManager, importManager, exceptionTy)) {
                 return;
             }
         }
@@ -754,7 +792,8 @@ private:
         if (rootSupply && rootSupply(exceptionTy)) {
             return;
         }
-        missHandler.HandleMiss({exceptionTy, &site, requiredBy, IsCommandTy(typeManager, importManager, exceptionTy)});
+        missHandler.HandleMiss(
+            {exceptionTy, &site, requiredBy, TypeCheckUtil::IsCommandTy(typeManager, importManager, exceptionTy)});
     }
 
     TypeManager& typeManager;
@@ -768,6 +807,9 @@ private:
     const Sema::InferredCapabilities& inferred;
     // Set while collecting one declaration's residual demands: its own inferred list is not a supply.
     Ptr<const Decl> collectingFor{nullptr};
+    /// Only the reporting pass carries one: the collecting pass of inference walks every body a
+    /// second time, and a warning emitted there would be a duplicate.
+    Ptr<DiagnosticEngine> diag{nullptr};
     // File of the declaration being checked; the fallback for a call site that lost its own.
 };
 /// Collects residual demands instead of diagnosing them (miss-handler seam).
@@ -1162,7 +1204,8 @@ void ReportCapabilityMissHandler::HandleMiss(const CapabilityDemand& demand)
     builder.AddMainHintArguments(demand.requiredBy);
 }
 
-void CheckInferredOverrides(TypeManager& typeManager, const InferredCapabilities& inferred, DiagnosticEngine& diag)
+void CheckInferredOverrides(
+    TypeManager& typeManager, const InferredCapabilities& inferred, DiagnosticEngine& diag, bool asWarning)
 {
     // A declaration's list depends on its own body only, never on its overriders -- so an override
     // that INFERS more than the declaration it overrides is an error, exactly as a written one is.
@@ -1181,8 +1224,12 @@ void CheckInferredOverrides(TypeManager& typeManager, const InferredCapabilities
                 if (!Ty::IsTyCorrect(capTy) || typeManager.IsCapTysSubsumed({capTy}, parentTy->capTys)) {
                     continue;
                 }
-                auto builder = diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_override_missing_capability,
-                    MakeRangeForDeclIdentifier(*decl), Ty::ToString(capTy), decl->identifier.Val());
+                // The checking level applies here as everywhere: at 'warn' the violation is
+                // reported and the package still builds.
+                auto kind = asWarning ? DiagKindRefactor::sema_chexc_override_missing_capability_warn
+                                      : DiagKindRefactor::sema_chexc_override_missing_capability;
+                auto builder = diag.DiagnoseRefactor(
+                    kind, MakeRangeForDeclIdentifier(*decl), Ty::ToString(capTy), decl->identifier.Val());
                 builder.AddMainHintArguments(Ty::ToString(capTy));
                 builder.AddNote(MakeRangeForDeclIdentifier(*parent),
                     parentTy->capTys.empty()
@@ -1234,9 +1281,9 @@ InferredCapabilities InferCapabilities(
 }
 
 void CheckCapabilities(TypeManager& typeManager, const ImportManager& importManager, AST::Package& pkg,
-    CapabilityMissHandler& missHandler, const InferredCapabilities& inferred)
+    CapabilityMissHandler& missHandler, const InferredCapabilities& inferred, DiagnosticEngine& diag)
 {
     auto assumed = CollectAssumedThrows(pkg, importManager);
-    CapabilityChecker(typeManager, importManager, missHandler, assumed, inferred).CheckPackage(pkg);
+    CapabilityChecker(typeManager, importManager, missHandler, assumed, inferred, &diag).CheckPackage(pkg);
 }
 } // namespace Cangjie::Sema

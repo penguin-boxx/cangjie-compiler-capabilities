@@ -55,15 +55,38 @@ namespace {
 /// through one is still used by the type, and dropping its mapping here would leave the raw
 /// instantiation placeholder in the list, where nothing can discharge it. Deciding *which*
 /// substitutions are needed is not deciding type arguments -- those still ignore capability lists.
-std::set<Ptr<GenericsTy>> CollectUsedTyVars(Ptr<Ty> ty, const std::set<Ptr<TyVar>>& candidates)
+void CollectUsedTyVarsInto(Ptr<Ty> ty, const std::set<Ptr<TyVar>>& candidates, std::set<Ptr<GenericsTy>>& used)
 {
-    std::set<Ptr<GenericsTy>> used = ty->GetGenericTyArgs(candidates);
-    for (auto tv : GetAllGenericTys(ty)) {
-        auto generics = DynamicCast<GenericsTy*>(tv);
-        if (generics && candidates.count(generics) > 0) {
-            used.emplace(generics);
+    if (!ty || !ty->HasGeneric()) {
+        return;
+    }
+    if (ty->IsGeneric()) {
+        auto generics = RawStaticCast<GenericsTy*>(ty.get());
+        if (candidates.count(generics) > 0) {
+            (void)used.emplace(generics);
+        }
+        return;
+    }
+    for (auto arg : ty->typeArgs) {
+        CollectUsedTyVarsInto(arg, candidates, used);
+    }
+    // The one addition to 'Ty::GetGenericTyArgs': a functional type's capability list sits outside
+    // 'typeArgs', so a type parameter reachable only through one is invisible there -- its mapping
+    // would be filtered away here and the raw instantiation placeholder would survive into the
+    // checked type. Deciding *which* substitutions are needed is not deciding type arguments,
+    // which still ignore capability lists entirely. Everything else about the traversal matches,
+    // deliberately: widening it changes which mappings survive for ordinary code too.
+    if (auto funcTy = DynamicCast<FuncTy*>(ty)) {
+        for (auto cap : funcTy->capTys) {
+            CollectUsedTyVarsInto(cap, candidates, used);
         }
     }
+}
+
+std::set<Ptr<GenericsTy>> CollectUsedTyVars(Ptr<Ty> ty, const std::set<Ptr<TyVar>>& candidates)
+{
+    std::set<Ptr<GenericsTy>> used;
+    CollectUsedTyVarsInto(ty, candidates, used);
     return used;
 }
 } // namespace

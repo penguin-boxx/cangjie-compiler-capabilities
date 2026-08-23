@@ -321,6 +321,12 @@ OwnedPtr<AST::ThrowsClause> ParserImpl::ParseThrowsClause(bool isDeclClause)
         (void)clause->capTypes.emplace_back(ParseType());
     };
     auto diagnoseEllipsis = [this, isDeclClause, &clause]() {
+        // Placement: last entry, at most once. A second marker, or one with entries after it, is
+        // diagnosed here; the clause still parses so the declared entries reach the checks.
+        if (clause->hasEllipsis) {
+            ParseDiagnoseRefactor(
+                DiagKindRefactor::parse_ellipsis_not_last, MakeRange(lookahead.Begin(), lookahead.End()));
+        }
         // On a declaration `...` re-enables capability parameter inference, whose result is
         // unioned with the listed entries. A functional type's list is always
         // complete, so the marker is rejected there.
@@ -377,6 +383,10 @@ OwnedPtr<AST::ThrowsClause> ParserImpl::ParseThrowsClause(bool isDeclClause)
             if (Seeing(TokenKind::ELLIPSIS)) {
                 diagnoseEllipsis();
             } else {
+                if (clause->hasEllipsis) {
+                    ParseDiagnoseRefactor(
+                        DiagKindRefactor::parse_ellipsis_not_last, MakeRange(lookahead.Begin(), lookahead.End()));
+                }
                 parseEntry();
             }
             if (!Skip(TokenKind::COMMA)) {

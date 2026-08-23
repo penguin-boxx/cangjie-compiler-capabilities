@@ -423,6 +423,9 @@ ERROR(sema_chexc_clause_on_cfunc, "a 'throws' clause is not allowed on %s", "'th
 ERROR(sema_chexc_override_missing_capability,
     "exception type '%s' in 'throws' clause of '%s' is not covered by the overridden or implemented declaration",
     "no exception type in the original declaration's 'throws' clause is a supertype of '%s'")
+WARNING(sema_chexc_override_missing_capability_warn, CHEXC,
+    "exception type '%s' in 'throws' clause of '%s' is not covered by the overridden or implemented declaration",
+    "no exception type in the original declaration's 'throws' clause is a supertype of '%s'")
 ERROR(sema_chexc_missing_capability,
     "Cannot find a capability for '%s' (of type 'CanThrow<%s>') in the current scope",
     "required by %s")
@@ -452,10 +455,26 @@ ERROR(sema_chexc_cast_target_func,
     "'%s' cannot be a runtime cast target: it contains a function type",
     "erasure leaves no capability list to check, so such a cast would launder the requirements of "
     "the value it accepts")
+WARNING(sema_chexc_cast_target_func_warn, CHEXC,
+    "'%s' cannot be a runtime cast target: it contains a function type",
+    "erasure leaves no capability list to check, so such a cast would launder the requirements of "
+    "the value it accepts")
+ERROR(sema_chexc_cast_target_capturing,
+    "'%s' cannot be a runtime cast target: it is a capturing type",
+    "its instances hold capabilities and are bound to the handlers that supplied them, which a "
+    "cast result cannot be")
+WARNING(sema_chexc_cast_target_capturing_warn, CHEXC,
+    "'%s' cannot be a runtime cast target: it is a capturing type",
+    "its instances hold capabilities and are bound to the handlers that supplied them, which a "
+    "cast result cannot be")
 ERROR(sema_chexc_subclass_captures_missing,
     "'%s' must capture '%s': every subclass of a capturing class captures at least what its "
     "superclass does",
     "add it to the 'captures' clause, or a type that covers it")
+WARNING(sema_chexc_useless_escape_hatch, CHEXC,
+    "'unsafeAssumeHandled' assumes '%s', which is unchecked and never required a capability",
+    "the call has no effect on checking")
+
 ERROR(sema_chexc_capturing_needs_ctor,
     "%s '%s' has a 'captures' clause and must declare an 'init' constructor",
     "a capturing type has no implicit default constructor: its constructors require the captured "

@@ -118,7 +118,8 @@ void CompleteInferredCapabilityTypes(TypeManager& typeManager, const InferredCap
  * overrides or implements. Written lists are compared during type check; an inferred one cannot be,
  * because inference runs after it -- so the override pairs recorded then are consumed here.
  */
-void CheckInferredOverrides(TypeManager& typeManager, const InferredCapabilities& inferred, DiagnosticEngine& diag);
+void CheckInferredOverrides(
+    TypeManager& typeManager, const InferredCapabilities& inferred, DiagnosticEngine& diag, bool asWarning);
 
 /**
  * Run capability argument checking over every callable body and initializer of @p pkg on the
@@ -128,7 +129,7 @@ void CheckInferredOverrides(TypeManager& typeManager, const InferredCapabilities
  * declaration and are demanded at its call sites.
  */
 void CheckCapabilities(TypeManager& typeManager, const ImportManager& importManager, AST::Package& pkg,
-    CapabilityMissHandler& missHandler, const InferredCapabilities& inferred = {});
+    CapabilityMissHandler& missHandler, const InferredCapabilities& inferred, DiagnosticEngine& diag);
 
 /**
  * The capability list of @p decl's 'captures' clause, with capability list aliases

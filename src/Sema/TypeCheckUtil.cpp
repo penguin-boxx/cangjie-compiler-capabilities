@@ -441,6 +441,40 @@ std::vector<Ptr<Ty>> GetDeclCapturesCapTys(const Decl& decl)
     return ret;
 }
 
+bool IsCapturingTy(Ptr<Ty> ty)
+{
+    if (!Ty::IsTyCorrect(ty)) {
+        return false;
+    }
+    auto decl = Ty::GetDeclOfTy<InheritableDecl>(ty);
+    return decl && !GetDeclCapturesCapTys(*decl).empty();
+}
+
+/// Effects: an entry is an effect requirement iff it is a 'Command' subtype, and
+/// an exception requirement iff it is an 'Exception' subtype. The two roots are disjoint, which is
+/// what lets one capability list carry both kinds (decision D17).
+bool IsCommandTy(TypeManager& typeManager, const ImportManager& importManager, Ptr<Ty> ty)
+{
+    if (!Ty::IsTyCorrect(ty)) {
+        return false;
+    }
+    auto command = importManager.GetImportedDecl(EFFECT_PACKAGE_NAME, CLASS_COMMAND);
+    if (!command) {
+        return false; // No effect handlers in this build: nothing is a command.
+    }
+    // Compare DECLARATIONS, not types: 'Command' is generic, so a subtype test against the
+    // uninstantiated 'Command<T>' fails for a concrete 'C <: Command<Int64>'.
+    if (Ty::GetDeclPtrOfTy(ty) == command) {
+        return true;
+    }
+    for (auto superTy : typeManager.GetAllSuperTys(*ty)) {
+        if (Ty::GetDeclPtrOfTy(superTy) == command) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool IsUncheckedExceptionTy(TypeManager& typeManager, const ImportManager& importManager, Ptr<Ty> ty)
 {
     // Checked exceptions: an exception type is unchecked iff it is a subtype of

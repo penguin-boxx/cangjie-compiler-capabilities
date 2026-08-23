@@ -739,8 +739,8 @@ bool CompilerInstance::PerformCapabilityCheck()
         // parameter inference and capability argument checking, so a declaration's own type is
         // the single source of its list. Keep these three calls adjacent.
         Sema::CompleteInferredCapabilityTypes(*typeManager, inferred);
-        Sema::CheckInferredOverrides(*typeManager, inferred, diag);
-        Sema::CheckCapabilities(*typeManager, *importManager, *srcPkg, missHandler, inferred);
+        Sema::CheckInferredOverrides(*typeManager, inferred, diag, asWarning);
+        Sema::CheckCapabilities(*typeManager, *importManager, *srcPkg, missHandler, inferred, diag);
     }
     return diag.GetErrorCount() == errorCountBefore;
 }
