@@ -183,6 +183,15 @@ Ptr<PackageDecl> CjoManager::GetPackageDecl(const std::string& fullPackageName) 
     return info->pkgDecl.get();
 }
 
+PackageCapabilityInfo CjoManager::GetPackageCapabilityInfo(const std::string& fullPackageName) const
+{
+    auto info = impl->GetPackageInfo(fullPackageName);
+    if (info == nullptr || info->loader == nullptr) {
+        return {};
+    }
+    return info->loader->GetCapabilityInfo();
+}
+
 Ptr<Package> CjoManager::GetPackage(const std::string& fullPackageName) const
 {
     auto info = impl->GetPackageInfo(fullPackageName);

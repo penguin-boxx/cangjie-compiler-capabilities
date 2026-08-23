@@ -141,6 +141,7 @@ private:
     void LoadInheritableDeclAdvancedInfo(const PackageFormat::Decl& decl, AST::InheritableDecl& id);
     void AddDeclToImportedPackage(AST::Decl& decl);
     GlobalOptions::OptimizationLevel LoadOptimizationLevel(const PackageFormat::CompilationOptions& options);
+    PackageCapabilityInfo GetCapabilityInfo() const;
 
     // Get decl pointer according to DeclId obtained from flatbuffers.
     Ptr<AST::Decl> GetDeclFromIndex(const PackageFormat::FullId* fullId);

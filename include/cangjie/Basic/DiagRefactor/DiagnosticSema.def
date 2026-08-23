@@ -444,6 +444,12 @@ ERROR(sema_chexc_performs_type_not_command, "type '%s' in 'performs' clause is n
 ERROR(sema_chexc_performs_in_main, "'main' cannot declare a 'performs' clause",
     "there is no default effect handler, unlike the default exception handler")
 
+ERROR(sema_chexc_assume_on_checked_package,
+    "'@AssumeThrows' names package '%s', whose capability lists are verified",
+    "an assumption stands in for lists a package does not have; this one was checked at 'error'")
+ERROR(sema_chexc_import_without_capability_metadata,
+    "package '%s' was compiled with effect handlers but records no capability metadata",
+    "its 'performs' lists cannot be read as empty ones; rebuild it with this compiler")
 ERROR(sema_chexc_assume_throws_not_on_import, "'@AssumeThrows' is only allowed on an 'import'",
     "an assumption applies to a whole imported package")
 

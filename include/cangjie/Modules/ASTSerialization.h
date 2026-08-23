@@ -25,6 +25,7 @@
 #include "cangjie/AST/Node.h"
 #include "cangjie/Basic/DiagnosticEngine.h"
 #include "cangjie/Modules/ASTSerializationTypeDef.h"
+#include "cangjie/Modules/PackageCapabilityInfo.h"
 #include "cangjie/Sema/TypeManager.h"
 
 namespace Cangjie {
@@ -48,7 +49,7 @@ public:
 
     // Add for cjmp
     void SetSerializingCommon();
-    void SaveOptions(bool debug, GlobalOptions::OptimizationLevel level);
+    void SaveOptions(const GlobalOptions& opts);
 
     /** Export external decls of a package AST to a buffer. */
     void ExportAST(const AST::PackageDecl& package) const;
@@ -87,6 +88,8 @@ public:
     // Add for cjmp
     bool PreloadCommonPartOfPackage(AST::Package& pkg) const;
     std::vector<std::string> ReadFileNames() const;
+    /** Checked exceptions: the package's capability metadata, defaulted for a pre-feature '.cjo'. */
+    PackageCapabilityInfo GetCapabilityInfo() const;
 
     Ptr<AST::Ty> LoadType(FormattedIndex type) const;
     // A flag to avoid conflicts when we are reusing the AST serialiser from CHIR

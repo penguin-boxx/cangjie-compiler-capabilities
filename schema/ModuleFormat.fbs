@@ -688,9 +688,26 @@ enum OptimizationLevel : uint8 {
   O0, O1, O2, O3, Os, Oz
 }
 
+/// Checked exceptions: the severity capability checking ran at when the package was compiled.
+/// 'Off' also covers every package produced before the feature existed, which is what the default
+/// gives an old '.cjo'.
+enum ChexcLevel : byte {
+  Off = 0,
+  Warn,
+  Error
+}
+
 table CompilationOptions {
   optimization_level: OptimizationLevel;
   debug: bool;
+  // Checked exceptions: what the capability lists in this package are worth. 'chexc_level' says
+  // whether they were verified and how strictly; 'effects_enabled' says whether effect handlers
+  // were on, so an empty 'performs' list means "performs nothing" rather than "was not recorded";
+  // 'records_capabilities' distinguishes a package this compiler produced from one that predates
+  // capability metadata entirely, which the two enums above cannot express on their own.
+  chexc_level: ChexcLevel = Off;
+  effects_enabled: bool = false;
+  records_capabilities: bool = false;
 }
 
 // all SemaTys, decls are saved here, and indexed by other nodes.

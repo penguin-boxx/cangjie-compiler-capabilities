@@ -512,6 +512,34 @@ void ASTLoader::ASTLoaderImpl::AddDeclToImportedPackage(Decl& decl)
 /**
  * @brief Convert fb optimization level enum to the GlobalOptions' enum
  */
+PackageCapabilityInfo ASTLoader::GetCapabilityInfo() const
+{
+    return pImpl->GetCapabilityInfo();
+}
+
+PackageCapabilityInfo ASTLoader::ASTLoaderImpl::GetCapabilityInfo() const
+{
+    PackageCapabilityInfo info;
+    if (package == nullptr || package->options() == nullptr) {
+        return info; // A '.cjo' from before capability metadata: every default already says so.
+    }
+    auto options = package->options();
+    switch (options->chexc_level()) {
+        case PackageFormat::ChexcLevel::ChexcLevel_Warn:
+            info.level = PackageCapabilityInfo::Level::WARN;
+            break;
+        case PackageFormat::ChexcLevel::ChexcLevel_Error:
+            info.level = PackageCapabilityInfo::Level::ERROR;
+            break;
+        default:
+            info.level = PackageCapabilityInfo::Level::OFF;
+            break;
+    }
+    info.effectsEnabled = options->effects_enabled();
+    info.recordsCapabilities = options->records_capabilities();
+    return info;
+}
+
 GlobalOptions::OptimizationLevel ASTLoader::ASTLoaderImpl::LoadOptimizationLevel(
     const PackageFormat::CompilationOptions& options)
 {

@@ -511,20 +511,21 @@ template <typename T> TVectorOffset<FormattedIndex> ASTWriter::ASTWriterImpl::Ge
 /**
  * @brief Save compilation options to the cjo file
  * @param debug Whether debug mode is enabled
- * @param level The optimization level
+ * @param opts The compilation options of the package being written
  */
-void ASTWriter::SaveOptions(bool debug, GlobalOptions::OptimizationLevel level)
+void ASTWriter::SaveOptions(const GlobalOptions& opts)
 {
-    pImpl->SaveOptions(debug, level);
+    pImpl->SaveOptions(opts);
 }
 
 /**
  * @brief Save compilation options to the cjo file
- * @param debug Whether debug mode is enabled
- * @param level The optimization level
+ * @param opts The compilation options of the package being written
  */
-void ASTWriter::ASTWriterImpl::SaveOptions(bool debug, GlobalOptions::OptimizationLevel level)
+void ASTWriter::ASTWriterImpl::SaveOptions(const GlobalOptions& opts)
 {
+    bool debug = opts.enableCompileDebug;
+    auto level = opts.optimizationLevel;
     PackageFormat::OptimizationLevel saveLevel;
     switch (level) {
         case GlobalOptions::OptimizationLevel::O0:
@@ -549,7 +550,17 @@ void ASTWriter::ASTWriterImpl::SaveOptions(bool debug, GlobalOptions::Optimizati
             return InternalError("Unsupported optimization level");
     }
 
-    options = PackageFormat::CreateCompilationOptions(builder, saveLevel, debug);
+    // Checked exceptions: what this package's capability lists are worth to a consumer. A list
+    // written at 'Off' was never verified -- the clauses are the author's word, like an assumption
+    // import -- and 'recordsCapabilities' separates a package this compiler wrote from one that
+    // predates capability metadata, whose absent lists must not read as empty ones.
+    auto chexcLevel = PackageFormat::ChexcLevel::ChexcLevel_Off;
+    if (opts.enableChexc) {
+        chexcLevel = opts.chexcSeverity == GlobalOptions::ChexcSeverity::CS_WARN
+            ? PackageFormat::ChexcLevel::ChexcLevel_Warn
+            : PackageFormat::ChexcLevel::ChexcLevel_Error;
+    }
+    options = PackageFormat::CreateCompilationOptions(builder, saveLevel, debug, chexcLevel, opts.enableEH, true);
 }
 
 /**

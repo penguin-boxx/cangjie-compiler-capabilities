@@ -1325,6 +1325,8 @@ private:
     void ChkPerformsClauseTypes(ASTContext& ctx, AST::ThrowsClause& clause);
     /// Checked exceptions: validate the '@AssumeThrows' annotations of a package.
     void ChkAssumeThrowsAnnotations(ASTContext& ctx, AST::Package& pkg);
+    /// Checked exceptions: validate what the imported packages' capability metadata allows.
+    void ChkImportedCapabilityMetadata(AST::Package& pkg);
     /**
      * Checked exceptions: validate the 'captures' clause of a class or struct declaration
      * -- elaborate and validate its entries like 'throws' entries and ban

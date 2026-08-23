@@ -318,6 +318,47 @@ void TypeChecker::TypeCheckerImpl::ChkCapturesClauseOfDecl(ASTContext& ctx, Inhe
     }
 }
 
+void TypeChecker::TypeCheckerImpl::ChkImportedCapabilityMetadata(Package& pkg)
+{
+    bool checkExceptions = ci->invocation.globalOptions.enableChexc;
+    if (!checkExceptions && !ci->invocation.globalOptions.enableEH) {
+        return;
+    }
+    for (auto& file : pkg.files) {
+        CJC_NULLPTR_CHECK(file);
+        for (auto& import : file->imports) {
+            if (!import || import->IsImportMulti()) {
+                continue; // Desugared into single imports, which carry copies of the annotations.
+            }
+            bool assumes = std::any_of(import->annotations.begin(), import->annotations.end(),
+                [](auto& anno) { return anno && anno->assumeThrows; });
+            for (auto& name : import->content.GetPossiblePackageNames()) {
+                auto info = importManager.GetPackageCapabilityInfo(name);
+                if (!info.recordsCapabilities) {
+                    // Effects: a package built with handlers but no capability metadata has
+                    // 'performs' lists that were never written, and an empty list would read as
+                    // "performs nothing". Exception lists are safe to read that way -- an
+                    // unchecked package simply requires nothing of its callers.
+                    if (info.effectsEnabled) {
+                        diag.DiagnoseRefactor(
+                            DiagKindRefactor::sema_chexc_import_without_capability_metadata, *import, name);
+                    }
+                    continue;
+                }
+                // An assumption stands in for lists the dependency does not have. Where it has
+                // verified ones, the two are contradictory: the assumption would override what the
+                // compiler proved, in whichever direction the author guessed wrong. Only 'error'
+                // counts as verified -- a package built at 'warn' is mid-migration, its lists are
+                // knowingly incomplete, and that is exactly when an assumption is still the tool
+                // for the job.
+                if (assumes && checkExceptions && info.level == PackageCapabilityInfo::Level::ERROR) {
+                    diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_assume_on_checked_package, *import, name);
+                }
+            }
+        }
+    }
+}
+
 void TypeChecker::TypeCheckerImpl::ChkAssumeThrowsAnnotations(ASTContext& ctx, Package& pkg)
 {
     if (!ci->invocation.globalOptions.enableChexc) {
@@ -2276,6 +2317,7 @@ void TypeChecker::TypeCheckerImpl::PostTypeCheck(std::vector<Ptr<ASTContext>>& c
     for (auto& ctx : contexts) {
         CheckOverflow(*ctx->curPackage);
         ChkAssumeThrowsAnnotations(*ctx, *ctx->curPackage);
+        ChkImportedCapabilityMetadata(*ctx->curPackage);
         CheckUnusedImportSpec(*ctx->curPackage);
         // Check duplicated super interfaces in class, interface when type arguments applied.
         CheckInstDupSuperInterfacesEntry(*ctx->curPackage);
