@@ -60,6 +60,7 @@ CompilerInstance::CompilerInstance(CompilerInvocation& invocation, DiagnosticEng
 {
     // allocate managers in safe order
     typeManager = new TypeManager();
+    typeManager->SetCapTysInert(!invocation.globalOptions.enableChexc && !invocation.globalOptions.enableEH);
     importManager = new ImportManager(diag, *typeManager, invocation.globalOptions);
     packageManager = new PackageManager(*importManager);
     testManager = new TestManager(*importManager, *typeManager, diag, invocation.globalOptions);

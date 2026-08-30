@@ -475,6 +475,52 @@ bool IsCommandTy(TypeManager& typeManager, const ImportManager& importManager, P
     return false;
 }
 
+namespace {
+/// Collect the generic parameters @p ty reaches, following 'FuncTy::capTys' as well as 'typeArgs'.
+/// Mirrors 'CollectUsedTyVarsInto' of the substitution filter; kept separate because that one is
+/// candidate-filtered and lives in the substitution utilities.
+void CollectTyVarsThroughCaps(Ptr<Ty> ty, std::set<Ptr<GenericsTy>>& found)
+{
+    if (!ty || !ty->HasGeneric()) {
+        return;
+    }
+    if (ty->IsGeneric()) {
+        (void)found.emplace(RawStaticCast<GenericsTy*>(ty.get()));
+        return;
+    }
+    for (auto arg : ty->typeArgs) {
+        CollectTyVarsThroughCaps(arg, found);
+    }
+    if (auto funcTy = DynamicCast<FuncTy*>(ty)) {
+        for (auto cap : funcTy->capTys) {
+            CollectTyVarsThroughCaps(cap, found);
+        }
+    }
+}
+} // namespace
+
+std::set<Ptr<GenericsTy>> CollectClauseOnlyTyVars(Ptr<Ty> declTy)
+{
+    if (!Ty::IsTyCorrect(declTy) || !declTy->HasGeneric()) {
+        return {};
+    }
+    std::set<Ptr<GenericsTy>> throughCaps;
+    CollectTyVarsThroughCaps(declTy, throughCaps);
+    if (throughCaps.empty()) {
+        return {};
+    }
+    // The same candidate-filtered walk inference itself uses, over exactly the parameters the
+    // capability-aware walk found: what it misses is what only a clause mentions.
+    auto visibleToInference = declTy->GetGenericTyArgs(throughCaps);
+    std::set<Ptr<GenericsTy>> clauseOnly;
+    for (auto tyVar : throughCaps) {
+        if (visibleToInference.count(tyVar) == 0) {
+            (void)clauseOnly.emplace(tyVar);
+        }
+    }
+    return clauseOnly;
+}
+
 bool IsUncheckedExceptionTy(TypeManager& typeManager, const ImportManager& importManager, Ptr<Ty> ty)
 {
     // Checked exceptions: an exception type is unchecked iff it is a subtype of

@@ -506,6 +506,67 @@ private:
         return funcTy ? funcTy->capTys : SupplyScope{};
     }
 
+    /**
+     * Checked exceptions ("Capability scopes" rule 1): try-with-resources closes its resources
+     * implicitly, and that closing is inside the try's own scope -- the desugaring puts it in a
+     * 'finally' INNER to the user's catch clauses, so the same clauses catch it (probed
+     * 2026-08-30). The capability pass runs before desugar, so the implicit calls do not exist as
+     * AST nodes yet and nothing would be demanded for them at all. The requirement is synthesized
+     * here instead, against the try's scope, exactly as an explicit 'r.close()' in the body would
+     * be. Inert while 'Resource.close()' is clause-free, which is why it must land BEFORE the
+     * standard library gives it one.
+     */
+    Ptr<FuncDecl> FindCloseMember(Ptr<Ty> resourceTy) const
+    {
+        if (!Ty::IsTyCorrect(resourceTy)) {
+            return nullptr;
+        }
+        std::vector<Ptr<Ty>> chain{resourceTy};
+        for (auto superTy : typeManager.GetAllSuperTys(*resourceTy)) {
+            chain.emplace_back(superTy);
+        }
+        for (auto ty : chain) {
+            auto decl = Ty::GetDeclOfTy<InheritableDecl>(ty);
+            if (!decl) {
+                continue;
+            }
+            for (auto member : decl->GetMemberDeclPtrs()) {
+                auto fd = DynamicCast<FuncDecl*>(member);
+                if (!fd || fd->identifier != "close" || !fd->funcBody || fd->funcBody->paramLists.empty()) {
+                    continue;
+                }
+                if (fd->funcBody->paramLists[0]->params.empty()) {
+                    return fd; // the 'Resource' protocol's own shape: no parameters
+                }
+            }
+        }
+        return nullptr;
+    }
+
+    void DemandResourceClose(const VarDecl& resource)
+    {
+        auto resourceTy = resource.GetTy();
+        auto closeFd = FindCloseMember(resourceTy);
+        if (!closeFd) {
+            return;
+        }
+        // The declared list, instantiated through the resource's own type (a generic resource
+        // closes at its instantiation), plus the list inference gave 'close' in this package.
+        auto caps = TypeCheckUtil::GetInstantiatedAccessorCapTys(typeManager, *closeFd, resourceTy);
+        if (auto it = inferred.find(Ptr<FuncDecl>(closeFd)); it != inferred.end()) {
+            for (auto cap : it->second) {
+                if (Ty::IsTyCorrect(cap) && !Utils::In(cap, caps)) {
+                    caps.emplace_back(cap);
+                }
+            }
+        }
+        for (auto cap : typeManager.NormalizeCapTys(caps)) {
+            if (Ty::IsTyCorrect(cap)) {
+                Demand(cap, resource, "the implicit 'close()' of this resource");
+            }
+        }
+    }
+
     void HandleTry(TryExpr& te)
     {
         // A 'handle' clause supplies a handler capability for each command type it lists
@@ -519,8 +580,11 @@ private:
         supplies.emplace_back(std::move(caps));
         for (auto& resource : te.resourceSpec) {
             // Resource initializers of try-with-resources are inside the try's scope: their
-            // exceptions are caught by the same clauses.
+            // exceptions are caught by the same clauses. So is the implicit closing.
             WalkScoped(resource.get());
+            if (resource) {
+                DemandResourceClose(*resource);
+            }
         }
         // With 'handle' clauses present the parser rebuilds the try block as a lambda, and THAT
         // copy is the one sema types; the original block keeps untyped nodes, so walking it would

@@ -227,6 +227,20 @@ bool IsCapturingTy(Ptr<AST::Ty> ty);
  * kinds of entry in one capability list apart. False when the effect package is absent.
  */
 bool IsCommandTy(TypeManager& typeManager, const ImportManager& importManager, Ptr<AST::Ty> ty);
+
+/**
+ * Checked exceptions ("Generics"): the type parameters of @p declTy that occur ONLY inside
+ * capability lists. Type-argument inference deliberately ignores those lists, so such a parameter
+ * is never constrained by the argument that mentions it; the language would still solve it at its
+ * bound like any other unconstrained bounded parameter, which silently picks a list the author
+ * never wrote. The text requires the call to be rejected instead, so the caller must have written
+ * the argument explicitly.
+ *
+ * "Only" is the difference of two walks: the capability-aware one (typeArgs plus 'FuncTy::capTys',
+ * the shape the substitution filter uses) minus the erased one ('Ty::GetGenericTyArgs', typeArgs
+ * alone, which is exactly what inference sees).
+ */
+std::set<Ptr<AST::GenericsTy>> CollectClauseOnlyTyVars(Ptr<AST::Ty> declTy);
 /**
  * Checked exceptions: whether @p ty is an unchecked exception type, i.e. a subtype of the core
  * 'UncheckedException' class. Tolerant of the class's absence (bootstrapping

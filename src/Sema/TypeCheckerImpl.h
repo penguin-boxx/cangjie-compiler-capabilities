@@ -1327,6 +1327,8 @@ private:
     void ChkAssumeThrowsAnnotations(ASTContext& ctx, AST::Package& pkg);
     /// Checked exceptions: validate what the imported packages' capability metadata allows.
     void ChkImportedCapabilityMetadata(AST::Package& pkg);
+    /// Checked exceptions: reject a call that leaves a clause-only type parameter to inference.
+    void ChkClauseOnlyTypeArguments(const AST::CallExpr& ce, const AST::FuncDecl& func) const;
     /**
      * Checked exceptions: validate the 'captures' clause of a class or struct declaration
      * -- elaborate and validate its entries like 'throws' entries and ban

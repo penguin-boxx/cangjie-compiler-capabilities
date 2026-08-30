@@ -444,6 +444,14 @@ ERROR(sema_chexc_performs_type_not_command, "type '%s' in 'performs' clause is n
 ERROR(sema_chexc_performs_in_main, "'main' cannot declare a 'performs' clause",
     "there is no default effect handler, unlike the default exception handler")
 
+ERROR(sema_chexc_clause_only_type_argument,
+    "type parameter %s of '%s' occurs only in capability lists, which take no part in "
+    "type-argument inference",
+    "write the type argument explicitly")
+ERROR(sema_chexc_clause_only_type_arguments,
+    "type parameters %s of '%s' occur only in capability lists, which take no part in "
+    "type-argument inference",
+    "write the type arguments explicitly")
 ERROR(sema_chexc_missing_capabilities,
     "Cannot find capabilities for %s (of types %s) in the current scope",
     "%s")

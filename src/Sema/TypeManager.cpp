@@ -155,6 +155,13 @@ Ptr<TupleTy> TypeManager::GetTupleTy(const std::vector<Ptr<Ty>>& typeArgs, bool 
 Ptr<FuncTy> TypeManager::GetFunctionTy(
     const std::vector<Ptr<Ty>>& paramTys, Ptr<Ty> retTy, FuncTy::Config cfg, const std::vector<Ptr<Ty>>& capTys)
 {
+    // With both capability features off the clause is documentation: it shapes no type, so
+    // '() throws E -> R' IS '() -> R' -- one identity, assignable in every position, absent from
+    // the '.cjo'. Dropped here, at the one funnel every FuncTy passes through (declaration types,
+    // functional type nodes, loaded imports, joins), rather than at each elaboration site.
+    if (capTysInert && !capTys.empty()) {
+        return GetTypeTy<FuncTy>(paramTys, retTy, cfg, std::vector<Ptr<Ty>>{});
+    }
     return GetTypeTy<FuncTy>(paramTys, retTy, cfg, capTys);
 }
 

@@ -113,6 +113,17 @@ public:
     {
         uncheckedExceptionTy = ty;
     }
+    /**
+     * Checked exceptions: when BOTH capability features are off, clauses "impose no obligations
+     * and are not recorded" (author ruling on Q10: an unchecked package ignores 'throws' in every
+     * position, subtyping included). Dropping the list at the one construction funnel makes every
+     * consumer follow -- identity, subtyping, overloading, joins, the '.cjo'. With only the
+     * effect-handler feature on the lists are kept whole, commands being checked there.
+     */
+    void SetCapTysInert(bool inert)
+    {
+        capTysInert = inert;
+    }
 
     Ptr<AST::ArrayTy> GetArrayTy(Ptr<AST::Ty> elemTy, unsigned int dims);
     Ptr<AST::VArrayTy> GetVArrayTy(AST::Ty& elemTy, int64_t size);
@@ -421,6 +432,7 @@ private:
     /// RecordOverride) and consumed after capability parameter inference.
     std::unordered_map<Ptr<const AST::FuncDecl>, std::vector<Ptr<const AST::FuncDecl>>> overriddenDecls;
     Ptr<AST::Ty> uncheckedExceptionTy{nullptr};
+    bool capTysInert{false};
 
     friend class TyVarScope;
     friend class InstCtxScope;

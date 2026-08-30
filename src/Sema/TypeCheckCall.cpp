@@ -2803,6 +2803,50 @@ FunctionMatchingUnit* TypeChecker::TypeCheckerImpl::FindFuncWithMaxChildRetTy(
     return maxChildFmu;
 }
 
+void TypeChecker::TypeCheckerImpl::ChkClauseOnlyTypeArguments(const CallExpr& ce, const FuncDecl& func) const
+{
+    // Checked exceptions ("Generics"): a type parameter that occurs ONLY in capability lists is
+    // not constrained by the argument that mentions it -- inference ignores those lists on
+    // purpose, to stay out of row unification. The language would still solve such a parameter at
+    // its bound, like any bounded parameter nothing else constrains, which silently picks a list
+    // the author never wrote; the text requires the call to be rejected so the argument is
+    // written. Runs after the candidate is fixed, never during solving: perturbing the solver
+    // would change which overload wins.
+    if (!ci->invocation.globalOptions.enableChexc || !func.TestAttr(Attribute::GENERIC)) {
+        return;
+    }
+    auto clauseOnly = TypeCheckUtil::CollectClauseOnlyTyVars(func.GetTy());
+    if (clauseOnly.empty()) {
+        return;
+    }
+    // Only what the AUTHOR wrote discharges it: 'g<A, B>(0, f)' says what the lists are. The
+    // solved 'instTys' must not be consulted here -- they are exactly the silent choice this rule
+    // rejects (the solver fills them from the bound, since nothing else constrains the parameter).
+    if (!ce.baseFunc || !ce.baseFunc->GetTypeArgs().empty()) {
+        return;
+    }
+    // One diagnostic for the whole call: the diagnostic set deduplicates by position and
+    // severity, so a call with two such parameters would otherwise report only the first.
+    // Names come from the declarations, not from 'Ty::String()', which spells them 'Generics-T'.
+    std::vector<std::string> names;
+    for (auto tyVar : clauseOnly) {
+        if (tyVar && tyVar->decl) {
+            names.emplace_back("'" + tyVar->decl->identifier + "'");
+        }
+    }
+    if (names.empty()) {
+        return;
+    }
+    std::sort(names.begin(), names.end());
+    std::string nameList;
+    for (auto& name : names) {
+        nameList += (nameList.empty() ? "" : ", ") + name;
+    }
+    auto kind = names.size() == 1 ? DiagKindRefactor::sema_chexc_clause_only_type_argument
+                                  : DiagKindRefactor::sema_chexc_clause_only_type_arguments;
+    diag.DiagnoseRefactor(kind, *ce.baseFunc, nameList, func.identifier.Val());
+}
+
 bool TypeChecker::TypeCheckerImpl::PostCheckCallExpr(
     const ASTContext& ctx, CallExpr& ce, FuncDecl& func, const SubstPack& typeMapping)
 {
@@ -2826,6 +2870,7 @@ bool TypeChecker::TypeCheckerImpl::PostCheckCallExpr(
         }
     }
     ce.resolvedFunction = &func;
+    ChkClauseOnlyTypeArguments(ce, func);
     UpdateCallTargetsForLSP(ce, func);
     DynamicBindingThisType(*ce.baseFunc, func, typeMapping);
     if (!func.TestAttr(Attribute::FOREIGN) && !func.TestAttr(Attribute::C)) {
