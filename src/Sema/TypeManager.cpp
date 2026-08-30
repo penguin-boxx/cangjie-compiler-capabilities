@@ -953,6 +953,14 @@ bool TypeManager::IsCapTysSubsumed(const std::vector<Ptr<Ty>>& subCapTys, const 
         if (HasPlaceholder(subCap)) {
             return true; // nothing to check yet, and nothing to bind
         }
+        // An entry that instantiated to an unchecked exception type vanished from the semantic
+        // list ("Unchecked types in 'throws' lists"): 'safeThrow<ReqExc>' with an unchecked
+        // 'ReqExc' is assignable wherever the clause-free shape is. Written entries can never be
+        // unchecked -- they are rejected at declaration -- so this only ever fires post-substitution.
+        if (uncheckedExceptionTy && Ty::IsTyCorrect(subCap) && !subCap->IsGeneric() &&
+            IsSubtype(subCap, uncheckedExceptionTy)) {
+            return true;
+        }
         return std::any_of(superCapTys.begin(), superCapTys.end(),
             [this, subCap](Ptr<Ty> superCap) { return !HasPlaceholder(superCap) && IsSubtype(subCap, superCap); });
     });

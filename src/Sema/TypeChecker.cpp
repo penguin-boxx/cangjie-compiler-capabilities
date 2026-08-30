@@ -2349,6 +2349,15 @@ void TypeChecker::TypeCheckerImpl::PrepareTypeCheck(ASTContext& ctx, Package& pk
     // Reset search's cache.
     ctx.searcher->InvalidateCache();
 
+    // Checked exceptions: hand the type manager the unchecked-exception root, so coverage can
+    // treat an entry instantiated to an unchecked type as vanished (rule "Unchecked types in
+    // 'throws' lists"). Resolved by name here, where the import manager is at hand; absent while
+    // bootstrapping a core without the class, in which case every entry stays checked.
+    if (auto unchecked = importManager.GetCoreDecl<ClassDecl>(CLASS_UNCHECKED_EXCEPTION);
+        unchecked && Ty::IsTyCorrect(unchecked->GetTy())) {
+        typeManager.SetUncheckedExceptionTy(unchecked->GetTy());
+    }
+
     CheckPrimaryCtorBeforeMerge(pkg);
     // Merging common classes into specific if any
     mpImpl->PrepareTypeCheck4CJMP(pkg);

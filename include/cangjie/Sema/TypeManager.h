@@ -103,6 +103,16 @@ public:
      * the placeholder, and capability lists take no part in type-argument inference.
      */
     std::vector<Ptr<AST::Ty>> NormalizeCapTys(const std::vector<Ptr<AST::Ty>>& capTys);
+    /**
+     * Checked exceptions: remember std.core's 'UncheckedException' type once name resolution has
+     * it. An entry whose type is (or instantiates to) an unchecked exception type imposes nothing
+     * -- rule "Unchecked types in 'throws' lists" -- so coverage treats it as trivially satisfied.
+     * Null when std.core does not provide the class (bootstrapping); every entry is checked then.
+     */
+    void SetUncheckedExceptionTy(Ptr<AST::Ty> ty)
+    {
+        uncheckedExceptionTy = ty;
+    }
 
     Ptr<AST::ArrayTy> GetArrayTy(Ptr<AST::Ty> elemTy, unsigned int dims);
     Ptr<AST::VArrayTy> GetVArrayTy(AST::Ty& elemTy, int64_t size);
@@ -410,6 +420,7 @@ private:
     /// Checked exceptions: override/implementation pairs, filled during type check (see
     /// RecordOverride) and consumed after capability parameter inference.
     std::unordered_map<Ptr<const AST::FuncDecl>, std::vector<Ptr<const AST::FuncDecl>>> overriddenDecls;
+    Ptr<AST::Ty> uncheckedExceptionTy{nullptr};
 
     friend class TyVarScope;
     friend class InstCtxScope;

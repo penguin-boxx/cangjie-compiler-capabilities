@@ -473,15 +473,17 @@ private:
             }
             case ASTKind::MEMBER_ACCESS: {
                 // A function-typed field or property of an assumed package, or one of its methods
-                // taken as a value.
+                // taken as a value -- and a method with an inferred list taken as a value.
                 auto& ma = StaticCast<MemberAccess&>(*node);
                 ImposeAssumedOnValue(ma, ma.target);
+                DemandInferredOnValue(ma, ma.target);
                 return VisitAction::WALK_CHILDREN;
             }
             case ASTKind::REF_EXPR: {
-                // The same for an unqualified reference to one of its declarations.
+                // The same for an unqualified reference.
                 auto& re = StaticCast<RefExpr&>(*node);
                 ImposeAssumedOnValue(re, re.ref.target);
+                DemandInferredOnValue(re, re.ref.target);
                 return VisitAction::WALK_CHILDREN;
             }
             default:
@@ -679,7 +681,10 @@ private:
             }
         }
         AddAssumedDemands(ce, demands);
-        for (auto cap : demands) {
+        // The semantic form is what a scope offers AND what a callee requires: an entry covered by
+        // a more general entry of the same list is not part of the list, so it is not demanded --
+        // 'throws Base, Derived' is the list {Base}, and a missing handler reports Base alone.
+        for (auto cap : typeManager.NormalizeCapTys(demands)) {
             if (Ty::IsTyCorrect(cap)) {
                 Demand(cap, ce, DescribeCallee(ce));
             }
@@ -734,6 +739,39 @@ private:
         static const std::vector<Ptr<Ty>> none;
         auto entry = assumed.find(decl.fullPackageName);
         return entry == assumed.end() ? none : entry->second;
+    }
+
+    /**
+     * A reference that turns an INFERRED declaration into a value: the declaration's effective
+     * list exists only in the side map and the completed declaration type -- the reference
+     * expression was typed before inference ran and its functional type never carries the list,
+     * so a call through the value would demand nothing at all (a program with no handler anywhere
+     * compiled and leaked; review finding of 2026-08-30). The obligation is demanded here, where
+     * the value is formed. Stricter than the text, which puts the list on the type and pays at
+     * the eventual call -- the same boundary reading as assumption imports (artifact C15).
+     * Declared clauses are untouched: a reference's type carries those, and the call through the
+     * value pays them.
+     */
+    void DemandInferredOnValue(const Expr& expr, Ptr<const Decl> target)
+    {
+        // A callee is not a value taken out of the declaration: the call path unions the
+        // inferred list itself, and demanding here too would report the same obligation twice.
+        if (!target || calleeExprs.count(&expr) > 0) {
+            return;
+        }
+        auto func = DynamicCast<const FuncDecl*>(target.get());
+        if (!func) {
+            return;
+        }
+        auto it = inferred.find(Ptr<FuncDecl>(const_cast<FuncDecl*>(func)));
+        if (it == inferred.end()) {
+            return;
+        }
+        for (auto cap : it->second) {
+            if (Ty::IsTyCorrect(cap)) {
+                Demand(cap, expr, "this reference to '" + target->identifier.Val() + "', whose list is inferred");
+            }
+        }
     }
 
     void ImposeAssumedOnValue(Expr& expr, Ptr<const Decl> target)
@@ -1051,6 +1089,22 @@ private:
                         // they are exactly where polymorphic recursion shows up, so record the
                         // call for the post-SCC check below.
                         genericCalls[i].emplace_back(Ptr<const CallExpr>(ce), found->second);
+                    }
+                    return VisitAction::WALK_CHILDREN;
+                }
+                // References are edges too ("its edges are calls and also references"): a value
+                // formed from an eligible declaration pays that declaration's inferred list at the
+                // formation site, so the list must be solved no later than its referrers'.
+                Ptr<Decl> target = nullptr;
+                if (auto re = DynamicCast<RefExpr*>(node.get())) {
+                    target = re->ref.target;
+                } else if (auto ma = DynamicCast<MemberAccess*>(node.get())) {
+                    target = ma->target;
+                }
+                if (target) {
+                    auto found = index.find(target);
+                    if (found != index.end() && found->second != i) {
+                        callees[i].emplace(found->second);
                     }
                 }
                 return VisitAction::WALK_CHILDREN;
