@@ -985,7 +985,9 @@ private:
     TypeManager& typeManager;
     const ImportManager& importManager;
     Sema::CapabilityMissHandler& missHandler;
-    /// Assumption imports of the package being checked, indexed by the file they appear in.
+    /// Assumption imports of the package being checked, indexed by the package they name. The
+    /// annotation is package-scoped -- "the annotation applies to every call into the dependency
+    /// from the whole consuming package" -- so the file that wrote the import does not narrow it.
     const AssumedThrows& assumed;
     std::vector<SupplyScope> supplies;
     RootSupply rootSupply;
