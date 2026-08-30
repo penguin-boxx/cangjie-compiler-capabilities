@@ -18,16 +18,21 @@
  *   'finally' blocks stay outside; a function literal's body is covered by the capability list
  * of the literal's own functional type (inferred from the expected type).
  *   'spawn' bodies start with an EMPTY stack (author ruling): enclosing capabilities are
- *   unreachable inside them. Effect-handler clauses ('handle') are ignored entirely.
- * - Demands: 'throw e' demands the static type of 'e'; a call demands every entry of the
- *   resolved callee's (or called function value's) instantiated functional type. A default
- *   parameter value is checked against the callable's own scope; an instance field initializer
- *   must be satisfiable in EVERY constructor's scope; static and top-level initializers have
- *   no capability scope.
+ *   unreachable inside them. A 'handle' clause supplies a handler capability for each command
+ *   type it lists, over the region its 'try' covers.
+ * - Demands: 'throw e' and 'resume r throwing e' demand the static type of 'e'; 'perform c'
+ *   demands the command's type; a call demands every entry of the resolved callee's (or called
+ *   function value's) instantiated functional type, and a try-with-resources demands what each
+ *   resource's implicit 'close()' requires. A reference that turns an inferred declaration into a
+ *   value demands that declaration's list where the value is formed. A default parameter value is
+ *   checked against the callable's own scope; an instance field initializer must be satisfiable in
+ *   EVERY constructor's scope; static and top-level initializers have no capability scope.
  * - Resolution: a demand is satisfied iff some active supply S exists with demanded <: S,
  * searched from the innermost scope outwards, first match.
  *
- * The pass never mutates types; unsatisfied demands go to a CapabilityMissHandler — the seam
+ * The pass mutates no type except through 'CompleteInferredCapabilityTypes', which writes the
+ * inferred lists into the declarations they belong to between the two phases; unsatisfied demands
+ * go to a CapabilityMissHandler — the seam
  * where capability-parameter inference will later collect residual demands.
  */
 
