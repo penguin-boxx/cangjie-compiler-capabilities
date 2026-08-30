@@ -417,7 +417,9 @@ std::vector<Ptr<Ty>> GetInstantiatedAccessorCapTys(TypeManager& tyMgr, const Fun
             cap = inst;
         }
     }
-    return caps;
+    // Instantiation may have made an entry unchecked or covered by a sibling; the caller demands
+    // the semantic form, as every consumer of a list does.
+    return tyMgr.NormalizeCapTys(caps);
 }
 
 std::vector<Ptr<Ty>> GetDeclCapturesCapTys(const Decl& decl)

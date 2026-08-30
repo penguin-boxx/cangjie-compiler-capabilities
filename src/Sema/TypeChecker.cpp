@@ -501,7 +501,7 @@ bool TypeChecker::TypeCheckerImpl::CheckNormalFuncBody(ASTContext& ctx, FuncBody
     }
     CheckFuncParamList(ctx, *fb.paramLists[0]);
     paramTys = GetFuncBodyParamTys(fb);
-    auto capTys = GetFuncBodyCapTys(fb);
+    auto capTys = typeManager.NormalizeCapTys(GetFuncBodyCapTys(fb));
 
     bool isCFFIBackend = IsUnsafeBackend(backendType);
     bool isCFunc =
@@ -728,7 +728,7 @@ void TypeChecker::TypeCheckerImpl::CheckCtorFuncBody(ASTContext& ctx, FuncBody& 
     }
     CheckFuncParamList(ctx, *fb.paramLists[0].get());
     auto paramTys = GetFuncBodyParamTys(fb);
-    fb.SetTy(typeManager.GetFunctionTy(paramTys, ctorTy, {}, GetFuncBodyCapTys(fb)));
+    fb.SetTy(typeManager.GetFunctionTy(paramTys, ctorTy, {}, typeManager.NormalizeCapTys(GetFuncBodyCapTys(fb))));
     fb.funcDecl->SetTy(fb.GetTy());
     fb.retType->SetTy(ctorTy);
     Synthesize({ctx, SynPos::UNUSED}, fb.body.get());

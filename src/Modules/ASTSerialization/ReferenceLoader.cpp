@@ -377,8 +377,11 @@ void ASTLoader::ASTLoaderImpl::SetTypeTy(FormattedIndex type, const PackageForma
                 capTys.emplace_back(LoadType(saved->Get(i)));
             }
         }
-        ty = typeManager.GetFunctionTy(
-            LoadTypeArgs(typeObj), LoadType(info->retType()), {info->isC(), false, info->hasVariableLenArg()}, capTys);
+        // Checked exceptions: the writer already stores the semantic form, but a '.cjo' from an
+        // older compiler may hold a raw list -- canonicalize on the way in so a loaded type has
+        // the same identity as the one the producing package had.
+        ty = typeManager.GetFunctionTy(LoadTypeArgs(typeObj), LoadType(info->retType()),
+            {info->isC(), false, info->hasVariableLenArg()}, typeManager.NormalizeCapTys(capTys));
     } else {
         auto info = typeObj.info_as_CompositeTyInfo();
         CJC_NULLPTR_CHECK(info);

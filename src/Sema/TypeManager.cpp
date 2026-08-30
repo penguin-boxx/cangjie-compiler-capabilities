@@ -333,6 +333,11 @@ Ptr<Ty> TypeManager::TyInstantiator::Instantiate(Ty& ty)
             for (auto& it : funcTy.capTys) {
                 capTys.push_back(Instantiate(it));
             }
+            // Checked exceptions (semantic form): substitution is where an entry becomes covered
+            // by a sibling, or becomes unchecked -- 'throws E' with 'E := IllegalStateException'
+            // IS the clause-free type. Canonicalize here so the instantiated type has one
+            // identity, rather than leaving the raw spelling to be compared by coverage forever.
+            capTys = tyMgr.NormalizeCapTys(capTys);
             Ptr<Ty> ret = tyMgr.GetFunctionTy(
                 paramTys, retType, {funcTy.IsCFunc(), funcTy.isClosureTy, funcTy.hasVariableLenArg}, capTys);
             return ret;
@@ -928,7 +933,7 @@ bool HasPlaceholder(Ptr<const Ty> ty)
 
 std::vector<Ptr<Ty>> TypeManager::NormalizeCapTys(const std::vector<Ptr<Ty>>& capTys)
 {
-    if (capTys.size() < 2) {
+    if (capTys.empty()) {
         return capTys;
     }
     // While type arguments are still being solved, a placeholder entry must not be compared: the
@@ -941,6 +946,14 @@ std::vector<Ptr<Ty>> TypeManager::NormalizeCapTys(const std::vector<Ptr<Ty>>& ca
     for (auto cap : capTys) {
         if (!Ty::IsTyCorrect(cap)) {
             kept.emplace_back(cap); // an invalid entry is left alone; its error is reported already
+            continue;
+        }
+        // An entry whose type is unchecked is not part of the list ("Unchecked types in 'throws'
+        // lists"): a written one is rejected at the declaration, so this only ever fires after
+        // substitution instantiated a type parameter to an unchecked type -- and then the clause
+        // IS gone, which is what makes the instantiated type identical to the clause-free one.
+        // A type parameter is left alone: its instantiation decides, not its bound.
+        if (uncheckedExceptionTy && !cap->IsGeneric() && IsSubtype(cap, uncheckedExceptionTy)) {
             continue;
         }
         // Keep the maximal entries. An entry equal to one already kept -- mutual subtypes -- is

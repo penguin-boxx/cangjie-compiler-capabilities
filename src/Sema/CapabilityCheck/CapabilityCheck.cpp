@@ -724,6 +724,21 @@ private:
                 receiverTy = ma->baseExpr->GetTy();
             }
             demands = TypeCheckUtil::GetInstantiatedAccessorCapTys(typeManager, *ce.resolvedFunction, receiverTy);
+            // The receiver's mapping instantiates a member's own type parameters; the CALL's type
+            // arguments instantiate the callee's. Without them a generic callee's entry stays a
+            // bare type parameter here -- and since an entry that instantiates to an unchecked
+            // type vanishes, that difference is the difference between demanding nothing and
+            // demanding 'CanThrow<E>' for an 'E' the call site has already pinned.
+            auto calleeMapping = CalleeTypeMapping(ce);
+            if (!calleeMapping.empty()) {
+                for (auto& cap : demands) {
+                    auto inst = typeManager.GetInstantiatedTy(cap, calleeMapping);
+                    if (Ty::IsTyCorrect(inst)) {
+                        cap = inst;
+                    }
+                }
+            }
+            demands = typeManager.NormalizeCapTys(demands);
         }
         // A callee whose list was inferred carries it beside the AST: this call
         // site's type was formed during type check, before inference ran, so completing the
@@ -1493,6 +1508,9 @@ void CompleteInferredCapabilityTypes(TypeManager& typeManager, const InferredCap
                 completed.emplace_back(cap);
             }
         }
+        // The written-back list is a list like any other: it is the semantic form that becomes
+        // the declaration's type, so an inferred entry covered by a declared one leaves no trace.
+        completed = typeManager.NormalizeCapTys(completed);
         if (completed.size() == funcTy->capTys.size()) {
             continue;
         }

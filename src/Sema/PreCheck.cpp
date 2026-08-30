@@ -620,7 +620,10 @@ Ptr<Ty> TypeChecker::TypeCheckerImpl::GetTyFromASTType(ASTContext& ctx, FuncType
         auto expanded = TypeCheckUtil::ExpandCapabilityList(clause->capTypes);
         capTys.insert(capTys.end(), expanded.begin(), expanded.end());
     }
-    funcType.SetTy(typeManager.GetFunctionTy(paramTys, funcType.retType->GetTy(), {funcType.isC}, capTys));
+    // Checked exceptions: the elaborated list is canonicalized once, here, so the functional
+    // type has the semantic form's identity -- '(A, B)' with 'B <: A' IS '(A)'.
+    funcType.SetTy(typeManager.GetFunctionTy(
+        paramTys, funcType.retType->GetTy(), {funcType.isC}, typeManager.NormalizeCapTys(capTys)));
     return funcType.GetTy();
 }
 
@@ -1821,7 +1824,7 @@ void TypeChecker::TypeCheckerImpl::PreSetDeclType(const ASTContext& ctx)
             continue; // Do not replace valid ty.
         }
         auto paramTys = GetFuncBodyParamTys(*fd->funcBody);
-        auto capTys = GetFuncBodyCapTys(*fd->funcBody);
+        auto capTys = typeManager.NormalizeCapTys(GetFuncBodyCapTys(*fd->funcBody));
         Ptr<Ty> retTy = TypeManager::GetQuestTy();
         if (fd->TestAttr(Attribute::CONSTRUCTOR)) {
             // Static init has return type of unit. Instance init has return type of current typeDecl.
