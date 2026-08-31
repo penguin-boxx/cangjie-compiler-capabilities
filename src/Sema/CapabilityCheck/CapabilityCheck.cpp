@@ -281,13 +281,13 @@ private:
         }
     }
 
-    /// The escape hatch: 'std.core.unsafeAssumeHandled<E, R>' is a compiler intrinsic with a
+    /// The escape hatch: 'std.core.unsafeCanThrow<E, R>' is a compiler intrinsic with a
     /// library-visible signature. Inside it -- and nowhere else -- a capability for its own 'E' is
     /// fabricated, which is what lets it invoke a callback that requires one. No source operation
     /// fabricates capabilities; this is the one declaration that gets one for free.
     static bool IsEscapeHatch(const FuncDecl& fd)
     {
-        return fd.identifier == UNSAFE_ASSUME_HANDLED && fd.fullPackageName == CORE_PACKAGE_NAME;
+        return fd.identifier == UNSAFE_CAN_THROW && fd.fullPackageName == CORE_PACKAGE_NAME;
     }
 
     SupplyScope FabricatedCapabilities(const FuncDecl& fd) const
@@ -443,13 +443,14 @@ private:
                 HandleSpawn(StaticCast<SpawnExpr&>(*node));
                 return VisitAction::SKIP_CHILDREN;
             case ASTKind::RESUME_EXPR: {
-                // Effects: 'resume r throwing e' injects 'e' at the suspended 'perform' site, so it
-                // is a requirement site classified by the static type of 'e', exactly as 'throw e'
-                // is. It resolves in the handler body's enclosing scopes -- which is what the
-                // supply stack holds here, a 'handle' body being outside its own try's scope.
+                // Effects: 'resume r throwing e' injects 'e' at the suspended 'perform' site, so
+                // it is a requirement site classified by the static type of 'e', exactly as
+                // 'throw e' is -- but resolved where the injected exception SURFACES: inside the
+                // try's body, so the try's own catch clauses discharge it, and the scopes
+                // enclosing the 'try-handle' follow.
                 auto& re = StaticCast<ResumeExpr&>(*node);
                 if (re.throwingExpr && Ty::IsTyCorrect(re.throwingExpr->GetTy())) {
-                    Demand(re.throwingExpr->GetTy(), re, "this 'resume ... throwing' expression");
+                    DemandInjected(re.throwingExpr->GetTy(), re, "this 'resume ... throwing' expression");
                 }
                 return VisitAction::WALK_CHILDREN;
             }
@@ -609,6 +610,11 @@ private:
         for (auto& catchBlock : te.catchBlocks) {
             WalkScoped(catchBlock.get());
         }
+        // A handler body runs where the handler was installed -- outside the try's scope for an
+        // ordinary 'throw' -- but a 'resume ... throwing' inside it injects at the suspended
+        // 'perform', which is inside the try's body. The try's catch capabilities are therefore
+        // offered to resume sites alone.
+        resumeSupplies.emplace_back(CollectCatchCapTys(te));
         for (auto& handler : te.handlers) {
             if (handler.desugaredLambda) {
                 WalkScoped(handler.desugaredLambda.get());
@@ -616,6 +622,7 @@ private:
                 WalkScoped(handler.block.get());
             }
         }
+        resumeSupplies.pop_back();
         WalkScoped(te.finallyBlock.get());
     }
 
@@ -955,6 +962,22 @@ private:
         });
     }
 
+    /**
+     * Effects (rule 5 of "Effect requirements"): 'resume r throwing e' injects 'e' at the
+     * suspended 'perform' site, so it is resolved by the scopes that cover every possible perform
+     * site -- the 'try''s own catch clauses, and the scopes enclosing the 'try-handle'. The catch
+     * clauses come from the resume-only stack, which nothing else consults; everything beyond
+     * that is the ordinary resolution.
+     */
+    void DemandInjected(Ptr<Ty> exceptionTy, const Node& site, const std::string& requiredBy)
+    {
+        if (!resumeSupplies.empty() && Ty::IsTyCorrect(exceptionTy) &&
+            HasSuitableSupply(resumeSupplies.back(), exceptionTy)) {
+            return;
+        }
+        Demand(exceptionTy, site, requiredBy);
+    }
+
     void Demand(Ptr<Ty> exceptionTy, const Node& site, const std::string& requiredBy)
     {
         // Throwing an unchecked exception never requires a capability. Call-site
@@ -1005,6 +1028,12 @@ private:
     /// from the whole consuming package" -- so the file that wrote the import does not narrow it.
     const AssumedThrows& assumed;
     std::vector<SupplyScope> supplies;
+    /// Effects: the capabilities a 'resume ... throwing' may resolve against on top of the
+    /// ordinary stack -- the catch clauses of the very 'try' whose handler is running. Kept apart
+    /// from 'supplies' because an ordinary 'throw' in a handler body must NOT see them: the
+    /// handler runs where the handler was installed, while a resumed exception surfaces at the
+    /// suspended 'perform', inside the try's body.
+    std::vector<SupplyScope> resumeSupplies;
     RootSupply rootSupply;
     // Lists inferred for declarations without an authoritative clause.
     /// Callee expressions, which the call path already accounts for; see 'ImposeAssumedOnValue'.

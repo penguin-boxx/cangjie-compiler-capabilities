@@ -2335,9 +2335,8 @@ OwnedPtr<FuncBody> ParserImpl::ParseFuncBody(ScopeKind scopeKind)
             enableThis = false;
         }
     }
-    // Checked exceptions (experimental): a `throws` clause and generic constraints may appear
-    // in either order after the return type (the language rule). Effects add a
-    // 'performs' clause, which precedes 'throws'.
+    // The three blocks order freely after the return type: capability clauses, then 'where', then
+    // capability clauses again, so 'throws E where C performs H' and every other permutation parse.
     ParseCapabilityClauses(*ret);
     ParseFuncGenericConstraints(*ret);
     ParseCapabilityClauses(*ret);
@@ -2387,12 +2386,11 @@ void ParserImpl::ParseCapabilityClauses(FuncBody& fb)
     while (SeeingChexcClause("performs") || SeeingChexcClause("throws")) {
         bool isPerforms = SeeingChexcClause("performs");
         auto clausePos = lookahead.Begin();
-        // 'throws E performs H', or 'throws E where ... performs H' across the two calls: the
-        // fixed order is violated. Diagnosed at the offending clause, then parsed anyway so the
-        // semantic checks still see the declared requirements.
-        if (isPerforms && fb.throwsClause) {
-            ParseDiagnoseRefactor(DiagKindRefactor::parse_performs_clause_after_throws, clausePos);
-        }
+        // On a DECLARATION the 'where', 'performs' and 'throws' blocks order freely, each at most
+        // once (keyword scheme rule 9): they are keyword-led, and 'where' already sits anywhere,
+        // so a fixed order would buy nothing. Functional types are the opposite case -- there the
+        // pre-arrow clause sequence is one grammar production and 'performs' precedes 'throws',
+        // enforced where such a type is parsed.
         auto& slot = isPerforms ? fb.performsClause : fb.throwsClause;
         if (slot) {
             ParseDiagnoseRefactor(isPerforms ? DiagKindRefactor::parse_duplicate_performs_clause

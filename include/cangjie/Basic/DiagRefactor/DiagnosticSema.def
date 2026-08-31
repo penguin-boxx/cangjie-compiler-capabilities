@@ -492,7 +492,7 @@ ERROR(sema_chexc_subclass_captures_missing,
     "superclass does",
     "add it to the 'captures' clause, or a type that covers it")
 WARNING(sema_chexc_useless_escape_hatch, CHEXC,
-    "'unsafeAssumeHandled' assumes '%s', which is unchecked and never required a capability",
+    "'unsafeCanThrow' assumes '%s', which is unchecked and never required a capability",
     "the call has no effect on checking")
 
 ERROR(sema_chexc_capturing_needs_ctor,
