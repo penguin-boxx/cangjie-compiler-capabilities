@@ -956,10 +956,29 @@ std::vector<Ptr<Ty>> TypeManager::NormalizeCapTys(const std::vector<Ptr<Ty>>& ca
         if (uncheckedExceptionTy && !cap->IsGeneric() && IsSubtype(cap, uncheckedExceptionTy)) {
             continue;
         }
+        // A type parameter whose bounds are not attached yet must not be COMPARED here. Coverage
+        // for such an entry is decided by its bounds ("coverage is subtyping provable in the
+        // declaration's context, 'where'-bounds included"), and normalization runs at producer
+        // boundaries -- clause elaboration among them, which happens before the bounds are on the
+        // 'GenericsTy'. Asking anyway answers 'false' AND caches it: 'IsSubtype' keeps a cache
+        // that outlives the phase, so one early question would make 'E <: IOException' false for
+        // the rest of the compilation. Such an entry is simply kept; a later normalization, when
+        // the bounds are known, folds it.
+        auto genericWithoutBounds = [](Ptr<Ty> ty) {
+            auto gTy = DynamicCast<GenericsTy*>(ty);
+            return gTy && gTy->upperBounds.empty();
+        };
+        if (genericWithoutBounds(cap)) {
+            if (!Utils::In(cap, kept)) {
+                kept.emplace_back(cap);
+            }
+            continue;
+        }
         // Keep the maximal entries. An entry equal to one already kept -- mutual subtypes -- is
         // dropped by the same test, which is what deduplication needs.
-        bool covered = std::any_of(capTys.begin(), capTys.end(),
-            [this, cap](Ptr<Ty> other) { return Ty::IsTyCorrect(other) && other != cap && IsSubtype(cap, other); });
+        bool covered = std::any_of(capTys.begin(), capTys.end(), [this, cap, &genericWithoutBounds](Ptr<Ty> other) {
+            return Ty::IsTyCorrect(other) && other != cap && !genericWithoutBounds(other) && IsSubtype(cap, other);
+        });
         if (!covered && !Utils::In(cap, kept)) {
             kept.emplace_back(cap);
         }
