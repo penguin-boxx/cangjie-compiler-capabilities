@@ -296,10 +296,13 @@ private:
         if (!IsEscapeHatch(fd) || !fd.funcBody || !fd.funcBody->generic) {
             return caps;
         }
-        for (auto& param : fd.funcBody->generic->typeParameters) {
-            if (param && Ty::IsTyCorrect(param->GetTy())) {
-                (void)caps.emplace_back(param->GetTy());
-            }
+        // Only the FIRST parameter is the fabricated capability's type: the signature is
+        // 'unsafeCanThrow<E, R>', and 'R' is the callback's result. Fabricating for every
+        // parameter happened to be harmless with this shape and stops being so the moment the
+        // effect twin lands (review finding I43).
+        auto& params = fd.funcBody->generic->typeParameters;
+        if (!params.empty() && params.front() && Ty::IsTyCorrect(params.front()->GetTy())) {
+            (void)caps.emplace_back(params.front()->GetTy());
         }
         return caps;
     }
@@ -851,9 +854,17 @@ private:
         if (it == inferred.end()) {
             return;
         }
+        // The entries name the referenced declaration's own type parameters, and a reference may
+        // pin them: 'risky<Int64>' must demand 'GenExc<Int64>', not 'GenExc<T>' (review finding
+        // I35b). The reference's solved type arguments are the mapping.
+        TypeSubst mapping;
+        if (auto nre = DynamicCast<const NameReferenceExpr*>(&expr); nre && !nre->instTys.empty()) {
+            mapping = TypeCheckUtil::GenerateTypeMapping(*func, nre->instTys);
+        }
         for (auto cap : it->second) {
-            if (Ty::IsTyCorrect(cap)) {
-                Demand(cap, expr, "this reference to '" + target->identifier.Val() + "', whose list is inferred");
+            auto demanded = mapping.empty() ? cap : typeManager.GetInstantiatedTy(cap, mapping);
+            if (Ty::IsTyCorrect(demanded)) {
+                Demand(demanded, expr, "this reference to '" + target->identifier.Val() + "', whose list is inferred");
             }
         }
     }
@@ -960,13 +971,17 @@ private:
         // outside the Exception root too, and exempting them here silenced every effect demand
         // (caught by the performs negative tests). Type parameters keep demanding: a generic
         // entry only instantiates where its clause was legal.
-        if (exceptionTy->IsClass()) {
-            auto exception = importManager.GetCoreDecl<ClassDecl>(CLASS_EXCEPTION);
-            bool underException = exception && Ty::IsTyCorrect(exception->GetTy()) &&
-                typeManager.IsSubtype(exceptionTy, exception->GetTy());
-            if (!underException && !TypeCheckUtil::IsCommandTy(typeManager, importManager, exceptionTy)) {
-                return;
-            }
+        // Classification is by the provable relation to the two tracked roots, and it applies to
+        // every static type -- a type PARAMETER included, whose declared bounds are what makes the
+        // relation provable. 'throw e' with 'E <: Error' demands nothing, exactly as a concrete
+        // 'Error' subclass does; the earlier 'IsClass()' gate let such a parameter demand
+        // 'CanThrow<E>' for a type that can never be caught (review finding I32). A parameter
+        // bounded by 'Exception' still demands: 'IsSubtype' proves it through the bound.
+        auto exception = importManager.GetCoreDecl<ClassDecl>(CLASS_EXCEPTION);
+        bool underException =
+            exception && Ty::IsTyCorrect(exception->GetTy()) && typeManager.IsSubtype(exceptionTy, exception->GetTy());
+        if (!underException && !TypeCheckUtil::IsCommandTy(typeManager, importManager, exceptionTy)) {
+            return;
         }
         // Scopes are searched from the innermost enclosing one outwards; within one scope the
         // first suitable entry in textual order supplies the capability.
@@ -1068,24 +1083,7 @@ private:
     /// authoritative clause. A clause ending in `...` keeps inference on.
     static bool IsEligible(const FuncDecl& fd)
     {
-        if (!fd.funcBody || !fd.funcBody->body) {
-            return false;
-        }
-        if (Sema::IsExportedDecl(fd)) {
-            return false;
-        }
-        // No capability scope encloses a finalizer -- it may run after the supplying handlers are
-        // gone -- so it is not a declaration a list can be inferred for either: a checked throw
-        // inside one has nothing to discharge it and is reported at the throw.
-        if (fd.IsFinalizer()) {
-            return false;
-        }
-        // Interface members are contracts: their lists are written explicitly.
-        if (fd.outerDecl && fd.outerDecl->astKind == ASTKind::INTERFACE_DECL) {
-            return false;
-        }
-        auto& clause = fd.funcBody->throwsClause;
-        return !clause || clause->hasEllipsis;
+        return Sema::IsInferenceEligible(fd);
     }
 
     /// Local function declarations are ordinary inference-eligible declarations with lists of their
@@ -1378,6 +1376,31 @@ private:
 } // namespace
 
 namespace Cangjie::Sema {
+bool IsInferenceEligible(const FuncDecl& fd)
+{
+    if (!fd.funcBody || !fd.funcBody->body) {
+        return false;
+    }
+    if (IsExportedDecl(fd)) {
+        return false;
+    }
+    // No capability scope encloses a finalizer -- it may run after the supplying handlers are
+    // gone -- so it is not a declaration a list can be inferred for either: a checked throw
+    // inside one has nothing to discharge it and is reported at the throw.
+    if (fd.IsFinalizer()) {
+        return false;
+    }
+    // Interface members are contracts: their lists are written explicitly.
+    if (fd.outerDecl && fd.outerDecl->astKind == ASTKind::INTERFACE_DECL) {
+        return false;
+    }
+    // A clause ending in '...' re-opens inference, so such a declaration is eligible too -- the
+    // distinction the incremental frontend's private copy of this predicate used to miss, which
+    // let a body edit leave callers on a stale contract again (review finding I45).
+    auto& clause = fd.funcBody->throwsClause;
+    return !clause || clause->hasEllipsis;
+}
+
 bool IsExportedDecl(const Decl& decl)
 {
     // Effective visibility: the narrowest of the declaration's own modifier and those of its
@@ -1437,7 +1460,7 @@ void ReportCapabilityMissHandler::Finish()
         }
         std::string names;
         std::string types;
-        const std::string capability = first.isEffect ? "Handler<" : "CanThrow<";
+        const std::string capability = first.isEffect ? "CanPerform<" : "CanThrow<";
         for (auto demand : demands) {
             auto tyName = Ty::ToString(demand->exceptionTy);
             names += (names.empty() ? "" : ", ") + ("'" + tyName + "'");
@@ -1518,7 +1541,12 @@ void CompleteInferredCapabilityTypes(TypeManager& typeManager, const InferredCap
         // The written-back list is a list like any other: it is the semantic form that becomes
         // the declaration's type, so an inferred entry covered by a declared one leaves no trace.
         completed = typeManager.NormalizeCapTys(completed);
-        if (completed.size() == funcTy->capTys.size()) {
+        // Compare CONTENT, not cardinality: 'throws Derived, ...' whose inference yields 'Base'
+        // normalizes to {Base} -- one entry, as before, and a different list. Comparing sizes left
+        // the declaration on its stale type (review finding I35a).
+        if (completed.size() == funcTy->capTys.size() &&
+            std::all_of(
+                completed.begin(), completed.end(), [funcTy](Ptr<Ty> cap) { return Utils::In(cap, funcTy->capTys); })) {
             continue;
         }
         auto completedTy = typeManager.GetFunctionTy(funcTy->paramTys, funcTy->retTy,

@@ -17,9 +17,11 @@
 #include "cangjie/Basic/StringConvertor.h"
 #include "cangjie/Basic/Version.h"
 #include "cangjie/Driver/TempFileManager.h"
+#include "cangjie/IncrementalCompilation/IncrementalCompilationLogger.h"
 #include "cangjie/Modules/ImportManager.h"
 #include "cangjie/Modules/PackageManager.h"
 #include "cangjie/Parse/ASTHasher.h"
+#include "cangjie/Sema/CapabilityCheck.h"
 #include "cangjie/Sema/IncrementalUtils.h"
 #include "cangjie/Utils/ConstantsUtils.h"
 #include "cangjie/Utils/FileUtil.h"
@@ -29,8 +31,6 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Support/SourceMgr.h"
-#include "cangjie/IncrementalCompilation/IncrementalCompilationLogger.h"
-
 
 #if (defined RELEASE)
 #include "cangjie/Utils/Signal.h"
@@ -46,31 +46,16 @@ IncrementalCompilerInstance::~IncrementalCompilerInstance()
 namespace {
 /**
  * Checked exceptions: whether any declaration scheduled for recompilation takes its capability
- * list from its own body -- no explicit 'throws' clause, and not exported ("Which declarations are
- * inferred": effective visibility, the narrowest of its own modifier and its enclosing ones). For
- * such a declaration a body edit is a signature change, which the incremental hashes cannot see.
+ * list from its own body. For such a declaration a body edit is a signature change, which the
+ * incremental hashes cannot see -- they are computed before the inference that derives the list.
+ * The predicate itself lives in the capability pass, so both askers get the same answer.
  */
-bool IsInferenceEligible(const Decl& decl)
-{
-    auto fd = DynamicCast<const FuncDecl*>(&decl);
-    if (!fd || !fd->funcBody || !fd->funcBody->body || fd->funcBody->throwsClause) {
-        return false;
-    }
-    for (auto current = Ptr<const Decl>(&decl); current; current = current->outerDecl) {
-        if (current->outerDecl && current->outerDecl->astKind == ASTKind::INTERFACE_DECL) {
-            continue; // an interface member is a public contract, written modifier or not
-        }
-        if (!current->TestAttr(Attribute::PUBLIC) && !current->TestAttr(Attribute::PROTECTED)) {
-            return true; // does not leave the module: its list is inferred
-        }
-    }
-    return false;
-}
-
 bool HasRecompiledInferredDecl(const IncreResult& res)
 {
-    return std::any_of(res.declsToRecompile.begin(), res.declsToRecompile.end(),
-        [](Ptr<Decl> decl) { return decl && IsInferenceEligible(*decl); });
+    return std::any_of(res.declsToRecompile.begin(), res.declsToRecompile.end(), [](Ptr<Decl> decl) {
+        auto fd = DynamicCast<const FuncDecl*>(decl.get());
+        return fd && Sema::IsInferenceEligible(*fd);
+    });
 }
 } // namespace
 

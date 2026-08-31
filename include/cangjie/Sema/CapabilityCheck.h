@@ -102,6 +102,14 @@ private:
  * its enclosing declarations -- plus interface membership, an interface member being a public
  * contract whether or not the modifier is written.
  */
+/**
+ * Checked exceptions: whether @p fd takes its capability list from its own body -- it has a body,
+ * does not leave the module by effective visibility, is not a finalizer or an interface member,
+ * and either carries no 'throws' clause or one ending in '...'. The single definition: the
+ * incremental frontend asks the same question and must get the same answer, or a body edit can
+ * leave callers checked against a stale contract.
+ */
+bool IsInferenceEligible(const AST::FuncDecl& fd);
 bool IsExportedDecl(const AST::Decl& decl);
 
 /**
