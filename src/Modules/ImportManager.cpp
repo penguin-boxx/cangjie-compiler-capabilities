@@ -312,7 +312,7 @@ void ImportManager::ExportAST(bool saveFileWithAbsPath, std::vector<uint8_t>& as
         writer.PreSaveFullExportDecls(*packageDecl->srcPackage);
     }
     realWriter->ExportAST(*packageDecl);
-    realWriter->SaveOptions(opts.enableCompileDebug, opts.optimizationLevel);
+    realWriter->SaveOptions(opts);
 
     additionalSerializations(*realWriter);
 
@@ -332,7 +332,7 @@ std::vector<uint8_t> ImportManager::ExportASTSignature(const Package& pkg)
     CJC_NULLPTR_CHECK(packageDecl);
     writer.PreSaveFullExportDecls(*packageDecl->srcPackage);
     writer.ExportAST(*packageDecl);
-    writer.SaveOptions(opts.enableCompileDebug, opts.optimizationLevel);
+    writer.SaveOptions(opts);
 
     std::vector<uint8_t> astData;
     writer.AST2FB(astData, *packageDecl);
@@ -355,7 +355,7 @@ void ImportManager::ExportDeclsWithContent(bool saveFileWithAbsPath, Package& pa
         writer->SetSerializingCommon();
     }
     writer->PreSaveFullExportDecls(package);
-    writer->SaveOptions(opts.enableCompileDebug, opts.optimizationLevel);
+    writer->SaveOptions(opts);
     if (auto [it, success] = astWriters.emplace(&package, writer); !success) {
         delete it->second;
         astWriters[&package] = writer;
@@ -1079,6 +1079,11 @@ const std::vector<uint8_t>* ImportManager::GetBchirCache(const std::string& full
 Ptr<PackageDecl> ImportManager::GetPackageDecl(const std::string& fullPackageName) const
 {
     return cjoManager->GetPackageDecl(fullPackageName);
+}
+
+PackageCapabilityInfo ImportManager::GetPackageCapabilityInfo(const std::string& fullPackageName) const
+{
+    return cjoManager->GetPackageCapabilityInfo(fullPackageName);
 }
 
 Ptr<Package> ImportManager::GetPackage(const std::string& fullPackageName) const

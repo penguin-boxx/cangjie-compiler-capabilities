@@ -121,12 +121,13 @@ Ptr<AST::Ty> JoinAndMeet::BatchJoin(const std::set<Ptr<Ty>>& tys)
 {
     auto isSubtype = [this](Ptr<Ty> ty1, Ptr<Ty> ty2) { return tyMgr.IsSubtype(ty1, ty2); };
     auto isSupertype = [this](Ptr<Ty> ty1, Ptr<Ty> ty2) { return tyMgr.IsSubtype(ty2, ty1); };
-    auto doBatchJoin = [this](const std::set<Ptr<AST::Ty>>& tys) {return BatchJoin(tys);};
-    auto doBatchMeet = [this](const std::set<Ptr<AST::Ty>>& tys) {return BatchMeet(tys);};
+    auto doBatchJoin = [this](const std::set<Ptr<AST::Ty>>& tys) { return BatchJoin(tys); };
+    auto doBatchMeet = [this](const std::set<Ptr<AST::Ty>>& tys) { return BatchMeet(tys); };
     DualMode joinMode = {.bound = tyMgr.GetAnyTy(),
         .coFunc = doBatchJoin,
         .contraFunc = doBatchMeet,
-        .coSubtyFunc = isSubtype};
+        .coSubtyFunc = isSubtype,
+        .isJoin = true};
     std::set<Ptr<Ty>> realTys;
     std::function<void(Ptr<Ty>)> insertRealTy = [this, &realTys, &insertRealTy](Ptr<Ty> ty) {
         if (auto tyVar = DynamicCast<TyVar*>(ty); (tyVar && Utils::In(tyVar, ignoredTyVars)) || ty->IsNothing()) {
@@ -205,7 +206,7 @@ Ptr<AST::Ty> JoinAndMeet::JoinOrMeetFuncTy(const DualMode& mode, const std::set<
     }
     auto retTy = mode.coFunc(operandRetTys);
     if (Ty::AreTysCorrect(paramTys) && Ty::IsTyCorrect(retTy)) {
-        auto resultTy = tyMgr.GetFunctionTy(paramTys, retTy);
+        auto resultTy = tyMgr.GetFunctionTy(paramTys, retTy, {}, JoinOrMeetCapTys(mode, tys));
         CJC_NULLPTR_CHECK(resultTy);
         for (auto ty : tys) {
             if (!mode.coSubtyFunc(ty, resultTy)) {
@@ -215,6 +216,48 @@ Ptr<AST::Ty> JoinAndMeet::JoinOrMeetFuncTy(const DualMode& mode, const std::set<
         return resultTy;
     }
     return mode.bound;
+}
+
+/**
+ * Checked exceptions ("Joins and meets"): combine the ground capability lists of
+ * already-typed functional operands. The join of capability lists is their union; the meet keeps
+ * the entries covered by every operand list (of two comparable entries, the more specific one;
+ * incomparable entries contribute nothing). Entries subsumed by other kept entries are redundant
+ * by subtyping and dropped in both cases. Never solves for list variables.
+ */
+std::vector<Ptr<AST::Ty>> JoinAndMeet::JoinOrMeetCapTys(const DualMode& mode, const std::set<Ptr<Ty>>& tys)
+{
+    // Gather candidate entries from all operand lists, keeping a deterministic first-seen order.
+    std::vector<Ptr<Ty>> candidates;
+    for (auto ty : tys) {
+        for (auto capTy : RawStaticCast<FuncTy*>(ty)->capTys) {
+            if (!Utils::In(capTy, candidates)) {
+                candidates.push_back(capTy);
+            }
+        }
+    }
+    if (!mode.isJoin) {
+        // Meet: keep only entries covered by every operand list.
+        Utils::EraseIf(candidates, [this, &tys](Ptr<Ty> capTy) {
+            return !std::all_of(tys.begin(), tys.end(), [this, capTy](Ptr<Ty> ty) {
+                auto& capTys = RawStaticCast<FuncTy*>(ty)->capTys;
+                return std::any_of(capTys.begin(), capTys.end(),
+                    [this, capTy](Ptr<Ty> cover) { return tyMgr.IsSubtype(capTy, cover); });
+            });
+        });
+    }
+    // Drop entries subsumed by another entry (for the join this collapses the union's redundancy).
+    std::vector<Ptr<Ty>> result;
+    for (auto capTy : candidates) {
+        bool covered = std::any_of(
+            result.begin(), result.end(), [this, capTy](Ptr<Ty> kept) { return tyMgr.IsSubtype(capTy, kept); });
+        if (covered) {
+            continue;
+        }
+        Utils::EraseIf(result, [this, capTy](Ptr<Ty> kept) { return tyMgr.IsSubtype(kept, capTy); });
+        result.push_back(capTy);
+    }
+    return result;
 }
 
 /**
@@ -295,7 +338,8 @@ Ptr<AST::Ty> JoinAndMeet::BatchMeet(const std::set<Ptr<Ty>>& tys)
     DualMode meetMode = {.bound = TypeManager::GetInvalidTy(),
         .coFunc = doBatchMeet,
         .contraFunc = doBatchJoin,
-        .coSubtyFunc = isSupertype};
+        .coSubtyFunc = isSupertype,
+        .isJoin = false};
     std::set<Ptr<Ty>> realTys;
     std::function<void(Ptr<Ty>)> insertRealTy = [this, &realTys, &insertRealTy](Ptr<Ty> ty) {
         if (auto tyVar = DynamicCast<TyVar*>(ty); tyVar && Utils::In(tyVar, ignoredTyVars)) {
@@ -368,7 +412,8 @@ Ptr<Ty> JoinAndMeet::ToUserVisibleTy(Ptr<Ty> ty)
         std::transform(funcTy->paramTys.begin(), funcTy->paramTys.end(), paramTys.begin(),
             [this](Ptr<Ty> typ) { return ToUserVisibleTy(typ); });
         if (Ty::AreTysCorrect(paramTys) && Ty::IsTyCorrect(retTy)) {
-            return tyMgr.GetFunctionTy(paramTys, retTy, {funcTy->isC, funcTy->isClosureTy, funcTy->hasVariableLenArg});
+            return tyMgr.GetFunctionTy(
+                paramTys, retTy, {funcTy->isC, funcTy->isClosureTy, funcTy->hasVariableLenArg}, funcTy->capTys);
         } else {
             return TypeManager::GetInvalidTy();
         }

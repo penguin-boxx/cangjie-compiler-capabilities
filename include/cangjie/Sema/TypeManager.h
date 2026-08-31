@@ -74,7 +74,56 @@ public:
     Ptr<AST::StructTy> GetStructTy(AST::StructDecl& sd, const std::vector<Ptr<AST::Ty>>& typeArgs);
     Ptr<AST::TupleTy> GetTupleTy(const std::vector<Ptr<AST::Ty>>& typeArgs, bool isClosureTy = false);
     Ptr<AST::FuncTy> GetFunctionTy(const std::vector<Ptr<AST::Ty>>& paramTys, Ptr<AST::Ty> retTy,
-        AST::FuncTy::Config cfg = {false, false, false, false});
+        AST::FuncTy::Config cfg = {false, false, false, false}, const std::vector<Ptr<AST::Ty>>& capTys = {});
+
+    /**
+     * Checked exceptions: remember that @p child overrides or implements @p parent. Override
+     * checking runs during type check, before capability parameter inference, so an inferred list
+     * has no overridden list to be checked against at that point; the pairs recorded here let the
+     * capability pass do it afterwards ("an inferred override requiring more than the overridden
+     * list is an error").
+     */
+    void RecordOverride(const AST::FuncDecl& child, const AST::FuncDecl& parent)
+    {
+        overriddenDecls[&child].emplace_back(&parent);
+    }
+    /// The declarations @p child overrides or implements, as recorded during type check.
+    const std::vector<Ptr<const AST::FuncDecl>>& GetOverridden(const AST::FuncDecl& child) const
+    {
+        static const std::vector<Ptr<const AST::FuncDecl>> none;
+        auto found = overriddenDecls.find(&child);
+        return found == overriddenDecls.end() ? none : found->second;
+    }
+
+    /**
+     * Checked exceptions: the semantic form of a capability list -- a duplicate entry, or one
+     * covered by a more general entry of the same list, is not part of the list. Every comparison
+     * and every consumer works on this form, so coverage-equivalent lists behave identically. A
+     * list still holding an inference placeholder is returned unchanged: comparing it would bind
+     * the placeholder, and capability lists take no part in type-argument inference.
+     */
+    std::vector<Ptr<AST::Ty>> NormalizeCapTys(const std::vector<Ptr<AST::Ty>>& capTys);
+    /**
+     * Checked exceptions: remember std.core's 'UncheckedException' type once name resolution has
+     * it. An entry whose type is (or instantiates to) an unchecked exception type imposes nothing
+     * -- rule "Unchecked types in 'throws' lists" -- so coverage treats it as trivially satisfied.
+     * Null when std.core does not provide the class (bootstrapping); every entry is checked then.
+     */
+    void SetUncheckedExceptionTy(Ptr<AST::Ty> ty)
+    {
+        uncheckedExceptionTy = ty;
+    }
+    /**
+     * Checked exceptions: when BOTH capability features are off, clauses "impose no obligations
+     * and are not recorded" (author ruling on Q10: an unchecked package ignores 'throws' in every
+     * position, subtyping included). Dropping the list at the one construction funnel makes every
+     * consumer follow -- identity, subtyping, overloading, joins, the '.cjo'. With only the
+     * effect-handler feature on the lists are kept whole, commands being checked there.
+     */
+    void SetCapTysInert(bool inert)
+    {
+        capTysInert = inert;
+    }
 
     Ptr<AST::ArrayTy> GetArrayTy(Ptr<AST::Ty> elemTy, unsigned int dims);
     Ptr<AST::VArrayTy> GetVArrayTy(AST::Ty& elemTy, int64_t size);
@@ -181,6 +230,19 @@ public:
      */
     bool IsFuncParameterTypesIdentical(const std::vector<Ptr<AST::Ty>>& paramTys1,
         const std::vector<Ptr<AST::Ty>>& paramTys2, const TypeSubst& typeMapping = {});
+    /**
+     * Checked exceptions (experimental): set subsumption of exception capability lists.
+     * @p subCapTys is subsumed by @p superCapTys iff for every c2 in @p subCapTys there exists
+     * a c1 in @p superCapTys with c2 <: c1 (contravariant 'CanThrow': a handler for a base
+     * exception type also handles the more specific one).
+     */
+    bool IsCapTysSubsumed(const std::vector<Ptr<AST::Ty>>& subCapTys, const std::vector<Ptr<AST::Ty>>& superCapTys);
+    /**
+     * Checked exceptions (experimental): recursively rebuild @p ty with every functional type's
+     * capability list removed. Used where overloading compares signatures modulo capability
+     * lists.
+     */
+    Ptr<AST::Ty> EraseCapTys(Ptr<AST::Ty> ty);
     TypeCompatibility CheckTypeCompatibility(
         Ptr<AST::Ty> lvalue, Ptr<AST::Ty> rvalue, bool implicitBoxed = true, bool isGeneric = false);
     bool CheckGenericDeclInstantiation(Ptr<const AST::Decl> d, const std::vector<Ptr<AST::Ty>>& typeArgs);
@@ -366,6 +428,12 @@ public:
         AST::Ty& ty, bool needSubstituteGeneric = false, const TypeSubst& typeMapping = {});
 
 private:
+    /// Checked exceptions: override/implementation pairs, filled during type check (see
+    /// RecordOverride) and consumed after capability parameter inference.
+    std::unordered_map<Ptr<const AST::FuncDecl>, std::vector<Ptr<const AST::FuncDecl>>> overriddenDecls;
+    Ptr<AST::Ty> uncheckedExceptionTy{nullptr};
+    bool capTysInert{false};
+
     friend class TyVarScope;
     friend class InstCtxScope;
 #ifdef CANGJIE_CODEGEN_CJNATIVE_BACKEND

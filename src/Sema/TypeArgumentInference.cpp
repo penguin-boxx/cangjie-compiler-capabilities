@@ -234,8 +234,10 @@ std::optional<Ptr<AST::Ty>> UnsolvedAsQuest(TypeManager& tyMgr, const TyVars& ty
             paramTys.push_back(it);
         }
         if (auto retType = UnsolvedAsQuest(tyMgr, tyVarsToSolve, *funcTy->retTy)) {
+            // Capability lists take no part in type argument inference, but they
+            // must survive it: the literal checked against this type inherits them (3.5).
             Ptr<Ty> fin = tyMgr.GetFunctionTy(paramTys, *retType,
-                {funcTy->IsCFunc(), funcTy->isClosureTy, funcTy->hasVariableLenArg});
+                {funcTy->IsCFunc(), funcTy->isClosureTy, funcTy->hasVariableLenArg}, funcTy->capTys);
             return fin;
         } else {
             return std::nullopt;

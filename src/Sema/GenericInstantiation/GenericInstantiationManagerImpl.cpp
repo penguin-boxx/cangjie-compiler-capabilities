@@ -184,7 +184,16 @@ Ptr<Ty> GetOriginalTy(Ty& ty, const TypeSubst& g2gTyMap, TypeManager& typeManage
     for (auto paramTy : funcTy.paramTys) {
         paramTys.emplace_back(GetOriginalTy(*paramTy, g2gTyMap, typeManager));
     }
-    return typeManager.GetFunctionTy(paramTys, GetOriginalTy(*funcTy.retTy, g2gTyMap, typeManager));
+    // Checked exceptions: the capability list is part of the type and is mapped like every other
+    // component; dropping it here is the reconstruction defect class (a rebuilt type silently
+    // loses the clause). The config flags travel too.
+    std::vector<Ptr<Ty>> capTys;
+    capTys.reserve(funcTy.capTys.size());
+    for (auto capTy : funcTy.capTys) {
+        capTys.emplace_back(GetOriginalTy(*capTy, g2gTyMap, typeManager));
+    }
+    return typeManager.GetFunctionTy(paramTys, GetOriginalTy(*funcTy.retTy, g2gTyMap, typeManager),
+        {funcTy.isC, funcTy.isClosureTy, funcTy.hasVariableLenArg, funcTy.noCast}, capTys);
 }
 
 inline bool IsGenericFuncWithDefaultParam(const Decl& decl)

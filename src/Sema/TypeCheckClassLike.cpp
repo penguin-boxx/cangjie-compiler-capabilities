@@ -128,6 +128,8 @@ void TypeChecker::TypeCheckerImpl::CheckClassDecl(ASTContext& ctx, ClassDecl& cd
             CheckThreadContextInheritance(cd, *rt);
         }
     }
+    // Checked exceptions (experimental): validate the 'captures' clause.
+    ChkCapturesClauseOfDecl(ctx, cd);
     TypeCheckCompositeBody(ctx, cd, cd.body->decls);
     CheckRecursiveConstructorCall(cd.body->decls);
     if (cd.IsJavaMirror() || cd.IsJavaImpl()) {

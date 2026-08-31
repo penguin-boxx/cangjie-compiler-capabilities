@@ -85,6 +85,30 @@ ERROR(parse_expected_lt_paren, "expected '(' or '<', found %s", "expected '(' or
 ERROR(parse_expected_identifier_lp, "expected ')' or identifier, found %s", "expected ')' or identifier here")
 ERROR(parse_expected_dot_lparen, "expected ',' or ')', found %s", "expected ',' or ')' here")
 ERROR(parse_expected_arrow_in_func_type, "expected '->' in function type")
+// Checked exceptions (experimental, behind '--experimental --enable-chexc').
+ERROR(parse_expected_exception_type_after_throws, "expected exception type after 'throws', found %s",
+    "expected exception type here")
+ERROR(parse_expected_arrow_after_throws_clause, "expected '->' after 'throws' clause in function type")
+ERROR(parse_ellipsis_in_func_type_throws_clause,
+    "'...' is not allowed in a function type's 'throws' clause", "a function type's capability list is always complete")
+ERROR(parse_ellipsis_in_throws_clause_unsupported, "'...' in a 'throws' clause is not supported yet")
+ERROR(parse_empty_capability_list_not_alone, "'()' is only allowed as the whole capability list",
+    "remove '()', or the entries it is mixed with")
+ERROR(parse_empty_assume_throws_list, "'@AssumeThrows[]' assumes nothing",
+    "drop the brackets to assume 'Exception', or list the exception types to assume")
+ERROR(parse_ellipsis_not_last, "'...' must be the last entry of a 'throws' clause",
+    "it may appear at most once, at the end")
+ERROR(parse_clause_on_macro, "a macro cannot carry a '%s' clause",
+    "a macro body runs inside the compiler, where no handler can be installed for it")
+ERROR(parse_ellipsis_in_clause, "'...' is not allowed in a '%s' clause",
+    "only an inferable 'throws' list can be opened to inference")
+ERROR(parse_duplicate_throws_clause, "duplicate 'throws' clause",
+    "a declaration carries at most one, like one 'where' clause")
+ERROR(parse_duplicate_performs_clause, "duplicate 'performs' clause",
+    "a declaration carries at most one, like one 'where' clause")
+ERROR(parse_duplicate_captures_clause, "duplicate 'captures' clause",
+    "a class carries at most one, like one 'where' clause")
+ERROR(parse_performs_clause_after_throws, "a 'performs' clause must precede the 'throws' clause")
 ERROR(parse_unexpected_colon_in_range, "unexpected ':' in index access", "unexpected ':' here")
 ERROR(parse_expected_lsquare_after, "expected '[' after '%s', found %s", "expected '[' here")
 ERROR(parse_expected_type_argument, "expected type argument")

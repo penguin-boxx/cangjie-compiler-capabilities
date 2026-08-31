@@ -512,6 +512,34 @@ void ASTLoader::ASTLoaderImpl::AddDeclToImportedPackage(Decl& decl)
 /**
  * @brief Convert fb optimization level enum to the GlobalOptions' enum
  */
+PackageCapabilityInfo ASTLoader::GetCapabilityInfo() const
+{
+    return pImpl->GetCapabilityInfo();
+}
+
+PackageCapabilityInfo ASTLoader::ASTLoaderImpl::GetCapabilityInfo() const
+{
+    PackageCapabilityInfo info;
+    if (package == nullptr || package->options() == nullptr) {
+        return info; // A '.cjo' from before capability metadata: every default already says so.
+    }
+    auto options = package->options();
+    switch (options->chexc_level()) {
+        case PackageFormat::ChexcLevel::ChexcLevel_Warn:
+            info.level = PackageCapabilityInfo::Level::WARN;
+            break;
+        case PackageFormat::ChexcLevel::ChexcLevel_Error:
+            info.level = PackageCapabilityInfo::Level::ERROR;
+            break;
+        default:
+            info.level = PackageCapabilityInfo::Level::OFF;
+            break;
+    }
+    info.effectsEnabled = options->effects_enabled();
+    info.recordsCapabilities = options->records_capabilities();
+    return info;
+}
+
 GlobalOptions::OptimizationLevel ASTLoader::ASTLoaderImpl::LoadOptimizationLevel(
     const PackageFormat::CompilationOptions& options)
 {
@@ -891,6 +919,37 @@ void ASTLoader::ASTLoaderImpl::LoadInheritableDeclAdvancedInfo(const PackageForm
             ann->runtimeVisible = info->runtimeVisible();
             (void)id.annotations.emplace_back(std::move(ann));
         }
+    }
+    // Checked exceptions: rebuild the 'captures' clause so that
+    // construction sites in this package demand the declaration's captured capabilities. Only the
+    // types matter downstream, which read them off the clause's nodes.
+    const flatbuffers::Vector<FormattedIndex>* capturesTypes = nullptr;
+    if (id.astKind == ASTKind::CLASS_DECL) {
+        capturesTypes = decl.info_as_ClassInfo()->capturesTypes();
+    } else if (id.astKind == ASTKind::STRUCT_DECL) {
+        capturesTypes = decl.info_as_StructInfo()->capturesTypes();
+    }
+    if (capturesTypes != nullptr && capturesTypes->size() > 0) {
+        auto clause = MakeOwned<ThrowsClause>();
+        for (uoffset_t i = 0; i < capturesTypes->size(); i++) {
+            auto capTy = LoadType(capturesTypes->Get(i));
+            if (!Ty::IsTyCorrect(capTy)) {
+                continue;
+            }
+            // A capability entry is always a class or generic type, and only its 'ty' is read
+            // downstream, so a reference node carrying that type is the whole requirement. The
+            // written list is already expanded, so no alias can appear here.
+            auto capType = MakeOwned<RefType>();
+            capType->SetTy(capTy);
+            capType->ref.identifier = capTy->name;
+            if (auto capDecl = Ty::GetDeclPtrOfTy(capTy)) {
+                capType->ref.target = capDecl;
+                capType->ref.identifier = capDecl->identifier.Val();
+            }
+            capType->EnableAttr(Attribute::IMPORTED, Attribute::COMPILER_ADD, Attribute::IS_CHECK_VISITED);
+            clause->capTypes.emplace_back(std::move(capType));
+        }
+        id.capturesClause = std::move(clause);
     }
     auto body = id.astKind == ASTKind::CLASS_DECL ? decl.info_as_ClassInfo()->body()
         : id.astKind == ASTKind::INTERFACE_DECL   ? decl.info_as_InterfaceInfo()->body()

@@ -1331,6 +1331,32 @@ void StructInheritanceChecker::CheckPropertyInheritance(const MemberSignature& p
             DiagKindRefactor::sema_property_must_implement_both, *childProp, childProp->identifier.Val());
     }
     CheckAccessVisibility(*parentDecl, child, child);
+    CheckPropertyThrowsClauses(*parentProp, *childProp);
+}
+
+/**
+ * The override rule covers property accessors as well as methods, but accessors are not member
+ * signatures of their own, so they never reach the method override path. Pair them up here.
+ */
+void StructInheritanceChecker::CheckPropertyThrowsClauses(const PropDecl& parentProp, const PropDecl& childProp) const
+{
+    auto check = [this](const OwnedPtr<FuncDecl>& parentAccessor, const OwnedPtr<FuncDecl>& childAccessor) {
+        if (!parentAccessor || !childAccessor) {
+            return;
+        }
+        auto parentTy = DynamicCast<FuncTy*>(parentAccessor->GetTy());
+        auto childTy = DynamicCast<FuncTy*>(childAccessor->GetTy());
+        if (!parentTy || !childTy) {
+            return;
+        }
+        CheckThrowsClauseCompatible(*parentAccessor, *childAccessor, *parentTy, *childTy);
+    };
+    if (!parentProp.getters.empty() && !childProp.getters.empty()) {
+        check(parentProp.getters.front(), childProp.getters.front());
+    }
+    if (!parentProp.setters.empty() && !childProp.setters.empty()) {
+        check(parentProp.setters.front(), childProp.setters.front());
+    }
 }
 
 bool StructInheritanceChecker::CheckReturnOverrideByGeneric(const FuncTy& parentTy, const FuncTy& childTy) const
@@ -1353,6 +1379,50 @@ bool StructInheritanceChecker::CheckReturnOverrideByGeneric(const FuncTy& parent
         }
     }
     return false;
+}
+
+void StructInheritanceChecker::CheckThrowsClauseCompatible(const AST::FuncDecl& parentFunc,
+    const AST::FuncDecl& childFunc, const FuncTy& parentTy, const FuncTy& childTy) const
+{
+    // Checked exceptions: the override's (redefinition's) capability list must be
+    // pointwise subsumed by the original's -- every exception type in the override's 'throws' list
+    // must be a subtype of some exception type in the original's list. Constructors are exempt
+    // (they are new declarations, never overridden).
+    if (parentFunc.TestAttr(Attribute::CONSTRUCTOR) || childFunc.TestAttr(Attribute::CONSTRUCTOR)) {
+        return;
+    }
+    // The pair is remembered for the capability pass: a list this declaration only acquires by
+    // inference is compared against the overridden one there, since inference runs later.
+    typeManager.RecordOverride(childFunc, parentFunc);
+    for (auto capTy : childTy.capTys) {
+        if (typeManager.IsCapTysSubsumed({capTy}, parentTy.capTys)) {
+            continue;
+        }
+        // The level applies to this rule as it does to every other capability diagnostic: at 'warn'
+        // the program is still built, so the violating override has to stay an override -- pairing
+        // is blind to capability lists precisely so that it can. An effect entry is never
+        // downgraded: effect requirements are checked on their own axis, at one severity. With
+        // exception checking off the rule is ordinary type compatibility, so it stays an error.
+        bool asWarning = opts.enableChexc && opts.chexcSeverity == GlobalOptions::ChexcSeverity::CS_WARN &&
+            !TypeCheckUtil::IsCommandTy(typeManager, importManager, capTy);
+        auto kind = asWarning ? DiagKindRefactor::sema_chexc_override_missing_capability_warn
+                              : DiagKindRefactor::sema_chexc_override_missing_capability;
+        // A property accessor has no identifier in source and a compiler-generated one has no
+        // position at all; the property is what a diagnostic can point at. An imported declaration
+        // has no position either, so the note is dropped rather than emitted at position zero.
+        auto blame = GetDiagnosableDecl(childFunc);
+        if (!blame) {
+            continue;
+        }
+        auto builder = diag.DiagnoseRefactor(
+            kind, MakeRangeForDeclIdentifier(*blame), Ty::ToString(capTy), GetDiagnosableDeclName(childFunc));
+        builder.AddMainHintArguments(Ty::ToString(capTy));
+        if (auto parentBlame = GetDiagnosableDecl(parentFunc)) {
+            builder.AddNote(MakeRangeForDeclIdentifier(*parentBlame),
+                parentTy.capTys.empty() ? "the overridden or implemented declaration has no 'throws' clause"
+                                        : "the overridden or implemented declaration is declared here");
+        }
+    }
 }
 
 bool StructInheritanceChecker::CheckImplementationRelation(
@@ -1389,6 +1459,7 @@ bool StructInheritanceChecker::CheckImplementationRelation(
             const Decl& diagNode = childFunc->outerDecl == checkingDecls.front() ? *childFunc : *checkingDecls.front();
             CheckAccessVisibility(*parentFunc, *childFunc, diagNode);
             CheckGenericTypeArgInfo(parent, child);
+            CheckThrowsClauseCompatible(*parentFunc, *childFunc, *parentFuncTy, *childFuncTy);
         } else if (inheritedByExtension || !CheckReturnOverrideByGeneric(*parentFuncTy, *childFuncTy)) {
             // A type that does not meet the type variance relationship cannot be used as the basis for subtypes when
             // override occurs.

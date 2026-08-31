@@ -385,6 +385,18 @@ void PrintGeneric(unsigned indent, const Generic& generic, std::ostream& stream 
     PrintIndent(stream, indent, "}");
 }
 
+void PrintThrowsClause(unsigned indent, const ThrowsClause& clause, std::ostream& stream = std::cout)
+{
+    PrintIndent(stream, indent, "ThrowsClause {");
+    PrintBasic(indent + ONE_INDENT, clause, stream);
+    PrintIndent(stream, indent + ONE_INDENT, "capTypes [");
+    for (auto& capType : clause.capTypes) {
+        PrintNode(capType.get(), indent + TWO_INDENT, "", stream);
+    }
+    PrintIndent(stream, indent + ONE_INDENT, "]");
+    PrintIndent(stream, indent, "}");
+}
+
 void PrintFuncBody(unsigned indent, const FuncBody& body, std::ostream& stream = std::cout)
 {
     PrintIndent(stream, indent, "FuncBody {");
@@ -400,6 +412,12 @@ void PrintFuncBody(unsigned indent, const FuncBody& body, std::ostream& stream =
     } else {
         PrintIndent(stream, indent + ONE_INDENT, "// return type");
         PrintNode(body.retType.get(), indent + ONE_INDENT, "", stream);
+    }
+    if (body.performsClause) {
+        PrintThrowsClause(indent + ONE_INDENT, *body.performsClause, stream);
+    }
+    if (body.throwsClause) {
+        PrintThrowsClause(indent + ONE_INDENT, *body.throwsClause, stream);
     }
     PrintNode(body.body.get(), indent + ONE_INDENT, "body", stream);
     PrintIndent(stream, indent, "}");
@@ -488,6 +506,11 @@ void PrintClassDecl(unsigned indent, const ClassDecl& classDecl, std::ostream& s
         }
         PrintIndent(stream, indent + ONE_INDENT, "]");
     }
+    if (classDecl.capturesClause) {
+        PrintIndent(stream, indent + ONE_INDENT, "capturesClause [");
+        PrintThrowsClause(indent + TWO_INDENT, *classDecl.capturesClause, stream);
+        PrintIndent(stream, indent + ONE_INDENT, "]");
+    }
     PrintNode(classDecl.body.get(), indent + ONE_INDENT, "", stream);
     PrintIndent(stream, indent, "}");
 }
@@ -560,6 +583,11 @@ void PrintStructDecl(unsigned indent, const StructDecl& decl, std::ostream& stre
         for (auto& it : decl.inheritedTypes) {
             PrintNode(it.get(), indent + TWO_INDENT, "", stream);
         }
+        PrintIndent(stream, indent + ONE_INDENT, "]");
+    }
+    if (decl.capturesClause) {
+        PrintIndent(stream, indent + ONE_INDENT, "capturesClause [");
+        PrintThrowsClause(indent + TWO_INDENT, *decl.capturesClause, stream);
         PrintIndent(stream, indent + ONE_INDENT, "]");
     }
     PrintIndent(stream, indent + ONE_INDENT, "StructBody {");
@@ -1255,6 +1283,12 @@ void PrintFuncType(unsigned indent, const FuncType& type, std::ostream& stream =
         PrintNode(paramType.get(), indent + TWO_INDENT, "", stream);
     }
     PrintIndent(stream, indent + ONE_INDENT, "]");
+    if (type.performsClause) {
+        PrintThrowsClause(indent + ONE_INDENT, *type.performsClause, stream);
+    }
+    if (type.throwsClause) {
+        PrintThrowsClause(indent + ONE_INDENT, *type.throwsClause, stream);
+    }
     PrintNode(type.retType.get(), indent + ONE_INDENT, "retType", stream);
     PrintIndent(stream, indent + ONE_INDENT, "IsCFuncType:", type.isC);
     PrintIndent(stream, indent, "}");
@@ -1514,6 +1548,7 @@ void PrintNode(Ptr<const Node> node, unsigned indent, const std::string& additio
         [&indent, &stream](const FuncDecl& funcDecl) { PrintFuncDecl(indent, funcDecl, stream); },
         [&indent, &stream](const MacroDecl& macroDecl) { PrintMacroDecl(indent, macroDecl, stream); },
         [&indent, &stream](const FuncBody& body) { PrintFuncBody(indent, body, stream); },
+        [&indent, &stream](const ThrowsClause& clause) { PrintThrowsClause(indent, clause, stream); },
         [&indent, &stream](const PropDecl& propDecl) { PrintPropDecl(indent, propDecl, stream); },
         [&indent, &stream](const MacroExpandDecl& macroExpand) { PrintMacroExpandDecl(indent, macroExpand, stream); },
         [&indent, &stream](const VarWithPatternDecl& vwpd) { PrintVarWithPatternDecl(indent, vwpd, stream); },

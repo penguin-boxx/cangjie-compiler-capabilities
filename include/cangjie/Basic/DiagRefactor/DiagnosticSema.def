@@ -411,4 +411,98 @@ WARNING(sema_hide_must_at_end, APILEVEL_CHECK, "annotation '%s' must be placed b
 
 WARNING(sema_unused_import, UNUSED, "unused import '%s'", "unused import")
 
+// Checked exceptions (experimental, behind '--experimental --enable-chexc').
+ERROR(sema_chexc_clause_type_not_exception, "type '%s' in '%s' clause is not a subtype of class 'Exception'",
+    "this type must be a subtype of class 'Exception'")
+ERROR(sema_chexc_unchecked_type_in_clause, "unchecked exception type '%s' is not allowed in a '%s' clause",
+    "throwing an unchecked exception never requires a capability")
+ERROR(sema_chexc_primary_ctor_on_capturing,
+    "%s '%s' has a 'captures' clause and cannot declare a primary constructor",
+    "declare an 'init' constructor instead")
+ERROR(sema_chexc_clause_on_cfunc, "a 'throws' clause is not allowed on %s", "'throws' clause is not allowed here")
+ERROR(sema_chexc_override_missing_capability,
+    "exception type '%s' in 'throws' clause of '%s' is not covered by the overridden or implemented declaration",
+    "no exception type in the original declaration's 'throws' clause is a supertype of '%s'")
+WARNING(sema_chexc_override_missing_capability_warn, CHEXC,
+    "exception type '%s' in 'throws' clause of '%s' is not covered by the overridden or implemented declaration",
+    "no exception type in the original declaration's 'throws' clause is a supertype of '%s'")
+ERROR(sema_chexc_missing_capability,
+    "Cannot find a capability for '%s' (of type 'CanThrow<%s>') in the current scope",
+    "required by %s")
+WARNING(sema_chexc_missing_capability_warn, CHEXC,
+    "Cannot find a capability for '%s' (of type 'CanThrow<%s>') in the current scope",
+    "required by %s")
+ERROR(sema_chexc_missing_handler_capability,
+    "Cannot find a capability for '%s' (of type 'CanPerform<%s>') in the current scope",
+    "required by %s")
+WARNING(sema_chexc_missing_handler_capability_warn, CHEXC,
+    "Cannot find a capability for '%s' (of type 'CanPerform<%s>') in the current scope",
+    "required by %s")
+
+ERROR(sema_chexc_performs_type_not_command, "type '%s' in 'performs' clause is not a subtype of 'Command'",
+    "this type must be a subtype of 'Command'")
+ERROR(sema_chexc_performs_in_main, "'main' cannot declare a 'performs' clause",
+    "there is no default effect handler, unlike the default exception handler")
+
+ERROR(sema_chexc_clause_only_type_argument,
+    "type parameter %s of '%s' occurs only in capability lists, which take no part in "
+    "type-argument inference",
+    "write the type argument explicitly")
+ERROR(sema_chexc_clause_only_type_arguments,
+    "type parameters %s of '%s' occur only in capability lists, which take no part in "
+    "type-argument inference",
+    "write the type arguments explicitly")
+ERROR(sema_chexc_missing_capabilities,
+    "Cannot find capabilities for %s (of types %s) in the current scope",
+    "%s")
+WARNING(sema_chexc_missing_capabilities_warn, CHEXC,
+    "Cannot find capabilities for %s (of types %s) in the current scope",
+    "%s")
+ERROR(sema_chexc_assume_on_checked_package,
+    "'@AssumeThrows' names package '%s', whose capability lists are recorded",
+    "an assumption stands in for lists a package does not have; this one records its own")
+ERROR(sema_chexc_import_without_capability_metadata,
+    "package '%s' was compiled with effect handlers but records no capability metadata",
+    "its 'performs' lists cannot be read as empty ones; rebuild it with this compiler")
+ERROR(sema_chexc_assume_throws_not_on_import, "'@AssumeThrows' is only allowed on an 'import'",
+    "an assumption applies to a whole imported package")
+
+ERROR(sema_chexc_ellipsis_on_exported,
+    "'...' is not allowed in the 'throws' clause of an exported declaration",
+    "an exported capability list must not depend on inference")
+
+ERROR(sema_chexc_cast_target_func,
+    "'%s' cannot be a runtime cast target: it contains a function type",
+    "erasure leaves no capability list to check, so such a cast would launder the requirements of "
+    "the value it accepts")
+WARNING(sema_chexc_cast_target_func_warn, CHEXC,
+    "'%s' cannot be a runtime cast target: it contains a function type",
+    "erasure leaves no capability list to check, so such a cast would launder the requirements of "
+    "the value it accepts")
+ERROR(sema_chexc_cast_target_capturing,
+    "'%s' cannot be a runtime cast target: it is a capturing type",
+    "its instances hold capabilities and are bound to the handlers that supplied them, which a "
+    "cast result cannot be")
+WARNING(sema_chexc_cast_target_capturing_warn, CHEXC,
+    "'%s' cannot be a runtime cast target: it is a capturing type",
+    "its instances hold capabilities and are bound to the handlers that supplied them, which a "
+    "cast result cannot be")
+ERROR(sema_chexc_subclass_captures_missing,
+    "'%s' must capture '%s': every subclass of a capturing class captures at least what its "
+    "superclass does",
+    "add it to the 'captures' clause, or a type that covers it")
+WARNING(sema_chexc_useless_escape_hatch, CHEXC,
+    "'unsafeCanThrow' assumes '%s', which is unchecked and never required a capability",
+    "the call has no effect on checking")
+
+ERROR(sema_chexc_capturing_needs_ctor,
+    "%s '%s' has a 'captures' clause and must declare an 'init' constructor",
+    "a capturing type has no implicit default constructor: its constructors require the captured "
+    "capabilities at their call sites")
+
+ERROR(sema_chexc_polymorphic_recursion,
+    "Cannot infer capability parameters for '%s': the recursion re-enters it at the growing "
+    "instantiation '%s'",
+    "add an explicit 'throws' clause to each declaration of this recursion cycle")
+
 ERROR(sema_diag_end, "")

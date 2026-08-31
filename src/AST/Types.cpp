@@ -107,6 +107,9 @@ size_t FuncTy::Hash() const
     for (auto paramTy : paramTys) {
         ret = hash_combine<Ptr<Ty>>(ret, paramTy);
     }
+    for (auto capTy : capTys) {
+        ret = hash_combine<Ptr<Ty>>(ret, capTy);
+    }
     ret = hash_combine<bool>(ret, isClosureTy);
     ret = hash_combine<bool>(ret, isC);
     ret = hash_combine<bool>(ret, hasVariableLenArg);
@@ -765,7 +768,19 @@ std::string FuncTy::String() const
             str += ToString(paramTy) + ", ";
         }
     }
-    str = str + ") -> " + ToString(retTy);
+    str += ")";
+    if (!capTys.empty()) {
+        str += " throws (";
+        for (auto& capTy : capTys) {
+            if (&capTy == &capTys.back()) {
+                str += ToString(capTy);
+            } else {
+                str += ToString(capTy) + ", ";
+            }
+        }
+        str += ")";
+    }
+    str = str + " -> " + ToString(retTy);
     return isC ? "CFunc<" + str + ">" : str;
 }
 
@@ -1107,7 +1122,9 @@ bool FuncTy::operator==(const Ty& other) const
     auto q = dynamic_cast<const FuncTy*>(&other);
     return q && isC == q->isC && noCast == q->noCast && hasVariableLenArg == q->hasVariableLenArg &&
         isClosureTy == q->isClosureTy && retTy == q->retTy && paramTys.size() == q->paramTys.size() &&
-        memcmp(paramTys.data(), q->paramTys.data(), paramTys.size() * sizeof(intptr_t)) == 0;
+        memcmp(paramTys.data(), q->paramTys.data(), paramTys.size() * sizeof(intptr_t)) == 0 &&
+        capTys.size() == q->capTys.size() &&
+        memcmp(capTys.data(), q->capTys.data(), capTys.size() * sizeof(intptr_t)) == 0;
 }
 
 bool UnionTy::operator==(const Ty& other) const

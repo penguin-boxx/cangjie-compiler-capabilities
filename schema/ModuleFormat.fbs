@@ -135,6 +135,9 @@ table ClassInfo {
   annoTargets:uint8;   // available if current class is custom annotation
   runtimeVisible:bool;
   annoTargets2:uint8;
+  // Checked exceptions: the 'captures' clause, demanded at every
+  // construction site. Appended last, so a .cjo written before this feature still loads.
+  capturesTypes:[uint32];
 }
 table InterfaceInfo {
   inheritedTypes:[uint32];
@@ -144,6 +147,8 @@ table StructInfo {
   inheritedTypes:[uint32];
   body:[uint32];
   adInfo:AutoDiffInfo;
+  // Checked exceptions: see ClassInfo.capturesTypes.
+  capturesTypes:[uint32];
 }
 table EnumInfo {
   inheritedTypes:[uint32];
@@ -592,6 +597,11 @@ table FuncTyInfo {
   retType:uint32; // Func return type
   isC:bool;       // CFunc or @C func type.
   hasVariableLenArg:bool;
+  // Checked exceptions: the capability list of the functional type, i.e. the
+  // exception types of its 'throws' clause. Kept OUT of typeArgs, which holds the parameter
+  // types: capabilities are erased for codegen and must not be mistaken for type arguments.
+  // Appended last, so a .cjo written before this feature still loads (the field reads as empty).
+  capTypes:[uint32];
 }
 table CompositeTyInfo {
   declPtr:FullId;
@@ -678,9 +688,26 @@ enum OptimizationLevel : uint8 {
   O0, O1, O2, O3, Os, Oz
 }
 
+/// Checked exceptions: the severity capability checking ran at when the package was compiled.
+/// 'Off' also covers every package produced before the feature existed, which is what the default
+/// gives an old '.cjo'.
+enum ChexcLevel : byte {
+  Off = 0,
+  Warn,
+  Error
+}
+
 table CompilationOptions {
   optimization_level: OptimizationLevel;
   debug: bool;
+  // Checked exceptions: what the capability lists in this package are worth. 'chexc_level' says
+  // whether they were verified and how strictly; 'effects_enabled' says whether effect handlers
+  // were on, so an empty 'performs' list means "performs nothing" rather than "was not recorded";
+  // 'records_capabilities' distinguishes a package this compiler produced from one that predates
+  // capability metadata entirely, which the two enums above cannot express on their own.
+  chexc_level: ChexcLevel = Off;
+  effects_enabled: bool = false;
+  records_capabilities: bool = false;
 }
 
 // all SemaTys, decls are saved here, and indexed by other nodes.

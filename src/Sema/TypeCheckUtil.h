@@ -180,6 +180,74 @@ bool HaveCyclicSubstitution(TypeManager& tyMgr, const TypeSubst& typeMapping);
 std::vector<Ptr<AST::Ty>> GetParamTys(const AST::FuncDecl& fd);
 std::vector<Ptr<AST::Ty>> GetFuncBodyParamTys(const AST::FuncBody& fb);
 /**
+ * Checked exceptions: get the exception capability tys of @p fb 's elaborated 'throws' clause.
+ * Empty when there is no clause or the function is foreign/C.
+ */
+/**
+ * Expands a checked-exception clause's types into a capability list, splicing tuple entries
+ * (capability list aliases) recursively.
+ */
+std::vector<Ptr<AST::Ty>> ExpandCapabilityList(const std::vector<OwnedPtr<AST::Type>>& capTypes);
+
+std::vector<Ptr<AST::Ty>> GetFuncBodyCapTys(const AST::FuncBody& fb);
+
+/**
+ * Checked exceptions: true when @p targetTy exposes a function type -- itself, or one nested at any
+ * depth in a result, a parameter, a tuple component, or a type argument. Such a type cannot be a
+ * runtime cast or type-pattern target: the runtime sees the erased shape, so nothing verifies a
+ * capability list, and reading the target as clause-free would launder the requirements of whatever
+ * value the cast accepts. `CFunc` types are exempt: they carry no capabilities.
+ */
+bool ContainsFuncTy(Ptr<AST::Ty> targetTy);
+
+/**
+ * Checked exceptions: the capability list of @p accessor (its elaborated 'throws' clause),
+ * instantiated for a use site whose receiver has type @p receiverTy. @p receiverTy may be null
+ * (unqualified reference), in which case the list is returned verbatim: the declaration's own
+ * type parameters are already the ones in scope. Entries that failed elaboration are dropped.
+ */
+std::vector<Ptr<AST::Ty>> GetInstantiatedAccessorCapTys(
+    TypeManager& tyMgr, const AST::FuncDecl& accessor, Ptr<AST::Ty> receiverTy);
+/**
+ * Checked exceptions: get the exception capability tys of @p decl 's elaborated 'captures'
+ * clause. Empty when @p decl is not a class/struct or has no clause; entries
+ * whose types failed elaboration are skipped.
+ */
+std::vector<Ptr<AST::Ty>> GetDeclCapturesCapTys(const AST::Decl& decl);
+
+/**
+ * Checked exceptions: true when @p ty is a capturing class or struct -- one whose declaration
+ * carries a `captures` clause with at least one entry after alias expansion. Its instances store
+ * capabilities and are `local!`-only.
+ */
+bool IsCapturingTy(Ptr<AST::Ty> ty);
+/**
+ * Effects: whether @p ty is an effect command type, i.e. a subtype of the effect package's
+ * 'Command' class. The exception and command roots are disjoint, so this is what tells the two
+ * kinds of entry in one capability list apart. False when the effect package is absent.
+ */
+bool IsCommandTy(TypeManager& typeManager, const ImportManager& importManager, Ptr<AST::Ty> ty);
+
+/**
+ * Checked exceptions ("Generics"): the type parameters of @p declTy that occur ONLY inside
+ * capability lists. Type-argument inference deliberately ignores those lists, so such a parameter
+ * is never constrained by the argument that mentions it; the language would still solve it at its
+ * bound like any other unconstrained bounded parameter, which silently picks a list the author
+ * never wrote. The text requires the call to be rejected instead, so the caller must have written
+ * the argument explicitly.
+ *
+ * "Only" is the difference of two walks: the capability-aware one (typeArgs plus 'FuncTy::capTys',
+ * the shape the substitution filter uses) minus the erased one ('Ty::GetGenericTyArgs', typeArgs
+ * alone, which is exactly what inference sees).
+ */
+std::set<Ptr<AST::GenericsTy>> CollectClauseOnlyTyVars(Ptr<AST::Ty> declTy);
+/**
+ * Checked exceptions: whether @p ty is an unchecked exception type, i.e. a subtype of the core
+ * 'UncheckedException' class. Tolerant of the class's absence (bootstrapping
+ * with an std.core that predates it): every exception type is checked then.
+ */
+bool IsUncheckedExceptionTy(TypeManager& typeManager, const ImportManager& importManager, Ptr<AST::Ty> ty);
+/**
  * Check whether src is an override or implementation of target.
  */
 bool IsOverrideOrShadow(TypeManager& typeManager, const AST::FuncDecl& src, const AST::FuncDecl& target,

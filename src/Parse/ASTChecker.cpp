@@ -783,6 +783,13 @@ void ASTChecker::CheckFuncType(Ptr<Node> node)
     ZERO_POSITION_CHECK(node, ft->arrowPos);
     AST_NULLPTR_CHECK(node, ft->retType);
 }
+void ASTChecker::CheckThrowsClause(Ptr<Node> node)
+{
+    auto tc = StaticAs<ASTKind::THROWS_CLAUSE>(node);
+    ZERO_POSITION_CHECK(node, tc->throwsPos);
+    VEC_AST_NULLPTR_CHECK(node, tc->capTypes);
+    VEC_ZERO_POS_CHECK(node, tc->commaPosVector);
+}
 void ASTChecker::CheckOptionType(Ptr<Node> node)
 {
     auto ot = StaticAs<ASTKind::OPTION_TYPE>(node);

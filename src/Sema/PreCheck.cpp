@@ -603,7 +603,27 @@ Ptr<Ty> TypeChecker::TypeCheckerImpl::GetTyFromASTType(ASTContext& ctx, FuncType
     if (!funcType.retType->GetTy()) {
         return TypeManager::GetInvalidTy();
     }
-    funcType.SetTy(typeManager.GetFunctionTy(paramTys, funcType.retType->GetTy(), {funcType.isC}));
+    // Checked exceptions: elaborate the 'throws' clause types into the functional type's capability
+    // list. CFunc types never carry capabilities (the clause is rejected during type check).
+    std::vector<Ptr<Ty>> capTys;
+    // Effects: 'performs' entries come first, then 'throws'.
+    for (auto clause : {funcType.performsClause.get(), funcType.throwsClause.get()}) {
+        if (clause == nullptr || funcType.isC) {
+            continue;
+        }
+        for (auto& capType : clause->capTypes) {
+            CJC_NULLPTR_CHECK(capType);
+            capType->SetTy(GetTyFromASTType(ctx, capType.get()));
+        }
+        // A tuple entry — written directly or reached through a type alias — is itself a
+        // capability list and is spliced into this one.
+        auto expanded = TypeCheckUtil::ExpandCapabilityList(clause->capTypes);
+        capTys.insert(capTys.end(), expanded.begin(), expanded.end());
+    }
+    // Checked exceptions: the elaborated list is canonicalized once, here, so the functional
+    // type has the semantic form's identity -- '(A, B)' with 'B <: A' IS '(A)'.
+    funcType.SetTy(typeManager.GetFunctionTy(
+        paramTys, funcType.retType->GetTy(), {funcType.isC}, typeManager.NormalizeCapTys(capTys)));
     return funcType.GetTy();
 }
 
@@ -925,6 +945,23 @@ void TypeChecker::TypeCheckerImpl::ResolveNames(ASTContext& ctx)
     for (auto sym : syms) {
         CJC_NULLPTR_CHECK(sym);
         Walker(sym->node, id, resolveSingleType).Walk();
+    }
+    // Checked exceptions: an '@AssumeThrows' annotation sits on an import, not on
+    // a top-level declaration, so its exception types are not reached by the walk above.
+    if (ctx.curPackage != nullptr) {
+        for (auto& file : ctx.curPackage->files) {
+            CJC_NULLPTR_CHECK(file);
+            for (auto& import : file->imports) {
+                for (auto& anno : import->annotations) {
+                    if (!anno || !anno->assumeThrows) {
+                        continue;
+                    }
+                    for (auto& capType : anno->assumeThrows->capTypes) {
+                        Walker(capType.get(), id, resolveSingleType).Walk();
+                    }
+                }
+            }
+        }
     }
     if (ci->invocation.globalOptions.enableMacroInLSP) {
         for (auto& file : ctx.curPackage->files) {
@@ -1787,6 +1824,7 @@ void TypeChecker::TypeCheckerImpl::PreSetDeclType(const ASTContext& ctx)
             continue; // Do not replace valid ty.
         }
         auto paramTys = GetFuncBodyParamTys(*fd->funcBody);
+        auto capTys = typeManager.NormalizeCapTys(GetFuncBodyCapTys(*fd->funcBody));
         Ptr<Ty> retTy = TypeManager::GetQuestTy();
         if (fd->TestAttr(Attribute::CONSTRUCTOR)) {
             // Static init has return type of unit. Instance init has return type of current typeDecl.
@@ -1794,7 +1832,7 @@ void TypeChecker::TypeCheckerImpl::PreSetDeclType(const ASTContext& ctx)
                 ? TypeManager::GetPrimitiveTy(TypeKind::TYPE_UNIT)
                 : (fd->outerDecl && fd->outerDecl->IsNominalDecl() ? fd->outerDecl->GetTy()
                                                                    : TypeManager::GetInvalidTy());
-            fd->SetTy(typeManager.GetFunctionTy(paramTys, retTy));
+            fd->SetTy(typeManager.GetFunctionTy(paramTys, retTy, {}, capTys));
             continue;
         }
         if (fd->funcBody->retType) {
@@ -1806,7 +1844,7 @@ void TypeChecker::TypeCheckerImpl::PreSetDeclType(const ASTContext& ctx)
             fd->funcBody->TestAttr(Attribute::C) || (fd->TestAttr(Attribute::FOREIGN) && IsUnsafeBackend(backendType));
         bool hasVariableLenArg = fd->hasVariableLenArg ||
             (!fd->funcBody->paramLists.empty() && fd->funcBody->paramLists[0]->hasVariableLenArg);
-        fd->SetTy(typeManager.GetFunctionTy(paramTys, retTy, {isCFunc, false, hasVariableLenArg}));
+        fd->SetTy(typeManager.GetFunctionTy(paramTys, retTy, {isCFunc, false, hasVariableLenArg}, capTys));
         if (fd->TestAttr(Attribute::IS_CHECK_VISITED)) {
             fd->funcBody->SetTy(fd->GetTy());
         }

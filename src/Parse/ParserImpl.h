@@ -191,6 +191,18 @@ private:
     {
         return Utils::In(GetContextualKeyword(), [this](const TokenKind& kind) { return Seeing(kind); });
     }
+    /**
+     * Checked exceptions: 'throws', 'performs' and 'captures' are recognized by spelling at the
+     * few positions where a clause may start, and stay ordinary identifiers everywhere else —
+     * reserving them would break existing code (`std.unittest.mock` exports a public `throws`
+     * function). The grammar is unconditional: every clause position is a parse error today, so
+     * recognizing them there changes no valid program, and what depends on the feature flag is
+     * what the clauses mean — obligations and metadata — not whether they parse.
+     */
+    inline bool SeeingChexcClause(const std::string& keyword)
+    {
+        return Seeing(TokenKind::IDENTIFIER) && lookahead.Value() == keyword;
+    }
     inline bool SeeingPrimaryKeyWordContext(TokenKind tk)
     {
         return Utils::In(GetContextualKeyword(), [this, &tk](const TokenKind& kind) { return Seeing({kind, tk}); });
@@ -241,6 +253,7 @@ private:
     bool parseDeclFile{false};
 
     bool enableEH{false};
+    bool enableChexc{false};
     Triple::BackendType backend{Triple::BackendType::CJNATIVE};
     bool calculateLineNum{false};
     // we store line number info from all tokens
@@ -525,6 +538,9 @@ private:
     void DiagMissingPropertyBody(AST::PropDecl& prop);
     void ParsePropBody(const std::set<AST::Modifier>& modifiers, AST::PropDecl& propDecl);
     OwnedPtr<AST::FuncDecl> ParsePropMemberDecl(const std::set<AST::Modifier>& modifiers);
+    /// Parse the 'performs' and 'throws' clauses of a function body, in that fixed order.
+    /// At most one clause of each kind, like 'where'.
+    void ParseCapabilityClauses(AST::FuncBody& fb);
     void ParseFuncGenericConstraints(const AST::FuncBody& fb);
     void ParsePropMemberBody(const ScopeKind& scopeKind, AST::FuncBody& fb);
     void ParseFuncParameters(const ScopeKind& scopeKind, AST::FuncBody& fb);
@@ -586,6 +602,26 @@ private:
         const Position& lParenPos, const Position& rParenPos, OwnedPtr<AST::Type> type);
     OwnedPtr<AST::FuncType> ParseFuncType(
         std::vector<OwnedPtr<AST::Type>> types, const Position& lParenPos, const Position& rParenPos);
+    /**
+     * Parse a checked-exception `throws` clause (experimental, gated on '--enable-chexc';
+     * recognized by spelling at clause positions, see SeeingChexcClause). Grammar:
+     *   declarations (@p isDeclClause true): `throws (T {, T})` | `throws ()` | `throws T {, T}`
+     *   function types (@p isDeclClause false): `throws (T {, T})` | `throws ()` | `throws T`
+     * The `...` marker is parsed but rejected with a diagnostic.
+     */
+    OwnedPtr<AST::ThrowsClause> ParseThrowsClause(bool isDeclClause);
+    /**
+     * Parse a checked-exception `captures` clause on a class or struct header (experimental,
+     * recognized by spelling at clause positions, see SeeingChexcClause).
+     * Grammar: `captures T {, T}` (bare list only). Reuses the ThrowsClause node shape.
+     */
+    OwnedPtr<AST::ThrowsClause> ParseCapturesClause();
+    /**
+     * Parse the `captures` clause of @p decl, diagnosing a second one.
+     * Called at each admissible clause position of a class/struct header: its position relative
+     * to the superclass list and `where` block is arbitrary.
+     */
+    void TryParseCapturesClause(AST::InheritableDecl& decl);
     OwnedPtr<AST::Type> ParsePrefixType();
     OwnedPtr<AST::GenericParamDecl> ParseGenericParamDecl();
     OwnedPtr<AST::Generic> ParseGeneric();
@@ -783,6 +819,7 @@ private:
     void ParseAttributeAnnotation(AST::Annotation& anno);
     void ParseOverflowAnnotation(AST::Annotation& anno);
     void ParseWhenAnnotation(AST::Annotation& anno);
+    void ParseAssumeThrowsAnnotation(AST::Annotation& anno);
     void ParseAnnotationArguments(AST::Annotation& anno);
     void ValidateDeprecatedAnnotationArgument(const Ptr<AST::LitConstExpr> lce, const std::string& name,
         const AST::LitConstKind& expectedKind, bool& isArgumentFound);

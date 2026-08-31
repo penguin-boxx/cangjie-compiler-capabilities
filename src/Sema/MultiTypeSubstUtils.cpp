@@ -48,6 +48,49 @@ std::set<Ptr<Ty>> GetDirectMappingTys(
 }
 
 // remove mappings not useful(either directly or transitively used) in tys
+namespace {
+/// The type parameters of @p candidates that @p ty actually uses. Unlike 'Ty::GetGenericTyArgs',
+/// this looks past 'typeArgs' into a functional type's capability list: a list sits outside
+/// 'typeArgs' so that capabilities never reach code generation, but a type parameter reachable only
+/// through one is still used by the type, and dropping its mapping here would leave the raw
+/// instantiation placeholder in the list, where nothing can discharge it. Deciding *which*
+/// substitutions are needed is not deciding type arguments -- those still ignore capability lists.
+void CollectUsedTyVarsInto(Ptr<Ty> ty, const std::set<Ptr<TyVar>>& candidates, std::set<Ptr<GenericsTy>>& used)
+{
+    if (!ty || !ty->HasGeneric()) {
+        return;
+    }
+    if (ty->IsGeneric()) {
+        auto generics = RawStaticCast<GenericsTy*>(ty.get());
+        if (candidates.count(generics) > 0) {
+            (void)used.emplace(generics);
+        }
+        return;
+    }
+    for (auto arg : ty->typeArgs) {
+        CollectUsedTyVarsInto(arg, candidates, used);
+    }
+    // The one addition to 'Ty::GetGenericTyArgs': a functional type's capability list sits outside
+    // 'typeArgs', so a type parameter reachable only through one is invisible there -- its mapping
+    // would be filtered away here and the raw instantiation placeholder would survive into the
+    // checked type. Deciding *which* substitutions are needed is not deciding type arguments,
+    // which still ignore capability lists entirely. Everything else about the traversal matches,
+    // deliberately: widening it changes which mappings survive for ordinary code too.
+    if (auto funcTy = DynamicCast<FuncTy*>(ty)) {
+        for (auto cap : funcTy->capTys) {
+            CollectUsedTyVarsInto(cap, candidates, used);
+        }
+    }
+}
+
+std::set<Ptr<GenericsTy>> CollectUsedTyVars(Ptr<Ty> ty, const std::set<Ptr<TyVar>>& candidates)
+{
+    std::set<Ptr<GenericsTy>> used;
+    CollectUsedTyVarsInto(ty, candidates, used);
+    return used;
+}
+} // namespace
+
 SubstPack FilterUnusedMapping(const SubstPack& mapping, const std::set<Ptr<Ty>>& tys)
 {
     std::set<Ptr<TyVar>> allu;
@@ -61,7 +104,7 @@ SubstPack FilterUnusedMapping(const SubstPack& mapping, const std::set<Ptr<Ty>>&
     }
     // collect inst tyvars directly used
     for (auto ty : tys) {
-        for (auto tvu : ty->GetGenericTyArgs(allu)) {
+        for (auto tvu : CollectUsedTyVars(ty, allu)) {
             reachable.emplace(StaticCast<TyVar*>(mapping.u2i.at(tvu)));
         }
     }
@@ -100,7 +143,7 @@ MultiTypeSubst FilterUnusedMapping(const MultiTypeSubst& mapping, const std::set
     std::queue<Ptr<TyVar>> worklist;
     // collect tyvars directly used
     for (auto ty : tys) {
-        reachable.merge(ty->GetGenericTyArgs(all));
+        reachable.merge(CollectUsedTyVars(ty, all));
     }
     for (auto tv : reachable) {
         worklist.push(tv);
@@ -204,6 +247,17 @@ std::unordered_set<Ptr<Ty>> GetAllGenericTys(Ptr<Ty> const ty)
         }
         for (auto it : curTy->typeArgs) {
             q.emplace(it);
+        }
+        // Checked exceptions: a functional type's capability list is deliberately outside
+        // typeArgs (so capabilities never reach code generation), but a type parameter
+        // reachable only through it still needs a substitution — otherwise the raw
+        // instantiation placeholder survives into capability checking, where it is neither
+        // demandable nor dischargeable. Capability lists still take no part in deciding type
+        // arguments; this only makes the resulting substitution complete.
+        if (auto funcTy = DynamicCast<FuncTy*>(curTy)) {
+            for (auto cap : funcTy->capTys) {
+                q.emplace(cap);
+            }
         }
     }
     return res;

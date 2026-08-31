@@ -1284,21 +1284,54 @@ void ParserImpl::ParseInheritedTypes(InheritableDecl& decl)
     }
 }
 
+void ParserImpl::TryParseCapturesClause(InheritableDecl& decl)
+{
+    // A class carries at most one `captures` clause, like one `where`; a second is diagnosed and
+    // dropped so the rest of the header still parses.
+    while (SeeingChexcClause("captures")) {
+        auto clausePos = lookahead.Begin();
+        auto clause = ParseCapturesClause();
+        if (!decl.capturesClause) {
+            decl.capturesClause = std::move(clause);
+        } else {
+            ParseDiagnoseRefactor(DiagKindRefactor::parse_duplicate_captures_clause, clausePos);
+        }
+    }
+}
+
 void ParserImpl::ParseInterfaceDeclOrClassDeclGeneric(InheritableDecl& ret)
 {
     if (Skip(TokenKind::LT)) {
         ret.EnableAttr(Attribute::GENERIC);
         ret.generic = ParseGeneric();
     }
+    // Checked exceptions (experimental): a class may declare a `captures` clause; its position
+    // relative to the superclass list and the `where` block is arbitrary.
+    // Interfaces cannot capture: on them `captures` follows the natural error path below.
+    bool allowCaptures = ret.astKind == ASTKind::CLASS_DECL;
+    // `captures` is an ordinary identifier outside clause position, so the
+    // "expected '{' or '<'" recovery below would otherwise swallow the clause.
+    if (allowCaptures && SeeingChexcClause("captures")) {
+        TryParseCapturesClause(ret);
+    }
     if (SeeingAny({TokenKind::IDENTIFIER, TokenKind::COLON}) || SeeingContextualKeyword()) {
         ParseDiagnoseRefactor(DiagKindRefactor::parse_expected_lt_brace, lookahead, ConvertToken(lookahead));
         ConsumeUntilDecl(TokenKind::LCURL);
     }
+    if (allowCaptures) {
+        TryParseCapturesClause(ret);
+    }
     if (Skip(TokenKind::UPPERBOUND)) {
         ParseInheritedTypes(ret);
     }
+    if (allowCaptures) {
+        TryParseCapturesClause(ret);
+    }
     if (Skip(TokenKind::WHERE)) {
         ParseConstraints(ret);
+    }
+    if (allowCaptures) {
+        TryParseCapturesClause(ret);
     }
 }
 
@@ -1594,13 +1627,18 @@ OwnedPtr<StructDecl> ParserImpl::ParseStructDecl(
         ret->generic = ParseGeneric();
         ret->EnableAttr(Attribute::GENERIC);
     }
+    // Checked exceptions (experimental): a struct may declare a `captures` clause; its position
+    // relative to the interface list and the `where` block is arbitrary.
+    TryParseCapturesClause(*ret);
     if (Skip(TokenKind::UPPERBOUND)) {
         ret->upperBoundPos = lastToken.Begin();
         ParseStructInheritedTypes(*ret);
     }
+    TryParseCapturesClause(*ret);
     if (Skip(TokenKind::WHERE)) {
         ParseConstraints(*ret);
     }
+    TryParseCapturesClause(*ret);
     // Used to parse nested structDecl or primary ctor decl.
     SetPrimaryDecl(ret->identifier, ret->identifier.IsRaw());
     ret->body = ParseStructBody(*ret);
@@ -2246,6 +2284,10 @@ void ParserImpl::ParsePropMemberBody(const ScopeKind& scopeKind, FuncBody& fb)
             DiagGetOrSetCannotBeGeneric("setter", *fb.generic);
         }
     }
+    // Checked exceptions (experimental): property accessors may carry capability clauses,
+    // e.g. `get() throws GException { ... }` -- clauses are allowed on every callable -- with
+    // 'performs' preceding 'throws' -- enforced by the shared helper.
+    ParseCapabilityClauses(fb);
     if (!Seeing(TokenKind::LCURL)) {
         ParseDiagnoseRefactor(DiagKindRefactor::parse_expected_left_brace, lookahead, ConvertToken(lookahead));
         ConsumeUntilDecl(TokenKind::LCURL);
@@ -2293,7 +2335,11 @@ OwnedPtr<FuncBody> ParserImpl::ParseFuncBody(ScopeKind scopeKind)
             enableThis = false;
         }
     }
+    // The three blocks order freely after the return type: capability clauses, then 'where', then
+    // capability clauses again, so 'throws E where C performs H' and every other permutation parse.
+    ParseCapabilityClauses(*ret);
     ParseFuncGenericConstraints(*ret);
+    ParseCapabilityClauses(*ret);
     if (Seeing(TokenKind::LCURL)) {
         ret->body = ParseBlock(ScopeKind::FUNC_BODY);
         ret->end = ret->body->end;
@@ -2302,6 +2348,9 @@ OwnedPtr<FuncBody> ParserImpl::ParseFuncBody(ScopeKind scopeKind)
         ret->end = lastGC->end;
     } else {
         ret->end = ret->retType ? ret->retType->end : paramsEndToken.End();
+    }
+    if (!ret->body && ret->throwsClause && ret->end < ret->throwsClause->end) {
+        ret->end = ret->throwsClause->end;
     }
     return ret;
 }
@@ -2323,6 +2372,39 @@ void ParserImpl::ParseFuncParameters(const ScopeKind& scopeKind, FuncBody& fb)
         ParseDiagnoseRefactor(scopeKind == ScopeKind::MAIN_BODY ? DiagKindRefactor::parse_expected_left_paren :
             DiagKindRefactor::parse_expected_lt_paren, lookahead, ConvertToken(lookahead));
         fb.EnableAttr(Attribute::HAS_BROKEN);
+    }
+}
+
+/**
+ * Checked exceptions and effects: parse the capability clauses of a function body, in the fixed
+ * order 'performs' then 'throws'. Called on both sides of the generic constraints, which may
+ * precede or follow the clauses. A declaration carries at most one clause of each kind, like
+ * 'where'; a second is diagnosed and dropped so the rest of the declaration still parses.
+ */
+void ParserImpl::ParseCapabilityClauses(FuncBody& fb)
+{
+    while (SeeingChexcClause("performs") || SeeingChexcClause("throws")) {
+        bool isPerforms = SeeingChexcClause("performs");
+        auto clausePos = lookahead.Begin();
+        // On a DECLARATION the 'where', 'performs' and 'throws' blocks order freely, each at most
+        // once (keyword scheme rule 9): they are keyword-led, and 'where' already sits anywhere,
+        // so a fixed order would buy nothing. Functional types are the opposite case -- there the
+        // pre-arrow clause sequence is one grammar production and 'performs' precedes 'throws',
+        // enforced where such a type is parsed.
+        auto& slot = isPerforms ? fb.performsClause : fb.throwsClause;
+        if (slot) {
+            ParseDiagnoseRefactor(isPerforms ? DiagKindRefactor::parse_duplicate_performs_clause
+                                             : DiagKindRefactor::parse_duplicate_throws_clause,
+                clausePos);
+            (void)ParseThrowsClause(true); // Parse and drop the duplicate to recover.
+            continue;
+        }
+        slot = ParseThrowsClause(true);
+        if (isPerforms && slot->hasEllipsis) {
+            // Effect requirements are never inferred, so there is nothing for the marker to open.
+            ParseDiagnoseRefactor(DiagKindRefactor::parse_ellipsis_in_clause, clausePos, "performs");
+            slot->hasEllipsis = false;
+        }
     }
 }
 

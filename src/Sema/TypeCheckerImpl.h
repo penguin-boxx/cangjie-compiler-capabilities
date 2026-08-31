@@ -820,6 +820,12 @@ private:
     bool ChkFuncParam(ASTContext& ctx, AST::Ty& target, AST::FuncParam& fp);
     Ptr<AST::Ty> SynIsExpr(ASTContext& ctx, AST::IsExpr& ie);
     bool ChkIsExpr(ASTContext& ctx, AST::Ty& target, AST::IsExpr& ie);
+    /**
+     * Checked exceptions: the type a runtime cast or type pattern binds at, read pessimistically from
+     * the written @p target. Diagnoses a clause written in the target and a function type in an
+     * invariant position of it.
+     */
+    Ptr<AST::Ty> CastTargetTy(AST::Type& target);
     Ptr<AST::Ty> SynAsExpr(ASTContext& ctx, AST::AsExpr& ae);
     bool ChkAsExpr(ASTContext& ctx, AST::Ty& target, AST::AsExpr& ae);
     Ptr<AST::Ty> SynOptionalChainExpr(const CheckerContext& ctx, AST::OptionalChainExpr& oce);
@@ -1302,6 +1308,35 @@ private:
     void CheckEntryFunc(AST::FuncDecl& fd);
     bool CheckNormalFuncBody(ASTContext& ctx, AST::FuncBody& fb, std::vector<Ptr<AST::Ty>>& paramTys);
     bool CheckFuncBody(ASTContext& ctx, AST::FuncBody& fb);
+    /**
+     * Checked exceptions: validate an elaborated 'throws' or 'captures' clause -- every entry
+     * must be a subtype of core 'Exception' (type parameters allowed when suitably bounded),
+     * and no concrete entry may be an unchecked exception type.
+     * @p clauseKeyword names the clause in diagnostics ("throws" or "captures").
+     */
+    void ChkThrowsClauseTypes(ASTContext& ctx, AST::ThrowsClause& clause, const std::string& clauseKeyword = "throws",
+        bool allowCommands = false);
+    /// True when every instantiation of @p genericTy is an unchecked exception type -- one of its
+    /// own bounds already is -- so an entry naming it can never require a capability.
+    bool IsUncheckedBoundedGeneric(const AST::Ty& genericTy);
+    /** Checked exceptions: diagnose 'throws' clauses on foreign/C functions and CFunc types. */
+    void ChkThrowsClauseOfFuncBody(ASTContext& ctx, AST::FuncBody& fb);
+    /// Effects: validate that every 'performs' entry is a 'Command' subtype.
+    void ChkPerformsClauseTypes(ASTContext& ctx, AST::ThrowsClause& clause);
+    /// Checked exceptions: validate the '@AssumeThrows' annotations of a package.
+    void ChkAssumeThrowsAnnotations(ASTContext& ctx, AST::Package& pkg);
+    /// Checked exceptions: validate what the imported packages' capability metadata allows.
+    void ChkImportedCapabilityMetadata(AST::Package& pkg);
+    /// Checked exceptions: reject a call that leaves a clause-only type parameter to inference.
+    void ChkClauseOnlyTypeArguments(const AST::CallExpr& ce, const AST::FuncDecl& func) const;
+    /**
+     * Checked exceptions: validate the 'captures' clause of a class or struct declaration
+     * -- elaborate and validate its entries like 'throws' entries and ban
+     * primary constructors on capturing declarations (they cannot capture; author ruling).
+     */
+    void ChkCapturesClauseOfDecl(ASTContext& ctx, AST::InheritableDecl& decl);
+    /// Checked exceptions: a subclass of a capturing class must capture at least what it captures.
+    void ChkCapturesSuperclassCoverage(const AST::ClassDecl& cd) const;
     void AddRetTypeNode(AST::FuncBody& fb) const;
     bool CheckBodyRetType(ASTContext& ctx, AST::FuncBody& fb);
     void CheckFuncParamList(ASTContext& ctx, AST::FuncParamList& fpl);

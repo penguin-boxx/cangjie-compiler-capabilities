@@ -337,7 +337,15 @@ struct ASTHasherImpl {
     template <int whatTypeToHash> void HashFuncBody(const FuncBody& funcBody)
     {
         HashNode<whatTypeToHash>(funcBody);
-        SUPERHash<whatTypeToHash>(funcBody.paramLists, funcBody.retType, funcBody.body, funcBody.generic);
+        SUPERHash<whatTypeToHash>(funcBody.paramLists, funcBody.retType, funcBody.performsClause, funcBody.throwsClause,
+            funcBody.body, funcBody.generic);
+    }
+
+    template <int whatTypeToHash> void HashThrowsClause(const ThrowsClause& tc)
+    {
+        HashNode<whatTypeToHash>(tc);
+        // `...` decides whether inference contributes to the list, so it is part of the hash.
+        SUPERHash<whatTypeToHash>(tc.throwsPos, tc.capTypes, tc.hasEllipsis);
     }
 
     template <int whatTypeToHash> void HashFuncParamList(const FuncParamList& fpl)
@@ -372,6 +380,17 @@ struct ASTHasherImpl {
             }
         }
         SUPERHash<whatTypeToHash>(im.hasDoubleColon);
+        // Checked exceptions (ledger E3): an '@AssumeThrows' annotation imposes
+        // obligations on every call into the imported package, so changing its list changes what
+        // the file's declarations must supply -- exactly like changing the import itself. Without
+        // this the declarations keep their hashes and an incremental build never re-checks them,
+        // leaving the stale obligations in place. Import-spec changes roll the package back to a
+        // full compilation, which is coarse but the granularity this hash already has.
+        for (auto& anno : is.annotations) {
+            if (anno && anno->assumeThrows) {
+                SUPERHash<whatTypeToHash>(anno->assumeThrows);
+            }
+        }
     }
     template <int whatTypeToHash> void HashPackageSpec(const PackageSpec& ps)
     {
@@ -653,7 +672,7 @@ struct ASTHasherImpl {
     template <int whatTypeToHash> void HashFuncType(const FuncType& ft)
     {
         HashType<whatTypeToHash>(ft);
-        SUPERHash<whatTypeToHash>(ft.paramTypes, ft.retType, ft.isC);
+        SUPERHash<whatTypeToHash>(ft.paramTypes, ft.performsClause, ft.throwsClause, ft.retType, ft.isC);
     }
     template <int whatTypeToHash> void HashOptionType(const OptionType& ot)
     {
@@ -1091,6 +1110,11 @@ struct ASTHasherImpl {
         SUPERHash<NON_POSITION>(decl.generic);
         if (auto func = DynamicCast<FuncDecl*>(&decl)) {
             SUPERHash<NON_POSITION>(func->funcBody->paramLists[0]->params);
+            // The capability clauses (experimental) are part of the API surface: a 'performs'
+            // or 'throws' change alters what every call site must supply (review finding F1 --
+            // without this, an incremental build never re-checks the callers).
+            SUPERHash<NON_POSITION>(func->funcBody->performsClause);
+            SUPERHash<NON_POSITION>(func->funcBody->throwsClause);
             if (func->funcBody->retType) {
                 SUPERHash<NON_POSITION>(func->funcBody->retType);
             } else {
@@ -1202,10 +1226,23 @@ ASTHasher::hash_type ASTHasher::SigHash(const Decl& decl)
     if (auto typeAlias = DynamicCast<TypeAliasDecl*>(&decl)) {
         a.HashTypeAlias(*typeAlias);
     }
+    // The checked-exception capability clauses (experimental) are part of the declaration's
+    // call-site contract: a change alters what every caller must supply, so it must spread to
+    // dependents exactly like a signature change. HashMemberSignature alone is not enough --
+    // it feeds the virtual/API hashes, while THIS hash fills DeclHash.sig, which is what the
+    // pollution analysis spreads on (a clause-only change otherwise classifies as 'body' and
+    // stops at the declaration itself).
+    if (auto func = DynamicCast<FuncDecl*>(&decl); func && func->funcBody) {
+        a.SUPERHash<NON_POSITION>(func->funcBody->performsClause);
+        a.SUPERHash<NON_POSITION>(func->funcBody->throwsClause);
+    }
     if (auto type = DynamicCast<InheritableDecl*>(&decl); type && type->astKind != ASTKind::EXTEND_DECL) {
         for (auto& parent : SortParentTypes(*type)) {
             (void)a.Hash<NON_POSITION>(parent);
         }
+        // The checked-exception `captures` clause (experimental) changes what every constructor
+        // of the type requires at its call sites, so it is part of the type's signature.
+        a.SUPERHash<NON_POSITION>(type->capturesClause);
     }
     return a.value;
 }

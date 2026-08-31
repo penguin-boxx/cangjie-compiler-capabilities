@@ -271,6 +271,9 @@ OwnedPtr<Decl> ASTCloner::CloneStructDecl(const StructDecl& sd, const VisitFunc&
     for (auto& it : sd.inheritedTypes) {
         ret->inheritedTypes.push_back(CloneType(it.get(), visitor));
     }
+    if (sd.capturesClause) {
+        ret->capturesClause = CloneThrowsClause(*sd.capturesClause, visitor);
+    }
     ret->body = CloneNode(sd.body.get(), visitor);
     if (sd.generic) {
         ret->generic = CloneGeneric(*sd.generic, visitor);
@@ -285,6 +288,9 @@ OwnedPtr<Decl> ASTCloner::CloneClassDecl(const ClassDecl& cd, const VisitFunc& v
     auto ret = MakeOwned<ClassDecl>();
     for (auto& it : cd.inheritedTypes) {
         ret->inheritedTypes.push_back(CloneType(it.get(), visitor));
+    }
+    if (cd.capturesClause) {
+        ret->capturesClause = CloneThrowsClause(*cd.capturesClause, visitor);
     }
     ret->body = CloneNode(cd.body.get(), visitor);
     if (cd.generic) {
@@ -385,11 +391,35 @@ OwnedPtr<OptionType> ASTCloner::CloneOptionType(const OptionType& node, const Vi
     return ret;
 }
 
+OwnedPtr<ThrowsClause> ASTCloner::CloneThrowsClause(const ThrowsClause& node, const VisitFunc& visitor)
+{
+    auto ret = MakeOwned<ThrowsClause>();
+    CopyNodeField(ret.get(), node);
+    ret->throwsPos = node.throwsPos;
+    ret->leftParenPos = node.leftParenPos;
+    ret->rightParenPos = node.rightParenPos;
+    ret->commaPosVector = node.commaPosVector;
+    // The `...` marker decides whether inference stays enabled for the declaration
+    //; it is a plain member, not a Node-level field, so CopyNodeField
+    // does not carry it.
+    ret->hasEllipsis = node.hasEllipsis;
+    for (auto& capType : node.capTypes) {
+        ret->capTypes.emplace_back(CloneType(capType.get(), visitor));
+    }
+    return ret;
+}
+
 OwnedPtr<FuncType> ASTCloner::CloneFuncType(const FuncType& node, const VisitFunc& visitor)
 {
     auto ret = MakeOwned<FuncType>();
     for (auto& paramType : node.paramTypes) {
         ret->paramTypes.emplace_back(CloneType(paramType.get(), visitor));
+    }
+    if (node.performsClause) {
+        ret->performsClause = CloneThrowsClause(*node.performsClause, visitor);
+    }
+    if (node.throwsClause) {
+        ret->throwsClause = CloneThrowsClause(*node.throwsClause, visitor);
     }
     ret->retType = CloneType(node.retType.get(), visitor);
     ret->isC = node.isC;
@@ -1377,6 +1407,12 @@ OwnedPtr<FuncBody> ASTCloner::CloneFuncBody(const FuncBody& fb, const VisitFunc&
     ret->doubleArrowPos = fb.doubleArrowPos;
     ret->colonPos = fb.colonPos;
     ret->retType = CloneType(fb.retType.get(), visitor);
+    if (fb.performsClause) {
+        ret->performsClause = CloneThrowsClause(*fb.performsClause, visitor);
+    }
+    if (fb.throwsClause) {
+        ret->throwsClause = CloneThrowsClause(*fb.throwsClause, visitor);
+    }
     ret->body = CloneExpr(fb.body.get(), visitor);
     if (fb.generic) {
         ret->generic = CloneGeneric(*fb.generic, visitor);
@@ -1438,6 +1474,9 @@ OwnedPtr<Annotation> ASTCloner::CloneAnnotation(const Annotation& annotation, co
     ret->attrCommas = annotation.attrCommas;
     ret->rsquarePos = annotation.rsquarePos;
     ret->lsquarePos = annotation.lsquarePos;
+    if (annotation.assumeThrows) {
+        ret->assumeThrows = CloneThrowsClause(*annotation.assumeThrows, visitor);
+    }
     for (auto& arg : annotation.args) {
         ret->args.emplace_back(CloneNode(arg.get(), visitor));
     }
@@ -1529,6 +1568,7 @@ template <typename NodeT> OwnedPtr<NodeT> ASTCloner::CloneNode(Ptr<NodeT> node, 
         [&visitor](const StructBody& rb) { return OwnedPtr<Node>(CloneStructBody(rb, visitor)); },
         [&visitor](const InterfaceBody& ib) { return OwnedPtr<Node>(CloneInterfaceBody(ib, visitor)); },
         [&visitor](const GenericConstraint& gc) { return OwnedPtr<Node>(CloneGenericConstraint(gc, visitor)); },
+        [&visitor](const ThrowsClause& tc) { return OwnedPtr<Node>(CloneThrowsClause(tc, visitor)); },
         [&visitor](const FuncBody& fb) { return OwnedPtr<Node>(CloneFuncBody(fb, visitor)); },
         [&visitor](const FuncParamList& fpl) { return OwnedPtr<Node>(CloneFuncParamList(fpl, visitor)); },
         [&visitor](const FuncArg& fa) { return OwnedPtr<Node>(CloneFuncArg(fa, visitor)); },

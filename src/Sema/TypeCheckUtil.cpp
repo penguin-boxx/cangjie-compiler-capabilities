@@ -10,8 +10,10 @@
  * This file implements the utility functions for TypeCheck.
  */
 
-#include "TypeCheckUtil.h"
+#include <unordered_set>
+
 #include "Promotion.h"
+#include "TypeCheckUtil.h"
 
 #include <map>
 #include <set>
@@ -261,6 +263,279 @@ std::vector<Ptr<Ty>> GetFuncBodyParamTys(const FuncBody& fb)
         ret.emplace_back(param->GetTy() ? param->GetTy() : TypeManager::GetInvalidTy());
     }
     return ret;
+}
+
+namespace {
+/**
+ * Expands one capability list entry: a tuple of exceptions — spelled directly or
+ * reached through type aliases — is a capability list, so its elements are spliced into the list.
+ * Expansion is recursive, since an alias tuple may contain further aliases; the visited set
+ * guards against a cyclic alias, which the type checker reports separately.
+ */
+void ExpandCapabilityEntry(Ptr<Ty> ty, std::vector<Ptr<Ty>>& out, std::unordered_set<Ptr<const Ty>>& visiting)
+{
+    if (!Ty::IsTyCorrect(ty)) {
+        out.emplace_back(TypeManager::GetInvalidTy());
+        return;
+    }
+    if (auto tuple = DynamicCast<TupleTy*>(ty)) {
+        if (!visiting.emplace(ty).second) {
+            return; // Cyclic alias: stop expanding, the cycle is diagnosed elsewhere.
+        }
+        for (auto element : tuple->typeArgs) {
+            ExpandCapabilityEntry(element, out, visiting);
+        }
+        visiting.erase(ty);
+        return;
+    }
+    // An entry may still be the alias itself rather than its target, depending on how far
+    // elaboration has progressed at the call site; resolve it and expand the target.
+    if (auto alias = DynamicCast<TypeAliasTy*>(ty); alias && alias->declPtr && alias->declPtr->type) {
+        if (!visiting.emplace(ty).second) {
+            return;
+        }
+        ExpandCapabilityEntry(alias->declPtr->type->GetTy(), out, visiting);
+        visiting.erase(ty);
+        return;
+    }
+    out.emplace_back(ty);
+}
+
+bool ContainsFuncTyImpl(Ptr<const Ty> ty, std::unordered_set<Ptr<const Ty>>& seen)
+{
+    if (!ty || !seen.emplace(ty).second) {
+        return false;
+    }
+    if (auto alias = DynamicCast<const TypeAliasTy*>(ty); alias && alias->declPtr && alias->declPtr->type) {
+        // An alias is transparent here: what it names is what the cast would test.
+        return ContainsFuncTyImpl(alias->declPtr->type->GetTy(), seen);
+    }
+    if (auto funcTy = DynamicCast<const FuncTy*>(ty); funcTy && !funcTy->isC) {
+        return true;
+    }
+    return std::any_of(
+        ty->typeArgs.begin(), ty->typeArgs.end(), [&seen](auto arg) { return ContainsFuncTyImpl(arg, seen); });
+}
+
+} // namespace
+
+bool ContainsFuncTy(Ptr<Ty> targetTy)
+{
+    if (!Ty::IsTyCorrect(targetTy)) {
+        return false;
+    }
+    std::unordered_set<Ptr<const Ty>> seen;
+    return ContainsFuncTyImpl(targetTy, seen);
+}
+
+std::vector<Ptr<Ty>> ExpandCapabilityList(const std::vector<OwnedPtr<Type>>& capTypes)
+{
+    std::vector<Ptr<Ty>> ret;
+    std::unordered_set<Ptr<const Ty>> visiting;
+    for (auto& capType : capTypes) {
+        CJC_NULLPTR_CHECK(capType);
+        auto ty = capType->GetTy();
+        ExpandCapabilityEntry(Ty::IsInitialTy(ty) ? TypeManager::GetInvalidTy() : ty, ret, visiting);
+    }
+    return ret;
+}
+
+std::vector<Ptr<Ty>> GetFuncBodyCapTys(const FuncBody& fb)
+{
+    // Checked exceptions: the declaration's 'throws' clause types (elaborated during PreCheck's
+    // name resolution) become the capability list of the declaration's functional type.
+    // Foreign/C functions never carry capabilities; the clause on them is diagnosed separately.
+    bool isCLike = fb.TestAttr(Attribute::C) || (fb.funcDecl && fb.funcDecl->TestAttr(Attribute::FOREIGN));
+    if (isCLike) {
+        return {};
+    }
+    // Effects: 'performs' entries join the same list, ahead of the 'throws' ones
+    //. The kinds stay apart by type, not by position: an effect entry is a
+    // 'Command' subtype and an exception entry an 'Exception' subtype, and discharge is by
+    // subtyping, so neither can ever satisfy the other.
+    std::vector<Ptr<Ty>> caps;
+    if (fb.performsClause) {
+        caps = ExpandCapabilityList(fb.performsClause->capTypes);
+    }
+    if (fb.throwsClause) {
+        auto thrown = ExpandCapabilityList(fb.throwsClause->capTypes);
+        caps.insert(caps.end(), thrown.begin(), thrown.end());
+    }
+    return caps;
+}
+
+std::vector<Ptr<Ty>> GetInstantiatedAccessorCapTys(TypeManager& tyMgr, const FuncDecl& accessor, Ptr<Ty> receiverTy)
+{
+    if (!accessor.funcBody) {
+        return {};
+    }
+    // Entries that failed elaboration are dropped rather than forwarded: a FuncTy marks itself
+    // invalid when any capability ty is incorrect, and the desugared callee expressions this
+    // feeds have never carried an invalid ty.
+    // An IMPORTED accessor has no clause node: the loader rebuilds declarations from the .cjo,
+    // where the capability list lives on the functional type. Fall back to it,
+    // so a 'throws' clause on a property accessor is demanded across a package boundary too.
+    auto declared = GetFuncBodyCapTys(*accessor.funcBody);
+    if (declared.empty() && accessor.TestAttr(Attribute::IMPORTED)) {
+        if (auto funcTy = DynamicCast<FuncTy*>(accessor.GetTy())) {
+            declared = funcTy->capTys;
+        }
+    }
+    std::vector<Ptr<Ty>> caps;
+    bool anyGeneric = false;
+    for (auto cap : declared) {
+        if (!Ty::IsTyCorrect(cap)) {
+            continue;
+        }
+        anyGeneric = anyGeneric || cap->HasGeneric();
+        caps.emplace_back(cap);
+    }
+    if (!anyGeneric || !Ty::IsTyCorrect(receiverTy)) {
+        return caps;
+    }
+    // The accessor may be inherited or reached through an extend, so the mapping comes from the
+    // RECEIVER's type — which walks extends and the inheritance chain — not from outerDecl.
+    MultiTypeSubst mts;
+    tyMgr.GenerateGenericMapping(mts, *receiverTy);
+    // Collapse to a single-valued substitution: picking one of several candidates would make
+    // user-visible diagnostics depend on pointer order, so an ambiguous variable keeps its
+    // un-instantiated entry.
+    TypeSubst subst;
+    for (auto& [tv, candidates] : mts) {
+        if (candidates.size() == 1) {
+            subst.emplace(tv, *candidates.begin());
+        }
+    }
+    if (subst.empty()) {
+        return caps;
+    }
+    for (auto& cap : caps) {
+        // Per capability, never on the whole FuncTy: instantiation reduces against
+        // GetAllGenericTys, which is typeArgs-only and therefore blind to capTys.
+        auto inst = tyMgr.GetInstantiatedTy(cap, subst);
+        if (Ty::IsTyCorrect(inst)) {
+            cap = inst;
+        }
+    }
+    // Instantiation may have made an entry unchecked or covered by a sibling; the caller demands
+    // the semantic form, as every consumer of a list does.
+    return tyMgr.NormalizeCapTys(caps);
+}
+
+std::vector<Ptr<Ty>> GetDeclCapturesCapTys(const Decl& decl)
+{
+    // Checked exceptions: the 'captures' clause types of a class or struct declaration
+    //, elaborated during type check. Only supply/demand material: entries whose
+    // types failed elaboration are skipped (their errors are reported at the clause).
+    auto inheritable = DynamicCast<const InheritableDecl*>(&decl);
+    if (!inheritable || !inheritable->capturesClause) {
+        return {};
+    }
+    // Capability list aliases apply here as well; entries whose types failed
+    // elaboration are dropped, their errors having been reported at the clause.
+    auto expanded = ExpandCapabilityList(inheritable->capturesClause->capTypes);
+    std::vector<Ptr<Ty>> ret;
+    for (auto ty : expanded) {
+        if (Ty::IsTyCorrect(ty)) {
+            ret.emplace_back(ty);
+        }
+    }
+    return ret;
+}
+
+bool IsCapturingTy(Ptr<Ty> ty)
+{
+    if (!Ty::IsTyCorrect(ty)) {
+        return false;
+    }
+    auto decl = Ty::GetDeclOfTy<InheritableDecl>(ty);
+    return decl && !GetDeclCapturesCapTys(*decl).empty();
+}
+
+/// Effects: an entry is an effect requirement iff it is a 'Command' subtype, and
+/// an exception requirement iff it is an 'Exception' subtype. The two roots are disjoint, which is
+/// what lets one capability list carry both kinds (decision D17).
+bool IsCommandTy(TypeManager& typeManager, const ImportManager& importManager, Ptr<Ty> ty)
+{
+    if (!Ty::IsTyCorrect(ty)) {
+        return false;
+    }
+    auto command = importManager.GetImportedDecl(EFFECT_PACKAGE_NAME, CLASS_COMMAND);
+    if (!command) {
+        return false; // No effect handlers in this build: nothing is a command.
+    }
+    // Compare DECLARATIONS, not types: 'Command' is generic, so a subtype test against the
+    // uninstantiated 'Command<T>' fails for a concrete 'C <: Command<Int64>'.
+    if (Ty::GetDeclPtrOfTy(ty) == command) {
+        return true;
+    }
+    for (auto superTy : typeManager.GetAllSuperTys(*ty)) {
+        if (Ty::GetDeclPtrOfTy(superTy) == command) {
+            return true;
+        }
+    }
+    return false;
+}
+
+namespace {
+/// Collect the generic parameters @p ty reaches, following 'FuncTy::capTys' as well as 'typeArgs'.
+/// Mirrors 'CollectUsedTyVarsInto' of the substitution filter; kept separate because that one is
+/// candidate-filtered and lives in the substitution utilities.
+void CollectTyVarsThroughCaps(Ptr<Ty> ty, std::set<Ptr<GenericsTy>>& found)
+{
+    if (!ty || !ty->HasGeneric()) {
+        return;
+    }
+    if (ty->IsGeneric()) {
+        (void)found.emplace(RawStaticCast<GenericsTy*>(ty.get()));
+        return;
+    }
+    for (auto arg : ty->typeArgs) {
+        CollectTyVarsThroughCaps(arg, found);
+    }
+    if (auto funcTy = DynamicCast<FuncTy*>(ty)) {
+        for (auto cap : funcTy->capTys) {
+            CollectTyVarsThroughCaps(cap, found);
+        }
+    }
+}
+} // namespace
+
+std::set<Ptr<GenericsTy>> CollectClauseOnlyTyVars(Ptr<Ty> declTy)
+{
+    if (!Ty::IsTyCorrect(declTy) || !declTy->HasGeneric()) {
+        return {};
+    }
+    std::set<Ptr<GenericsTy>> throughCaps;
+    CollectTyVarsThroughCaps(declTy, throughCaps);
+    if (throughCaps.empty()) {
+        return {};
+    }
+    // The same candidate-filtered walk inference itself uses, over exactly the parameters the
+    // capability-aware walk found: what it misses is what only a clause mentions.
+    auto visibleToInference = declTy->GetGenericTyArgs(throughCaps);
+    std::set<Ptr<GenericsTy>> clauseOnly;
+    for (auto tyVar : throughCaps) {
+        if (visibleToInference.count(tyVar) == 0) {
+            (void)clauseOnly.emplace(tyVar);
+        }
+    }
+    return clauseOnly;
+}
+
+bool IsUncheckedExceptionTy(TypeManager& typeManager, const ImportManager& importManager, Ptr<Ty> ty)
+{
+    // Checked exceptions: an exception type is unchecked iff it is a subtype of
+    // the core 'UncheckedException' class. When std.core does not provide the class (compiling
+    // an older or partial core during bootstrap), every exception type is checked.
+    if (!Ty::IsTyCorrect(ty)) {
+        return false;
+    }
+    auto unchecked = importManager.GetCoreDecl<ClassDecl>(CLASS_UNCHECKED_EXCEPTION);
+    if (!unchecked || !Ty::IsTyCorrect(unchecked->GetTy())) {
+        return false;
+    }
+    return typeManager.IsSubtype(ty, unchecked->GetTy());
 }
 
 // Generate type mapping for src is an override or implement of target.

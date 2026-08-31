@@ -211,6 +211,40 @@ OwnedPtr<AST::Type> ParserImpl::ParseTypeWithParen()
     if (Skip(TokenKind::ARROW)) {
         return ParseFuncType(std::move(types), lParenPos, rParenPos);
     }
+    // Checked exceptions (experimental): a contextual `throws` after ')' also selects the
+    // function-type path, e.g. `(A) throws (E1, E2) -> R`. The clause must be followed by '->'.
+    // Effects: 'performs' does the same and precedes 'throws', so
+    // `(A) performs H throws E -> R` stacks both.
+    if (SeeingChexcClause("performs") || SeeingChexcClause("throws")) {
+        OwnedPtr<ThrowsClause> performsClause;
+        OwnedPtr<ThrowsClause> throwsClause;
+        if (SeeingChexcClause("performs")) {
+            performsClause = ParseThrowsClause(false);
+        }
+        if (SeeingChexcClause("throws")) {
+            throwsClause = ParseThrowsClause(false);
+        }
+        // Wrong order: name the real problem instead of tripping over the
+        // missing '->' below; parsed anyway so the type still carries its requirements.
+        if (SeeingChexcClause("performs")) {
+            ParseDiagnoseRefactor(DiagKindRefactor::parse_performs_clause_after_throws, lookahead.Begin());
+            if (performsClause == nullptr) {
+                performsClause = ParseThrowsClause(false);
+            } else {
+                (void)ParseThrowsClause(false);
+            }
+        }
+        if (!Skip(TokenKind::ARROW)) {
+            ParseDiagnoseRefactor(DiagKindRefactor::parse_expected_arrow_after_throws_clause, lookahead.Begin());
+            auto invalid = MakeOwned<InvalidType>(lookahead.Begin());
+            invalid->EnableAttr(Attribute::IS_BROKEN);
+            return invalid;
+        }
+        auto ft = ParseFuncType(std::move(types), lParenPos, rParenPos);
+        ft->performsClause = std::move(performsClause);
+        ft->throwsClause = std::move(throwsClause);
+        return ft;
+    }
     // This is a paren type.
     if (types.size() == 1) {
         return ParseParenType(lParenPos, rParenPos, std::move(types[0]));
@@ -255,6 +289,134 @@ OwnedPtr<FuncType> ParserImpl::ParseFuncType(
     ft->end = ft->retType->end;
     ft->paramTypes = std::move(types);
     return ft;
+}
+
+OwnedPtr<AST::ThrowsClause> ParserImpl::ParseThrowsClause(bool isDeclClause)
+{
+    CJC_ASSERT(SeeingChexcClause("throws") || SeeingChexcClause("performs") || SeeingChexcClause("captures"));
+    auto clause = MakeOwned<ThrowsClause>();
+    ChainScope cs(*this, clause.get());
+    Next(); // Consume `throws`.
+    clause->throwsPos = lastToken.Begin();
+    clause->begin = clause->throwsPos;
+    clause->end = lastToken.End();
+    // `()` is the empty entry list and is legal only as the whole list -- never nested in or mixed
+    // with other entries. Detected here so the error names the real problem instead of the missing
+    // '->' that `ParseType` would report for the unit type. `() -> R` still parses as a type.
+    auto seeingEmptyEntry = [this]() {
+        return Seeing({TokenKind::LPAREN, TokenKind::RPAREN}) &&
+            !Seeing({TokenKind::LPAREN, TokenKind::RPAREN, TokenKind::ARROW});
+    };
+    auto parseEntry = [this, &clause, &seeingEmptyEntry]() {
+        if (seeingEmptyEntry()) {
+            auto begin = lookahead.Begin();
+            Next(); // Consume '('.
+            Next(); // Consume ')'.
+            ParseDiagnoseRefactor(
+                DiagKindRefactor::parse_empty_capability_list_not_alone, MakeRange(begin, lastToken.End()));
+            // Not an authoritative empty list: the clause is malformed, not pinned.
+            clause->EnableAttr(Attribute::IS_BROKEN);
+            return;
+        }
+        (void)clause->capTypes.emplace_back(ParseType());
+    };
+    auto diagnoseEllipsis = [this, isDeclClause, &clause]() {
+        // Placement: last entry, at most once. A second marker, or one with entries after it, is
+        // diagnosed here; the clause still parses so the declared entries reach the checks.
+        if (clause->hasEllipsis) {
+            ParseDiagnoseRefactor(
+                DiagKindRefactor::parse_ellipsis_not_last, MakeRange(lookahead.Begin(), lookahead.End()));
+        }
+        // On a declaration `...` re-enables capability parameter inference, whose result is
+        // unioned with the listed entries. A functional type's list is always
+        // complete, so the marker is rejected there.
+        if (isDeclClause) {
+            clause->hasEllipsis = true;
+        } else {
+            ParseDiagnoseRefactor(DiagKindRefactor::parse_ellipsis_in_func_type_throws_clause,
+                MakeRange(lookahead.Begin(), lookahead.End()));
+        }
+        Next(); // Consume `...` and continue parsing.
+    };
+    if (Skip(TokenKind::LPAREN)) {
+        // Parenthesized (possibly empty) capability list: `throws (T {, T})` or `throws ()`.
+        // After `throws`, '(' always opens the list, never a paren/tuple/function type.
+        clause->leftParenPos = lastToken.Begin();
+        ParseZeroOrMoreSepTrailing(
+            [&clause](const Position& commaPos) { clause->commaPosVector.emplace_back(commaPos); },
+            [this, &clause, &diagnoseEllipsis, &parseEntry]() {
+                while (Skip(TokenKind::NL)) {
+                }
+                if (Seeing(TokenKind::RPAREN) && !clause->capTypes.empty()) {
+                    return;
+                }
+                if (Seeing(TokenKind::ELLIPSIS)) {
+                    diagnoseEllipsis();
+                    return;
+                }
+                parseEntry();
+            },
+            TokenKind::RPAREN);
+        if (!Skip(TokenKind::RPAREN)) {
+            DiagExpectedRightDelimiter("(", clause->leftParenPos);
+            clause->EnableAttr(Attribute::IS_BROKEN);
+            return clause;
+        }
+        clause->rightParenPos = lastToken.Begin();
+        clause->end = lastToken.End();
+        return clause;
+    }
+    if (Seeing(TokenKind::ELLIPSIS)) {
+        diagnoseEllipsis();
+        clause->end = lastToken.End();
+        return clause;
+    }
+    if (!SeeingAny(GetTypeFirst()) && !SeeingContextualKeyword()) {
+        ParseDiagnoseRefactor(
+            DiagKindRefactor::parse_expected_exception_type_after_throws, lookahead, ConvertToken(lookahead));
+        clause->EnableAttr(Attribute::IS_BROKEN);
+        return clause;
+    }
+    if (isDeclClause) {
+        // Bare comma-separated list on declarations: `throws E1, E2`.
+        while (true) {
+            if (Seeing(TokenKind::ELLIPSIS)) {
+                diagnoseEllipsis();
+            } else {
+                if (clause->hasEllipsis) {
+                    ParseDiagnoseRefactor(
+                        DiagKindRefactor::parse_ellipsis_not_last, MakeRange(lookahead.Begin(), lookahead.End()));
+                }
+                parseEntry();
+            }
+            if (!Skip(TokenKind::COMMA)) {
+                break;
+            }
+            clause->commaPosVector.emplace_back(lastToken.Begin());
+        }
+    } else {
+        // Single-type sugar in function types: `throws E -> R`. Commas belong to the
+        // enclosing construct, and the type must stop before the function type's '->'.
+        (void)clause->capTypes.emplace_back(ParsePrefixType());
+    }
+    clause->end = clause->capTypes.empty() ? lastToken.End() : clause->capTypes.back()->end;
+    return clause;
+}
+
+OwnedPtr<AST::ThrowsClause> ParserImpl::ParseCapturesClause()
+{
+    // Checked exceptions: the `captures` clause of a class or struct header. Its entries are those
+    // of a declaration `throws` clause -- nested lists, aliases, and `()` for the empty list, which
+    // is equivalent to omitting the clause. Only the `...` marker has no meaning here: a capture
+    // set is never inferred.
+    CJC_ASSERT(SeeingChexcClause("captures"));
+    auto clausePos = lookahead.Begin();
+    auto clause = ParseThrowsClause(true);
+    if (clause->hasEllipsis) {
+        ParseDiagnoseRefactor(DiagKindRefactor::parse_ellipsis_in_clause, clausePos, "captures");
+        clause->hasEllipsis = false;
+    }
+    return clause;
 }
 
 // Parse the syntactic sugar of option types.

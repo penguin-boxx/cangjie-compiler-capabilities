@@ -29,6 +29,7 @@
 #include "Plugin/PluginCustomAnnoChecker.h"
 #include "SearchSymbol.h"
 #include "TypeCheckUtil.h"
+#include "cangjie/Sema/CapabilityCheck.h"
 
 #include "cangjie/AST/Clone.h"
 #include "cangjie/AST/Create.h"
@@ -188,8 +189,273 @@ void TypeChecker::TypeCheckerImpl::ReplaceFuncRetTyWithThis(FuncBody& fb, Ptr<Ty
     }
 }
 
+bool TypeChecker::TypeCheckerImpl::IsUncheckedBoundedGeneric(const Ty& genericTy)
+{
+    auto generics = DynamicCast<const GenericsTy*>(&genericTy);
+    if (!generics) {
+        return false;
+    }
+    return std::any_of(generics->upperBounds.begin(), generics->upperBounds.end(), [this](auto bound) {
+        return Ty::IsTyCorrect(bound) && TypeCheckUtil::IsUncheckedExceptionTy(typeManager, importManager, bound);
+    });
+}
+
+void TypeChecker::TypeCheckerImpl::ChkThrowsClauseTypes(
+    ASTContext& ctx, ThrowsClause& clause, const std::string& clauseKeyword, bool allowCommands)
+{
+    auto exception = importManager.GetCoreDecl<ClassDecl>(CLASS_EXCEPTION);
+    auto command = importManager.GetImportedDecl(EFFECT_PACKAGE_NAME, CLASS_COMMAND);
+    auto isCommandEntry = [this, &command](Ptr<Ty> capTy) {
+        return command && Ty::IsTyCorrect(command->GetTy()) && !promotion.Promote(*capTy, *command->GetTy()).empty();
+    };
+    for (auto& capType : clause.capTypes) {
+        CJC_NULLPTR_CHECK(capType);
+        CheckReferenceTypeLegality(ctx, *capType);
+        if (!Ty::IsTyCorrect(capType->GetTy())) {
+            continue;
+        }
+        // A tuple entry is a capability list alias: its ELEMENTS are the
+        // capabilities, so they are what the entry rules apply to. Expansion is recursive, so
+        // an alias of aliases is validated element by element as well.
+        std::vector<OwnedPtr<Type>> single;
+        single.emplace_back(std::move(capType));
+        auto elements = TypeCheckUtil::ExpandCapabilityList(single);
+        capType = std::move(single.front());
+        // A directly written entry is named by its source text; an element that came out of an
+        // alias tuple has no source of its own, so it is named by its type.
+        bool expanded = elements.size() != 1 || elements.front() != capType->GetTy();
+        for (auto capTy : elements) {
+            if (!Ty::IsTyCorrect(capTy)) {
+                continue;
+            }
+            auto entryName = expanded ? Ty::ToString(capTy) : capType->ToString();
+            bool isExceptionSubtype = (capTy->IsClass() || capTy->IsGeneric()) && exception &&
+                typeManager.IsSubtype(capTy, exception->GetTy());
+            // A 'captures' clause may name commands as well: an instance captures the handler
+            // capabilities its methods need exactly as it captures exception ones.
+            if (!isExceptionSubtype && allowCommands && isCommandEntry(capTy)) {
+                continue;
+            }
+            if (!isExceptionSubtype) {
+                diag.DiagnoseRefactor(
+                    DiagKindRefactor::sema_chexc_clause_type_not_exception, *capType, entryName, clauseKeyword);
+            } else if (capTy->IsGeneric() ? IsUncheckedBoundedGeneric(*capTy)
+                                          : TypeCheckUtil::IsUncheckedExceptionTy(typeManager, importManager, capTy)) {
+                // A concrete unchecked exception type never needs a capability, so listing it is
+                // misleading and rejected. A type parameter is admitted -- a requirement that
+                // instantiates to an unchecked type is trivially satisfied instead -- unless its
+                // own bound is unchecked, which makes every instantiation of it one.
+                diag.DiagnoseRefactor(
+                    DiagKindRefactor::sema_chexc_unchecked_type_in_clause, *capType, entryName, clauseKeyword);
+            }
+        }
+    }
+}
+
+void TypeChecker::TypeCheckerImpl::ChkCapturesSuperclassCoverage(const ClassDecl& cd) const
+{
+    // Every subclass of a capturing class is itself a capturing class: its list must cover the
+    // superclass's, each superclass entry covered by an own entry of the same kind, possibly a more
+    // general one. Restating keeps the instance's whole handler dependency readable in one header
+    // and keeps checking local -- a body is checked against its own class's list, never against the
+    // ancestor chain.
+    auto super = cd.GetSuperClassDecl();
+    if (!super) {
+        return;
+    }
+    auto superCaps = TypeCheckUtil::GetDeclCapturesCapTys(*super);
+    if (superCaps.empty()) {
+        return;
+    }
+    auto ownCaps = TypeCheckUtil::GetDeclCapturesCapTys(cd);
+    for (auto superCap : superCaps) {
+        if (!Ty::IsTyCorrect(superCap) || typeManager.IsCapTysSubsumed({superCap}, ownCaps)) {
+            continue;
+        }
+        auto builder = diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_subclass_captures_missing,
+            MakeRangeForDeclIdentifier(cd), cd.identifier.Val(), Ty::ToString(superCap));
+        builder.AddNote(MakeRangeForDeclIdentifier(*super), "the superclass captures it here");
+    }
+}
+
+void TypeChecker::TypeCheckerImpl::ChkCapturesClauseOfDecl(ASTContext& ctx, InheritableDecl& decl)
+{
+    if (decl.capturesClause) {
+        // Elaborate the clause's types (collected in the declaration's scope, so they may refer to
+        // its generic parameters), then validate them exactly like 'throws' entries.
+        for (auto& capType : decl.capturesClause->capTypes) {
+            CJC_NULLPTR_CHECK(capType);
+            Synthesize({ctx, SynPos::NONE}, capType.get());
+        }
+        ChkThrowsClauseTypes(ctx, *decl.capturesClause, "captures", true);
+    }
+    if (auto cd = DynamicCast<const ClassDecl*>(&decl)) {
+        ChkCapturesSuperclassCoverage(*cd);
+    }
+    // A clause that is statically empty -- written '()' or an alias that expands to nothing -- is
+    // equivalent to omitting it: the type is not capturing, and none of the rules below apply.
+    if (TypeCheckUtil::GetDeclCapturesCapTys(decl).empty()) {
+        return;
+    }
+    auto typeName = decl.astKind == ASTKind::CLASS_DECL ? "class" : "struct";
+    // A capturing type has no primary constructor -- always '~local' -- and no implicit default
+    // constructor either: every constructor requires the captured capabilities at its call site,
+    // so there has to be one to carry the requirement.
+    bool hasCtor = false;
+    for (auto& member : decl.GetMemberDecls()) {
+        CJC_NULLPTR_CHECK(member);
+        if (member->astKind == ASTKind::PRIMARY_CTOR_DECL) {
+            diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_primary_ctor_on_capturing,
+                MakeRangeForDeclIdentifier(*member), typeName, decl.identifier.Val());
+            hasCtor = true;
+        } else if (member->TestAttr(Attribute::CONSTRUCTOR) && !member->TestAttr(Attribute::COMPILER_ADD)) {
+            hasCtor = true;
+        }
+    }
+    if (!hasCtor) {
+        diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_capturing_needs_ctor, MakeRangeForDeclIdentifier(decl),
+            typeName, decl.identifier.Val());
+    }
+}
+
+void TypeChecker::TypeCheckerImpl::ChkImportedCapabilityMetadata(Package& pkg)
+{
+    bool checkExceptions = ci->invocation.globalOptions.enableChexc;
+    if (!checkExceptions && !ci->invocation.globalOptions.enableEH) {
+        return;
+    }
+    for (auto& file : pkg.files) {
+        CJC_NULLPTR_CHECK(file);
+        for (auto& import : file->imports) {
+            if (!import || import->IsImportMulti()) {
+                continue; // Desugared into single imports, which carry copies of the annotations.
+            }
+            bool assumes = std::any_of(import->annotations.begin(), import->annotations.end(),
+                [](auto& anno) { return anno && anno->assumeThrows; });
+            for (auto& name : import->content.GetPossiblePackageNames()) {
+                auto info = importManager.GetPackageCapabilityInfo(name);
+                if (!info.recordsCapabilities) {
+                    // Effects: a package built with handlers but no capability metadata has
+                    // 'performs' lists that were never written, and an empty list would read as
+                    // "performs nothing". Exception lists are safe to read that way -- an
+                    // unchecked package simply requires nothing of its callers.
+                    if (info.effectsEnabled) {
+                        diag.DiagnoseRefactor(
+                            DiagKindRefactor::sema_chexc_import_without_capability_metadata, *import, name);
+                    }
+                    continue;
+                }
+                // An assumption stands in for the lists a dependency does not have. A package that
+                // records lists of its own -- verified at 'error' or trusted at 'warn' -- has them,
+                // and the two would contradict each other: the assumption would override what the
+                // dependency states, in whichever direction the author guessed wrong.
+                if (assumes && checkExceptions && info.level != PackageCapabilityInfo::Level::OFF) {
+                    diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_assume_on_checked_package, *import, name);
+                }
+            }
+        }
+    }
+}
+
+void TypeChecker::TypeCheckerImpl::ChkAssumeThrowsAnnotations(ASTContext& ctx, Package& pkg)
+{
+    if (!ci->invocation.globalOptions.enableChexc) {
+        return;
+    }
+    // Checked exceptions: validate the exception types of every assumption import
+    // exactly like the entries of a 'throws' clause. Their types were resolved by 'ResolveNames'.
+    for (auto& file : pkg.files) {
+        CJC_NULLPTR_CHECK(file);
+        for (auto& import : file->imports) {
+            for (auto& anno : import->annotations) {
+                if (anno && anno->assumeThrows) {
+                    ChkThrowsClauseTypes(ctx, *anno->assumeThrows, "@AssumeThrows");
+                }
+            }
+        }
+    }
+    // The annotation only means anything on an import, where the trust relationship lives; it is
+    // silently inert anywhere else, so a misplaced one is rejected rather than ignored.
+    Walker(&pkg, [this](Ptr<Node> node) -> VisitAction {
+        if (node->astKind == ASTKind::IMPORT_SPEC) {
+            return VisitAction::SKIP_CHILDREN;
+        }
+        if (auto anno = DynamicCast<Annotation*>(node); anno && anno->kind == AnnotationKind::ASSUME_THROWS) {
+            diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_assume_throws_not_on_import, *anno);
+        }
+        return VisitAction::WALK_CHILDREN;
+    }).Walk();
+}
+
+void TypeChecker::TypeCheckerImpl::ChkPerformsClauseTypes(ASTContext& ctx, ThrowsClause& clause)
+{
+    // Effects: a 'performs' entry names an effect command, so it must be a subtype
+    // of 'Command'. Validated separately from 'throws', whose entries must be 'Exception'
+    // subtypes: the disjointness of the two roots is what keeps the two kinds of capability from
+    // ever discharging one another.
+    auto command = importManager.GetImportedDecl(EFFECT_PACKAGE_NAME, CLASS_COMMAND);
+    for (auto& capType : clause.capTypes) {
+        CJC_NULLPTR_CHECK(capType);
+        CheckReferenceTypeLegality(ctx, *capType);
+        if (!Ty::IsTyCorrect(capType->GetTy())) {
+            continue;
+        }
+        std::vector<OwnedPtr<Type>> single;
+        single.emplace_back(std::move(capType));
+        auto elements = TypeCheckUtil::ExpandCapabilityList(single);
+        capType = std::move(single.front());
+        bool expanded = elements.size() != 1 || elements.front() != capType->GetTy();
+        for (auto capTy : elements) {
+            if (!Ty::IsTyCorrect(capTy)) {
+                continue;
+            }
+            auto entryName = expanded ? Ty::ToString(capTy) : capType->ToString();
+            bool isCommand = capTy->IsGeneric() ||
+                (command && Ty::IsTyCorrect(command->GetTy()) && !promotion.Promote(*capTy, *command->GetTy()).empty());
+            if (!isCommand) {
+                diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_performs_type_not_command, *capType, entryName);
+            }
+        }
+    }
+}
+
+void TypeChecker::TypeCheckerImpl::ChkThrowsClauseOfFuncBody(ASTContext& ctx, FuncBody& fb)
+{
+    // No capability scope encloses a finalizer: it may run long after the handlers that supplied
+    // the capabilities are gone, so it carries no clause of either kind.
+    bool isFinalizer = fb.funcDecl && fb.funcDecl->IsFinalizer();
+    if (fb.performsClause) {
+        // No default effect handler exists, so 'main' cannot carry effect requirements the way it
+        // may carry exception ones (policy table).
+        if (fb.funcDecl && fb.funcDecl->identifier == MAIN_INVOKE) {
+            diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_performs_in_main, *fb.performsClause);
+        }
+        if (isFinalizer) {
+            diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_clause_on_cfunc, *fb.performsClause, "a finalizer");
+        }
+        ChkPerformsClauseTypes(ctx, *fb.performsClause);
+    }
+    if (!fb.throwsClause) {
+        return;
+    }
+    // The '...' marker opens the list to inference, which an exported list must never depend on.
+    if (fb.throwsClause->hasEllipsis && fb.funcDecl && Sema::IsExportedDecl(*fb.funcDecl)) {
+        diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_ellipsis_on_exported, *fb.throwsClause);
+    }
+    if (isFinalizer) {
+        diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_clause_on_cfunc, *fb.throwsClause, "a finalizer");
+    } else if (fb.funcDecl && fb.funcDecl->TestAttr(Attribute::FOREIGN)) {
+        diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_clause_on_cfunc, *fb.throwsClause, "a foreign function");
+    } else if (fb.TestAttr(Attribute::C)) {
+        diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_clause_on_cfunc, *fb.throwsClause, "a 'CFunc' function");
+    } else {
+        ChkThrowsClauseTypes(ctx, *fb.throwsClause);
+    }
+}
+
 bool TypeChecker::TypeCheckerImpl::CheckFuncBody(ASTContext& ctx, FuncBody& fb)
 {
+    ChkThrowsClauseOfFuncBody(ctx, fb);
     if (fb.retType) {
         Synthesize({ctx, SynPos::NONE}, fb.retType.get());
     } else {
@@ -235,6 +501,7 @@ bool TypeChecker::TypeCheckerImpl::CheckNormalFuncBody(ASTContext& ctx, FuncBody
     }
     CheckFuncParamList(ctx, *fb.paramLists[0]);
     paramTys = GetFuncBodyParamTys(fb);
+    auto capTys = typeManager.NormalizeCapTys(GetFuncBodyCapTys(fb));
 
     bool isCFFIBackend = IsUnsafeBackend(backendType);
     bool isCFunc =
@@ -246,12 +513,12 @@ bool TypeChecker::TypeCheckerImpl::CheckNormalFuncBody(ASTContext& ctx, FuncBody
             fb.EnableAttr(Attribute::IS_CHECK_VISITED); // Avoid re-enter funcDecl check, when function is invalid.
             Synthesize({ctx, SynPos::NONE}, fb.body.get()); // Synthesize for other decl/expr in function body.
         }
-        fb.SetTy(typeManager.GetFunctionTy(paramTys, fb.retType->GetTy(), {isCFunc, false, hasVariableLenArg}));
+        fb.SetTy(typeManager.GetFunctionTy(paramTys, fb.retType->GetTy(), {isCFunc, false, hasVariableLenArg}, capTys));
         return false;
     }
 
     // Set funcTy before Synthesize body, avoid recursively call typecheck loop.
-    auto funcTy = typeManager.GetFunctionTy(paramTys, fb.retType->GetTy(), {isCFunc, false, hasVariableLenArg});
+    auto funcTy = typeManager.GetFunctionTy(paramTys, fb.retType->GetTy(), {isCFunc, false, hasVariableLenArg}, capTys);
     if (fb.funcDecl) {
         fb.funcDecl->SetTy(funcTy);
     }
@@ -259,7 +526,7 @@ bool TypeChecker::TypeCheckerImpl::CheckNormalFuncBody(ASTContext& ctx, FuncBody
 
     if (!CheckBodyRetType(ctx, fb)) {
         // Update 'fb.GetTy()' witch updated 'fb.retType->GetTy()'.
-        fb.SetTy(typeManager.GetFunctionTy(paramTys, fb.retType->GetTy(), {isCFunc, false, hasVariableLenArg}));
+        fb.SetTy(typeManager.GetFunctionTy(paramTys, fb.retType->GetTy(), {isCFunc, false, hasVariableLenArg}, capTys));
         return false;
     }
 
@@ -267,7 +534,7 @@ bool TypeChecker::TypeCheckerImpl::CheckNormalFuncBody(ASTContext& ctx, FuncBody
         UnsafeCheck(fb);
     }
 
-    funcTy = typeManager.GetFunctionTy(paramTys, fb.retType->GetTy(), {isCFunc, false, hasVariableLenArg});
+    funcTy = typeManager.GetFunctionTy(paramTys, fb.retType->GetTy(), {isCFunc, false, hasVariableLenArg}, capTys);
     // Update funcDecl's type after body is checked.
     if (fb.funcDecl) {
         fb.funcDecl->SetTy(funcTy);
@@ -461,7 +728,7 @@ void TypeChecker::TypeCheckerImpl::CheckCtorFuncBody(ASTContext& ctx, FuncBody& 
     }
     CheckFuncParamList(ctx, *fb.paramLists[0].get());
     auto paramTys = GetFuncBodyParamTys(fb);
-    fb.SetTy(typeManager.GetFunctionTy(paramTys, ctorTy));
+    fb.SetTy(typeManager.GetFunctionTy(paramTys, ctorTy, {}, typeManager.NormalizeCapTys(GetFuncBodyCapTys(fb))));
     fb.funcDecl->SetTy(fb.GetTy());
     fb.retType->SetTy(ctorTy);
     Synthesize({ctx, SynPos::UNUSED}, fb.body.get());
@@ -2047,6 +2314,8 @@ void TypeChecker::TypeCheckerImpl::PostTypeCheck(std::vector<Ptr<ASTContext>>& c
     // Post checking for legality of semantic.
     for (auto& ctx : contexts) {
         CheckOverflow(*ctx->curPackage);
+        ChkAssumeThrowsAnnotations(*ctx, *ctx->curPackage);
+        ChkImportedCapabilityMetadata(*ctx->curPackage);
         CheckUnusedImportSpec(*ctx->curPackage);
         // Check duplicated super interfaces in class, interface when type arguments applied.
         CheckInstDupSuperInterfacesEntry(*ctx->curPackage);
@@ -2079,6 +2348,15 @@ void TypeChecker::TypeCheckerImpl::PrepareTypeCheck(ASTContext& ctx, Package& pk
 {
     // Reset search's cache.
     ctx.searcher->InvalidateCache();
+
+    // Checked exceptions: hand the type manager the unchecked-exception root, so coverage can
+    // treat an entry instantiated to an unchecked type as vanished (rule "Unchecked types in
+    // 'throws' lists"). Resolved by name here, where the import manager is at hand; absent while
+    // bootstrapping a core without the class, in which case every entry stays checked.
+    if (auto unchecked = importManager.GetCoreDecl<ClassDecl>(CLASS_UNCHECKED_EXCEPTION);
+        unchecked && Ty::IsTyCorrect(unchecked->GetTy())) {
+        typeManager.SetUncheckedExceptionTy(unchecked->GetTy());
+    }
 
     CheckPrimaryCtorBeforeMerge(pkg);
     // Merging common classes into specific if any

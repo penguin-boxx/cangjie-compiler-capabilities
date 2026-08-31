@@ -7,9 +7,49 @@
 #include "TypeCheckerImpl.h"
 
 #include "Diags.h"
+#include "TypeCheckUtil.h"
+
+#include "cangjie/AST/Walker.h"
+#include "cangjie/Utils/ConstantsUtils.h"
 
 using namespace Cangjie;
 using namespace Sema;
+
+Ptr<Ty> TypeChecker::TypeCheckerImpl::CastTargetTy(Type& target)
+{
+    // Checked exceptions: a runtime type test sees the erased shape, so nothing verifies a
+    // capability list -- reading a function type in a cast target as clause-free would launder a
+    // '() throws E -> R' value into a '() -> R' one. The base design therefore rejects any target
+    // containing a function type, in any position; relaxations that make such casts usable are an
+    // extension. A parameter-typed target ('x as Box<T>') is accepted: rejecting it would break
+    // ordinary generic code, and an instantiation with a function type is an unchecked boundary.
+    auto targetTy = target.GetTy();
+    bool checkExceptions = ci->invocation.globalOptions.enableChexc;
+    bool checkEffects = ci->invocation.globalOptions.enableEH;
+    if ((!checkExceptions && !checkEffects) || !Ty::IsTyCorrect(targetTy)) {
+        return targetTy;
+    }
+    if (TypeCheckUtil::ContainsFuncTy(targetTy)) {
+        // For the exception kind this is an ordinary checking violation, so it follows the level.
+        // With effect handlers enabled it is an error at every level besides: the value may carry
+        // a 'performs' component, for which no pessimistic reading exists -- there is no top
+        // command type to fall back on.
+        bool asWarning =
+            !checkEffects && ci->invocation.globalOptions.chexcSeverity == GlobalOptions::ChexcSeverity::CS_WARN;
+        diag.DiagnoseRefactor(asWarning ? DiagKindRefactor::sema_chexc_cast_target_func_warn
+                                        : DiagKindRefactor::sema_chexc_cast_target_func,
+            target, Ty::ToString(targetTy));
+    } else if (checkExceptions && TypeCheckUtil::IsCapturingTy(targetTy)) {
+        // A capturing type's instances are 'local!'-only, which no cast result can honestly be:
+        // a reflectively constructed one carries an unknown capability set, and reading it back
+        // into checked typing would give it a set it does not have.
+        bool asWarning = ci->invocation.globalOptions.chexcSeverity == GlobalOptions::ChexcSeverity::CS_WARN;
+        diag.DiagnoseRefactor(asWarning ? DiagKindRefactor::sema_chexc_cast_target_capturing_warn
+                                        : DiagKindRefactor::sema_chexc_cast_target_capturing,
+            target, Ty::ToString(targetTy));
+    }
+    return targetTy;
+}
 
 Ptr<Ty> TypeChecker::TypeCheckerImpl::SynIsExpr(ASTContext& ctx, IsExpr& ie)
 {
@@ -47,7 +87,9 @@ Ptr<Ty> TypeChecker::TypeCheckerImpl::SynAsExpr(ASTContext& ctx, AsExpr& ae)
         Ty::IsTyCorrect(Synthesize({ctx, SynPos::NONE}, ae.asType.get())) && ReplaceIdealTy(*ae.leftExpr)) {
         auto optionDecl = RawStaticCast<EnumDecl*>(importManager.GetCoreDecl("Option"));
         if (optionDecl) {
-            ae.SetTy(typeManager.GetEnumTy(*optionDecl, {ae.asType->GetTy()}));
+            // The runtime test still uses the written type -- capability lists are erased, so both
+            // read the same shape -- while the value handed back is read pessimistically.
+            ae.SetTy(typeManager.GetEnumTy(*optionDecl, {CastTargetTy(*ae.asType)}));
         } else {
             diag.Diagnose(ae, DiagKind::sema_no_core_object);
             ae.SetTy(TypeManager::GetInvalidTy());

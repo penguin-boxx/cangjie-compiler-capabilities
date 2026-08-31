@@ -33,6 +33,7 @@
 #include "cangjie/Modules/ImportManager.h"
 #include "cangjie/Modules/PackageManager.h"
 #include "cangjie/Parse/ASTHasher.h"
+#include "cangjie/Sema/CapabilityCheck.h"
 #include "cangjie/Sema/GenericInstantiationManager.h"
 #include "cangjie/Sema/TestManager.h"
 #include "cangjie/Sema/TypeChecker.h"
@@ -59,6 +60,7 @@ CompilerInstance::CompilerInstance(CompilerInvocation& invocation, DiagnosticEng
 {
     // allocate managers in safe order
     typeManager = new TypeManager();
+    typeManager->SetCapTysInert(!invocation.globalOptions.enableChexc && !invocation.globalOptions.enableEH);
     importManager = new ImportManager(diag, *typeManager, invocation.globalOptions);
     packageManager = new PackageManager(*importManager);
     testManager = new TestManager(*importManager, *typeManager, diag, invocation.globalOptions);
@@ -194,6 +196,7 @@ bool CompilerInstance::InitCompilerInstance()
     performMap.insert_or_assign(CompileStage::MACRO_EXPAND, &CompilerInstance::PerformMacroExpand);
     performMap.insert_or_assign(CompileStage::AST_DIFF, &CompilerInstance::PerformIncrementalScopeAnalysis);
     performMap.insert_or_assign(CompileStage::SEMA, &CompilerInstance::PerformSema);
+    performMap.insert_or_assign(CompileStage::CAPABILITY_CHECK, &CompilerInstance::PerformCapabilityCheck);
     performMap.insert_or_assign(CompileStage::DESUGAR_AFTER_SEMA, &CompilerInstance::PerformDesugarAfterSema);
     performMap.insert_or_assign(CompileStage::GENERIC_INSTANTIATION, &CompilerInstance::PerformGenericInstantiation);
     performMap.insert_or_assign(CompileStage::OVERFLOW_STRATEGY, &CompilerInstance::PerformOverflowStrategy);
@@ -707,6 +710,40 @@ bool CompilerInstance::PerformOverflowStrategy()
         DumpAST(GetSourcePackages(), invocation.globalOptions.output, "overflow");
     }
     return true;
+}
+
+bool CompilerInstance::PerformCapabilityCheck()
+{
+    // Checked exceptions (experimental): capability argument checking (/3.5) over the
+    // typed AST. Must run before desugar destroys 'TryExpr' structure and before instantiation.
+    // Effect requirements follow the effect-handler feature, on an axis of its own: wherever it is
+    // enabled, a 'perform' without a handler is an error at every exception-checking level, so the
+    // pass runs for effects alone as well.
+    bool checkExceptions = invocation.globalOptions.enableChexc;
+    if (!checkExceptions && !invocation.globalOptions.enableEH) {
+        return true;
+    }
+    Utils::ProfileRecorder recorder("Main Stage", "Capability Check");
+    auto errorCountBefore = diag.GetErrorCount();
+    bool asWarning = invocation.globalOptions.chexcSeverity == GlobalOptions::ChexcSeverity::CS_WARN;
+    Sema::ReportCapabilityMissHandler missHandler(diag, asWarning, checkExceptions);
+    CJC_NULLPTR_CHECK(typeManager);
+    CJC_NULLPTR_CHECK(importManager);
+    for (auto& srcPkg : GetSourcePackages()) {
+        CJC_NULLPTR_CHECK(srcPkg);
+        // Capability parameter inference runs first and its results act as the declared clauses
+        // of the declarations it covers (parameters before arguments). Effect requirements are
+        // never inferred, so with exception checking off there is nothing to infer.
+        auto inferred = checkExceptions ? Sema::InferCapabilities(*typeManager, *importManager, *srcPkg, diag)
+                                        : Sema::InferredCapabilities{};
+        // The clause components of types are completed between capability
+        // parameter inference and capability argument checking, so a declaration's own type is
+        // the single source of its list. Keep these three calls adjacent.
+        Sema::CompleteInferredCapabilityTypes(*typeManager, inferred);
+        Sema::CheckInferredOverrides(*typeManager, inferred, diag, asWarning);
+        Sema::CheckCapabilities(*typeManager, *importManager, *srcPkg, missHandler, inferred, diag);
+    }
+    return diag.GetErrorCount() == errorCountBefore;
 }
 
 bool CompilerInstance::PerformDesugarAfterSema()
