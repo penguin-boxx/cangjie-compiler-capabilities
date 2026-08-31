@@ -147,7 +147,37 @@ public:
     {
         collectingFor = ownerDecl;
         CheckDecl(decl);
+        CollectFieldInitializerDemands(decl);
         collectingFor = nullptr;
+    }
+
+    /**
+     * An instance field initializer "contributes to every inference-eligible constructor that
+     * evaluates it" (What is inferred, point 3): it has no capability scope of its own, so its
+     * requirements are the constructor's, and a clause-free constructor must infer them rather
+     * than report them at the initializer. Walked inside the constructor's own scope, so a
+     * constructor that declares a clause discharges what its fields need.
+     */
+    void CollectFieldInitializerDemands(Decl& decl)
+    {
+        auto ctor = DynamicCast<FuncDecl*>(&decl);
+        if (!ctor || !ctor->TestAttr(Attribute::CONSTRUCTOR) || ctor->TestAttr(Attribute::STATIC) || !ctor->funcBody ||
+            !ctor->outerDecl) {
+            return;
+        }
+        auto owner = ctor->outerDecl;
+        if (owner->astKind != ASTKind::CLASS_DECL && owner->astKind != ASTKind::STRUCT_DECL) {
+            return;
+        }
+        CJC_ASSERT(supplies.empty());
+        supplies.emplace_back(TypeCheckUtil::GetFuncBodyCapTys(*ctor->funcBody));
+        for (auto& member : owner->GetMemberDecls()) {
+            auto field = DynamicCast<VarDecl*>(member.get());
+            if (field && !field->TestAttr(Attribute::STATIC) && field->initializer) {
+                WalkScoped(field->initializer.get());
+            }
+        }
+        supplies.pop_back();
     }
 
     void CheckDecl(Decl& decl)
@@ -236,7 +266,19 @@ private:
         for (auto& member : decl.GetMemberDecls()) {
             auto fd = DynamicCast<FuncDecl*>(member.get());
             if (fd && fd->TestAttr(Attribute::CONSTRUCTOR) && !fd->TestAttr(Attribute::STATIC) && fd->funcBody) {
-                ctorCapLists.emplace_back(TypeCheckUtil::GetFuncBodyCapTys(*fd->funcBody));
+                // A constructor's effective list, not merely its written one: inference gave a
+                // clause-free constructor the very requirements its field initializers raise
+                // (they are collected into it), so reading the clause alone would report at the
+                // initializer what the constructor already carries.
+                auto caps = TypeCheckUtil::GetFuncBodyCapTys(*fd->funcBody);
+                if (auto it = inferred.find(Ptr<FuncDecl>(fd)); it != inferred.end()) {
+                    for (auto cap : it->second) {
+                        if (Ty::IsTyCorrect(cap) && !Utils::In(cap, caps)) {
+                            caps.emplace_back(cap);
+                        }
+                    }
+                }
+                ctorCapLists.emplace_back(std::move(caps));
             }
         }
         if (ctorCapLists.empty()) {
@@ -470,6 +512,10 @@ private:
                 }
                 return VisitAction::WALK_CHILDREN;
             }
+            case ASTKind::FOR_IN_EXPR: {
+                DemandForInProtocol(StaticCast<ForInExpr&>(*node));
+                return VisitAction::WALK_CHILDREN;
+            }
             case ASTKind::CALL_EXPR: {
                 auto& ce = StaticCast<CallExpr&>(*node);
                 HandleCall(ce);
@@ -525,13 +571,15 @@ private:
      * be. Inert while 'Resource.close()' is clause-free, which is why it must land BEFORE the
      * standard library gives it one.
      */
-    Ptr<FuncDecl> FindCloseMember(Ptr<Ty> resourceTy) const
+    /// The nullary member named @p name of @p receiverTy or of any of its supertypes -- the shape
+    /// every protocol method the compiler calls implicitly has ('close', 'iterator', 'next').
+    Ptr<FuncDecl> FindNullaryMember(Ptr<Ty> receiverTy, const std::string& name) const
     {
-        if (!Ty::IsTyCorrect(resourceTy)) {
+        if (!Ty::IsTyCorrect(receiverTy)) {
             return nullptr;
         }
-        std::vector<Ptr<Ty>> chain{resourceTy};
-        for (auto superTy : typeManager.GetAllSuperTys(*resourceTy)) {
+        std::vector<Ptr<Ty>> chain{receiverTy};
+        for (auto superTy : typeManager.GetAllSuperTys(*receiverTy)) {
             chain.emplace_back(superTy);
         }
         for (auto ty : chain) {
@@ -541,21 +589,77 @@ private:
             }
             for (auto member : decl->GetMemberDeclPtrs()) {
                 auto fd = DynamicCast<FuncDecl*>(member);
-                if (!fd || fd->identifier != "close" || !fd->funcBody || fd->funcBody->paramLists.empty()) {
+                if (!fd || fd->identifier != name || !fd->funcBody || fd->funcBody->paramLists.empty()) {
                     continue;
                 }
                 if (fd->funcBody->paramLists[0]->params.empty()) {
-                    return fd; // the 'Resource' protocol's own shape: no parameters
+                    return fd;
                 }
             }
         }
         return nullptr;
     }
 
+    /// The effective capability list of a nullary protocol member on @p receiverTy: what it
+    /// declares, instantiated through the receiver, plus what inference gave it in this package.
+    std::vector<Ptr<Ty>> ProtocolMemberCaps(const FuncDecl& member, Ptr<Ty> receiverTy)
+    {
+        auto caps = TypeCheckUtil::GetInstantiatedAccessorCapTys(typeManager, member, receiverTy);
+        if (auto it = inferred.find(Ptr<FuncDecl>(const_cast<FuncDecl*>(&member))); it != inferred.end()) {
+            for (auto cap : it->second) {
+                if (Ty::IsTyCorrect(cap) && !Utils::In(cap, caps)) {
+                    caps.emplace_back(cap);
+                }
+            }
+        }
+        return typeManager.NormalizeCapTys(caps);
+    }
+
+    /**
+     * "Implicit invocations include ... the iterator protocol of 'for-in'" (What is inferred,
+     * point 2). The pass runs before desugar, so the calls to 'iterator()' and 'next()' do not
+     * exist as nodes yet and would demand nothing at all; they are synthesized here, in the loop's
+     * own scope, exactly as the implicit 'close()' of try-with-resources is. Range and string
+     * loops iterate built-ins and have nothing to demand.
+     */
+    void DemandForInProtocol(const ForInExpr& fe)
+    {
+        if (!fe.inExpression) {
+            return;
+        }
+        // 'forInKind' is not decided yet at this stage -- CHIR classifies the loop -- so the
+        // subject's own members decide instead: a range or a string reaches the built-in
+        // iteration whose protocol members declare nothing, and demands nothing here either.
+        auto subjectTy = fe.inExpression->GetTy();
+        if (!Ty::IsTyCorrect(subjectTy)) {
+            return;
+        }
+        // 'for (x in xs)' calls 'xs.iterator()' once, then 'next()' on the result until it ends.
+        // Iterating an iterator directly skips the first step.
+        auto iteratorTy = subjectTy;
+        if (auto iterFd = FindNullaryMember(subjectTy, "iterator")) {
+            for (auto cap : ProtocolMemberCaps(*iterFd, subjectTy)) {
+                Demand(cap, fe, "the 'iterator()' of this 'for-in'");
+            }
+            if (auto funcTy = DynamicCast<FuncTy*>(iterFd->GetTy()); funcTy && Ty::IsTyCorrect(funcTy->retTy)) {
+                auto mapping = TypeCheckUtil::GenerateTypeMappingByTy(
+                    iterFd->outerDecl ? iterFd->outerDecl->GetTy() : nullptr, subjectTy);
+                auto instantiated =
+                    mapping.empty() ? funcTy->retTy : typeManager.GetInstantiatedTy(funcTy->retTy, mapping);
+                iteratorTy = Ty::IsTyCorrect(instantiated) ? instantiated : funcTy->retTy;
+            }
+        }
+        if (auto nextFd = FindNullaryMember(iteratorTy, "next")) {
+            for (auto cap : ProtocolMemberCaps(*nextFd, iteratorTy)) {
+                Demand(cap, fe, "the 'next()' of this 'for-in'");
+            }
+        }
+    }
+
     void DemandResourceClose(const VarDecl& resource)
     {
         auto resourceTy = resource.GetTy();
-        auto closeFd = FindCloseMember(resourceTy);
+        auto closeFd = FindNullaryMember(resourceTy, "close");
         if (!closeFd) {
             return;
         }
