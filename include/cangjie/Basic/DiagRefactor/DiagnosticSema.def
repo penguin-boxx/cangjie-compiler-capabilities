@@ -452,6 +452,12 @@ ERROR(sema_chexc_clause_only_type_arguments,
     "type parameters %s of '%s' occur only in capability lists, which take no part in "
     "type-argument inference",
     "write the type arguments explicitly")
+ERROR(sema_chexc_inferred_list_not_admitted,
+    "the inferred capability list requires %s, which the type '%s' expected at %s does not admit",
+    "its list is inferred from the declaration's own body")
+WARNING(sema_chexc_inferred_list_not_admitted_warn, CHEXC,
+    "the inferred capability list requires %s, which the type '%s' expected at %s does not admit",
+    "its list is inferred from the declaration's own body")
 ERROR(sema_chexc_missing_capabilities,
     "Cannot find capabilities for %s (of types %s) in the current scope",
     "%s")

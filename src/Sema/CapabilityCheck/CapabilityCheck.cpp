@@ -528,17 +528,17 @@ private:
             }
             case ASTKind::MEMBER_ACCESS: {
                 // A function-typed field or property of an assumed package, or one of its methods
-                // taken as a value -- and a method with an inferred list taken as a value.
+                // taken as a value. An INFERRED declaration needs nothing here: its list is on the
+                // reference's own type by then, so the eventual call pays it, which is what the
+                // text asks for.
                 auto& ma = StaticCast<MemberAccess&>(*node);
                 ImposeAssumedOnValue(ma, ma.target);
-                DemandInferredOnValue(ma, ma.target);
                 return VisitAction::WALK_CHILDREN;
             }
             case ASTKind::REF_EXPR: {
                 // The same for an unqualified reference.
                 auto& re = StaticCast<RefExpr&>(*node);
                 ImposeAssumedOnValue(re, re.ref.target);
-                DemandInferredOnValue(re, re.ref.target);
                 return VisitAction::WALK_CHILDREN;
             }
             default:
@@ -1687,6 +1687,208 @@ void CompleteInferredCapabilityTypes(TypeManager& typeManager, const InferredCap
         decl->SetTy(completedTy);
         decl->funcBody->SetTy(completedTy);
     }
+}
+
+namespace {
+/**
+ * Checked exceptions: the completion half of the phase ordering. A declaration's type is finished
+ * by 'CompleteInferredCapabilityTypes', but the EXPRESSIONS that name it were typed during Sema,
+ * while the list was still empty -- so a reference used as a value carried a clause-free type and
+ * a call through it demanded nothing. This walk finishes those types, so the list rides the value
+ * as the text says it does and the eventual call pays it.
+ *
+ * Completed here: a reference or member access naming an inferred declaration, instantiated
+ * through the reference's own type arguments; and the type of a binding whose initializer is
+ * exactly such an expression and which declares no type of its own. Joins, aggregates and
+ * generated wrappers are the same mechanism and are not yet covered -- but they are unreachable
+ * without a completed reference type, so this is the prerequisite for them.
+ */
+class CapabilityTypeCompleter {
+public:
+    CapabilityTypeCompleter(TypeManager& typeManager, const InferredCapabilities& inferred)
+        : typeManager(typeManager), inferred(inferred)
+    {
+    }
+
+    void Complete(Package& pkg)
+    {
+        Walker(&pkg, [this](Ptr<Node> node) {
+            if (auto re = DynamicCast<RefExpr*>(node.get())) {
+                CompleteReference(*re, re->ref.target);
+            } else if (auto ma = DynamicCast<MemberAccess*>(node.get())) {
+                CompleteReference(*ma, ma->target);
+            } else if (auto vd = DynamicCast<VarDecl*>(node.get())) {
+                CompleteBinding(*vd);
+            }
+            return VisitAction::WALK_CHILDREN;
+        }).Walk();
+    }
+
+private:
+    void CompleteReference(NameReferenceExpr& expr, Ptr<Decl> target)
+    {
+        auto func = DynamicCast<FuncDecl*>(target.get());
+        if (!func) {
+            return;
+        }
+        auto it = inferred.find(Ptr<FuncDecl>(func));
+        if (it == inferred.end() || it->second.empty()) {
+            return;
+        }
+        auto declTy = DynamicCast<FuncTy*>(func->GetTy());
+        auto exprTy = DynamicCast<FuncTy*>(expr.GetTy());
+        if (!declTy || !exprTy || declTy->capTys.empty()) {
+            return;
+        }
+        // The declaration's entries name its own type parameters; a reference may pin them.
+        TypeSubst mapping;
+        if (!expr.instTys.empty()) {
+            mapping = TypeCheckUtil::GenerateTypeMapping(*func, expr.instTys);
+        }
+        std::vector<Ptr<Ty>> caps;
+        for (auto cap : declTy->capTys) {
+            auto instantiated = mapping.empty() ? cap : typeManager.GetInstantiatedTy(cap, mapping);
+            if (Ty::IsTyCorrect(instantiated) && !Utils::In(instantiated, caps)) {
+                caps.emplace_back(instantiated);
+            }
+        }
+        caps = typeManager.NormalizeCapTys(caps);
+        if (caps.empty() || caps == exprTy->capTys) {
+            return;
+        }
+        expr.SetTy(typeManager.GetFunctionTy(exprTy->paramTys, exprTy->retTy,
+            {exprTy->IsCFunc(), exprTy->isClosureTy, exprTy->hasVariableLenArg, exprTy->noCast}, caps));
+    }
+
+    void CompleteBinding(VarDecl& vd)
+    {
+        // Only a binding that takes its type FROM the initializer: one with a declared type keeps
+        // it, and the mismatch -- if the initializer now carries a list the declared type does not
+        // admit -- is what the replay reports.
+        if (vd.type || !vd.initializer) {
+            return;
+        }
+        auto initTy = DynamicCast<FuncTy*>(vd.initializer->GetTy());
+        if (!initTy || initTy->capTys.empty() || vd.GetTy() == initTy) {
+            return;
+        }
+        if (auto varTy = DynamicCast<FuncTy*>(vd.GetTy()); varTy && varTy->capTys.empty()) {
+            vd.SetTy(initTy);
+        }
+    }
+
+    TypeManager& typeManager;
+    const InferredCapabilities& inferred;
+};
+} // namespace
+
+void CompleteInferredCapabilityExprTypes(
+    TypeManager& typeManager, const InferredCapabilities& inferred, AST::Package& pkg)
+{
+    if (inferred.empty()) {
+        return;
+    }
+    CapabilityTypeCompleter(typeManager, inferred).Complete(pkg);
+}
+
+namespace {
+/**
+ * Checked exceptions: the replay half. Sema decided these positions while the inferred lists were
+ * empty, so a value whose type has just acquired a list may no longer fit where it was accepted --
+ * '() throws E -> R' is not a subtype of '() -> R'. Only the capability component can have
+ * changed, so a failure here is always about capabilities and gets its own message; an ordinary
+ * shape mismatch was reported by Sema long before.
+ *
+ * Overload resolution is deliberately NOT replayed: it never consults capability lists, so its
+ * result cannot have changed -- re-resolving would risk silently choosing different code.
+ */
+class CapabilitySubtypeReplay {
+public:
+    CapabilitySubtypeReplay(TypeManager& typeManager, DiagnosticEngine& diag, bool asWarning)
+        : typeManager(typeManager), diag(diag), asWarning(asWarning)
+    {
+    }
+
+    void Replay(Package& pkg)
+    {
+        Walker(&pkg, [this](Ptr<Node> node) {
+            if (auto vd = DynamicCast<VarDecl*>(node.get()); vd && vd->type && vd->initializer) {
+                Check(*vd->initializer, vd->GetTy(), "this binding");
+            } else if (auto ae = DynamicCast<AssignExpr*>(node.get()); ae && ae->leftValue && ae->rightExpr) {
+                Check(*ae->rightExpr, ae->leftValue->GetTy(), "this assignment");
+            } else if (auto ce = DynamicCast<CallExpr*>(node.get())) {
+                CheckArguments(*ce);
+            } else if (auto re = DynamicCast<ReturnExpr*>(node.get()); re && re->expr) {
+                Check(*re->expr, ReturnTargetTy(*re), "this 'return'");
+            }
+            return VisitAction::WALK_CHILDREN;
+        }).Walk();
+    }
+
+private:
+    static Ptr<Ty> ReturnTargetTy(const ReturnExpr& re)
+    {
+        auto fb = re.refFuncBody;
+        if (!fb || !fb->retType) {
+            return nullptr;
+        }
+        return fb->retType->GetTy();
+    }
+
+    void CheckArguments(const CallExpr& ce)
+    {
+        auto funcTy = DynamicCast<FuncTy*>(ce.baseFunc ? ce.baseFunc->GetTy() : nullptr);
+        if (!funcTy) {
+            return;
+        }
+        size_t i = 0;
+        for (auto& arg : ce.args) {
+            if (i >= funcTy->paramTys.size()) {
+                break;
+            }
+            if (arg && arg->expr) {
+                Check(*arg->expr, funcTy->paramTys[i], "this argument");
+            }
+            ++i;
+        }
+    }
+
+    void Check(const Expr& source, Ptr<Ty> targetTy, const std::string& position)
+    {
+        auto sourceFuncTy = DynamicCast<FuncTy*>(source.GetTy());
+        auto targetFuncTy = DynamicCast<FuncTy*>(targetTy);
+        if (!sourceFuncTy || !targetFuncTy || sourceFuncTy->capTys.empty()) {
+            return; // nothing acquired a list here
+        }
+        if (typeManager.IsCapTysSubsumed(sourceFuncTy->capTys, targetFuncTy->capTys)) {
+            return;
+        }
+        std::string missing;
+        for (auto cap : sourceFuncTy->capTys) {
+            if (!Ty::IsTyCorrect(cap) || typeManager.IsCapTysSubsumed({cap}, targetFuncTy->capTys)) {
+                continue;
+            }
+            missing += (missing.empty() ? "" : ", ") + ("'" + Ty::ToString(cap) + "'");
+        }
+        if (missing.empty()) {
+            return;
+        }
+        // The replay reports the same obligation the checking pass does, so it follows the same
+        // migration level: at 'warn' a library still builds while its inferred lists are widened.
+        auto kind = asWarning ? DiagKindRefactor::sema_chexc_inferred_list_not_admitted_warn
+                              : DiagKindRefactor::sema_chexc_inferred_list_not_admitted;
+        diag.DiagnoseRefactor(kind, source, missing, Ty::ToString(targetTy), position);
+    }
+
+    TypeManager& typeManager;
+    DiagnosticEngine& diag;
+    bool asWarning;
+};
+} // namespace
+
+void ReplayCapabilitySubtyping(TypeManager& typeManager, AST::Package& pkg, DiagnosticEngine& diag, bool asWarning)
+{
+    CapabilitySubtypeReplay(typeManager, diag, asWarning).Replay(pkg);
 }
 
 std::vector<Ptr<Ty>> GetCapturesCapTys(const AST::Decl& decl)

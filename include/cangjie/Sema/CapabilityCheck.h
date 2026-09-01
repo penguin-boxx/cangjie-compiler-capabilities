@@ -140,6 +140,24 @@ InferredCapabilities InferCapabilities(
 void CompleteInferredCapabilityTypes(TypeManager& typeManager, const InferredCapabilities& inferred);
 
 /**
+ * Checked exceptions: finish the capability component of the EXPRESSION types that name an
+ * inferred declaration — a reference used as a value, and the binding it initializes. Those types
+ * were formed during type check, while the list was still empty, so without this a call through
+ * such a value demands nothing at all. Run after 'CompleteInferredCapabilityTypes'.
+ */
+void CompleteInferredCapabilityExprTypes(
+    TypeManager& typeManager, const InferredCapabilities& inferred, AST::Package& pkg);
+
+/**
+ * Checked exceptions: re-check the capability-sensitive judgements type check made while the
+ * inferred lists were empty — assignment, initialization against a declared type, argument
+ * passing and 'return'. Only the capability component can have changed, so a failure here is
+ * always about capabilities. Overload resolution is never replayed: it does not consult lists.
+ * @p asWarning follows the checking level, as for every other capability obligation.
+ */
+void ReplayCapabilitySubtyping(TypeManager& typeManager, AST::Package& pkg, DiagnosticEngine& diag, bool asWarning);
+
+/**
  * Checked exceptions: report every inferred list that requires more than the declaration it
  * overrides or implements. Written lists are compared during type check; an inferred one cannot be,
  * because inference runs after it -- so the override pairs recorded then are consumed here.

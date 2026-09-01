@@ -736,10 +736,15 @@ bool CompilerInstance::PerformCapabilityCheck()
         // never inferred, so with exception checking off there is nothing to infer.
         auto inferred = checkExceptions ? Sema::InferCapabilities(*typeManager, *importManager, *srcPkg, diag)
                                         : Sema::InferredCapabilities{};
-        // The clause components of types are completed between capability
-        // parameter inference and capability argument checking, so a declaration's own type is
-        // the single source of its list. Keep these three calls adjacent.
+        // The clause components of types are completed between capability parameter inference and
+        // capability argument checking, so a type is the single source of its list -- first the
+        // declarations, then the expressions that name them, and then the judgements type check
+        // made while those lists were still empty are replayed. Keep these five calls adjacent and
+        // in this order: the replay reads what the two completions wrote, and the argument check
+        // reads all three.
         Sema::CompleteInferredCapabilityTypes(*typeManager, inferred);
+        Sema::CompleteInferredCapabilityExprTypes(*typeManager, inferred, *srcPkg);
+        Sema::ReplayCapabilitySubtyping(*typeManager, *srcPkg, diag, asWarning);
         Sema::CheckInferredOverrides(*typeManager, inferred, diag, asWarning);
         Sema::CheckCapabilities(*typeManager, *importManager, *srcPkg, missHandler, inferred, diag);
     }
