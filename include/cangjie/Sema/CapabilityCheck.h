@@ -16,6 +16,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "cangjie/AST/Node.h"
@@ -133,29 +134,42 @@ InferredCapabilities InferCapabilities(
  * Complete the types of the declarations covered by @p inferred (capability
  * parameters, then clause components of types, then capability arguments). Each declaration's
  * functional type is re-interned with its inferred entries, so the declaration's own type is the
- * single source of its capability list. Expression types are deliberately NOT completed: they
- * were formed during type check, before inference ran, and re-typing them would double-charge
- * every call site — call sites read the map instead.
+ * single source of its capability list. The expression types formed from those declarations
+ * during type check are completed afterwards, by 'CompleteInferredCapabilityExprTypes'.
  */
 void CompleteInferredCapabilityTypes(TypeManager& typeManager, const InferredCapabilities& inferred);
 
 /**
- * Checked exceptions: finish the capability component of the EXPRESSION types that name an
- * inferred declaration — a reference used as a value, and the binding it initializes. Those types
- * were formed during type check, while the list was still empty, so without this a call through
- * such a value demands nothing at all. Run after 'CompleteInferredCapabilityTypes'.
+ * The nodes whose types expression completion changed: expressions, and the declarations whose
+ * types were taken from one (a binding without a declared type, a callable without a declared
+ * result type). The replay consults it, so that only a judgement whose source actually changed is
+ * re-made.
  */
-void CompleteInferredCapabilityExprTypes(
+using CompletedCapabilityNodes = std::unordered_set<Ptr<const AST::Node>>;
+
+/**
+ * Checked exceptions: finish the capability component of the EXPRESSION types that depend on an
+ * inferred list. Those types were formed during type check, while the lists were still empty, so
+ * without this a call through such a value demands nothing at all. Starting from the references
+ * that name an inferred declaration, the completed component is propagated to whatever type check
+ * derived from them -- bindings and references to them, joins, literal aggregates, member and
+ * subscript results, call results, inferred result types -- to a fixed point. Run after
+ * 'CompleteInferredCapabilityTypes'; returns what it changed.
+ */
+CompletedCapabilityNodes CompleteInferredCapabilityExprTypes(
     TypeManager& typeManager, const InferredCapabilities& inferred, AST::Package& pkg);
 
 /**
  * Checked exceptions: re-check the capability-sensitive judgements type check made while the
  * inferred lists were empty — assignment, initialization against a declared type, argument
- * passing and 'return'. Only the capability component can have changed, so a failure here is
- * always about capabilities. Overload resolution is never replayed: it does not consult lists.
- * @p asWarning follows the checking level, as for every other capability obligation.
+ * passing, 'return' and a body's result against a declared result type, and an inferred result
+ * type against the declaration it overrides — wherever the source is in @p completed. Only the
+ * capability components can have changed, so a failure here is always about capabilities.
+ * Overload resolution is never replayed: it does not consult lists. @p asWarning follows the
+ * checking level, as for every other capability obligation.
  */
-void ReplayCapabilitySubtyping(TypeManager& typeManager, AST::Package& pkg, DiagnosticEngine& diag, bool asWarning);
+void ReplayCapabilitySubtyping(TypeManager& typeManager, AST::Package& pkg, const CompletedCapabilityNodes& completed,
+    DiagnosticEngine& diag, bool asWarning);
 
 /**
  * Checked exceptions: report every inferred list that requires more than the declaration it

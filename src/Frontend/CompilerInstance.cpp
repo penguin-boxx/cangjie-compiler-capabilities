@@ -743,8 +743,8 @@ bool CompilerInstance::PerformCapabilityCheck()
         // in this order: the replay reads what the two completions wrote, and the argument check
         // reads all three.
         Sema::CompleteInferredCapabilityTypes(*typeManager, inferred);
-        Sema::CompleteInferredCapabilityExprTypes(*typeManager, inferred, *srcPkg);
-        Sema::ReplayCapabilitySubtyping(*typeManager, *srcPkg, diag, asWarning);
+        auto completed = Sema::CompleteInferredCapabilityExprTypes(*typeManager, inferred, *srcPkg);
+        Sema::ReplayCapabilitySubtyping(*typeManager, *srcPkg, completed, diag, asWarning);
         Sema::CheckInferredOverrides(*typeManager, inferred, diag, asWarning);
         Sema::CheckCapabilities(*typeManager, *importManager, *srcPkg, missHandler, inferred, diag);
     }

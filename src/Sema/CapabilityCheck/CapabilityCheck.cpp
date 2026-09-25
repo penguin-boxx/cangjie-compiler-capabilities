@@ -23,10 +23,11 @@
  * - Demands: 'throw e' and 'resume r throwing e' demand the static type of 'e'; 'perform c'
  *   demands the command's type; a call demands every entry of the resolved callee's (or called
  *   function value's) instantiated functional type, and a try-with-resources demands what each
- *   resource's implicit 'close()' requires. A reference that turns an inferred declaration into a
- *   value demands that declaration's list where the value is formed. A default parameter value is
+ *   resource's implicit 'close()' requires. A value formed from an inferred declaration carries
+ *   the list on its (completed) type, so the call through it pays. A default parameter value is
  *   checked against the callable's own scope; an instance field initializer must be satisfiable in
- *   EVERY constructor's scope; static and top-level initializers have no capability scope.
+ *   EVERY constructor's scope; static field initializers, 'static init' blocks and top-level
+ *   initializers have no capability scope.
  * - Resolution: a demand is satisfied iff some active supply S exists with demanded <: S,
  * searched from the innermost scope outwards, first match.
  *
@@ -42,6 +43,7 @@
 #include <functional>
 #include <set>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -122,6 +124,48 @@ AssumedThrows CollectAssumedThrows(const Package& pkg, const ImportManager& impo
         }
     }
     return assumed;
+}
+
+/// The nullary member named @p name among @p members, if any.
+Ptr<FuncDecl> FindNullaryAmong(const std::vector<Ptr<Decl>>& members, const std::string& name)
+{
+    for (auto member : members) {
+        auto fd = DynamicCast<FuncDecl*>(member);
+        if (!fd || fd->identifier != name || !fd->funcBody || fd->funcBody->paramLists.empty()) {
+            continue;
+        }
+        if (fd->funcBody->paramLists[0]->params.empty()) {
+            return fd;
+        }
+    }
+    return nullptr;
+}
+
+/// The nullary member named @p name of @p receiverTy or of any of its supertypes -- the shape
+/// every protocol method the compiler calls implicitly has ('close', 'iterator', 'next'). An
+/// extension's members count as the type's own: 'Array<T>' gets its 'iterator()' from one.
+Ptr<FuncDecl> FindNullaryMemberOf(TypeManager& typeManager, Ptr<Ty> receiverTy, const std::string& name)
+{
+    if (!Ty::IsTyCorrect(receiverTy)) {
+        return nullptr;
+    }
+    std::vector<Ptr<Ty>> chain{receiverTy};
+    for (auto superTy : typeManager.GetAllSuperTys(*receiverTy)) {
+        chain.emplace_back(superTy);
+    }
+    for (auto ty : chain) {
+        if (auto decl = Ty::GetDeclOfTy<InheritableDecl>(ty)) {
+            if (auto found = FindNullaryAmong(decl->GetMemberDeclPtrs(), name)) {
+                return found;
+            }
+        }
+        for (auto extend : typeManager.GetAllExtendsByTy(*ty)) {
+            if (auto found = extend ? FindNullaryAmong(extend->GetMemberDeclPtrs(), name) : nullptr) {
+                return found;
+            }
+        }
+    }
+    return nullptr;
 }
 
 class CapabilityChecker {
@@ -571,33 +615,9 @@ private:
      * be. Inert while 'Resource.close()' is clause-free, which is why it must land BEFORE the
      * standard library gives it one.
      */
-    /// The nullary member named @p name of @p receiverTy or of any of its supertypes -- the shape
-    /// every protocol method the compiler calls implicitly has ('close', 'iterator', 'next').
     Ptr<FuncDecl> FindNullaryMember(Ptr<Ty> receiverTy, const std::string& name) const
     {
-        if (!Ty::IsTyCorrect(receiverTy)) {
-            return nullptr;
-        }
-        std::vector<Ptr<Ty>> chain{receiverTy};
-        for (auto superTy : typeManager.GetAllSuperTys(*receiverTy)) {
-            chain.emplace_back(superTy);
-        }
-        for (auto ty : chain) {
-            auto decl = Ty::GetDeclOfTy<InheritableDecl>(ty);
-            if (!decl) {
-                continue;
-            }
-            for (auto member : decl->GetMemberDeclPtrs()) {
-                auto fd = DynamicCast<FuncDecl*>(member);
-                if (!fd || fd->identifier != name || !fd->funcBody || fd->funcBody->paramLists.empty()) {
-                    continue;
-                }
-                if (fd->funcBody->paramLists[0]->params.empty()) {
-                    return fd;
-                }
-            }
-        }
-        return nullptr;
+        return FindNullaryMemberOf(typeManager, receiverTy, name);
     }
 
     /// The effective capability list of a nullary protocol member on @p receiverTy: what it
@@ -1699,18 +1719,176 @@ void CompleteInferredCapabilityTypes(TypeManager& typeManager, const InferredCap
 }
 
 namespace {
+/// The config flags of @p funcTy, so a rebuilt functional type differs in its components only.
+FuncTy::Config ConfigOf(const FuncTy& funcTy)
+{
+    return {funcTy.IsCFunc(), funcTy.isClosureTy, funcTy.hasVariableLenArg, funcTy.noCast};
+}
+
+/**
+ * The type @p target with the capability components of @p source joined in, position by position,
+ * where the two have the same shape -- everything else of @p target is kept.
+ *
+ * This is the join the text prescribes ("Joins and meets": the union of the lists, in semantic
+ * form) restricted to the one situation completion produces: @p source is a type that type check
+ * derived while an inferred list was still empty, completed since, so it differs from what the
+ * judgement saw in capability components alone. Parameter positions are left as they are: no
+ * inferred list reaches a parameter type (parameters are written, or taken from an expected type),
+ * so the meet there has nothing to narrow. A nominal type argument is widened too, although it is
+ * invariant: 'Array<() -> Unit>' built from a thrower IS 'Array<() throws E -> Unit>' once the
+ * list is known -- the literal was typed, not converted.
+ */
+Ptr<Ty> WidenCapabilities(TypeManager& typeManager, Ptr<Ty> target, Ptr<Ty> source)
+{
+    if (!Ty::IsTyCorrect(target) || !Ty::IsTyCorrect(source) || target == source) {
+        return target;
+    }
+    if (auto targetFuncTy = DynamicCast<FuncTy*>(target)) {
+        auto sourceFuncTy = DynamicCast<FuncTy*>(source);
+        if (!sourceFuncTy || sourceFuncTy->paramTys.size() != targetFuncTy->paramTys.size()) {
+            return target;
+        }
+        auto retTy = WidenCapabilities(typeManager, targetFuncTy->retTy, sourceFuncTy->retTy);
+        auto caps = targetFuncTy->capTys;
+        bool grew = false;
+        for (auto cap : sourceFuncTy->capTys) {
+            if (Ty::IsTyCorrect(cap) && !typeManager.IsCapTysSubsumed({cap}, caps)) {
+                caps.emplace_back(cap);
+                grew = true;
+            }
+        }
+        if (!grew && retTy == targetFuncTy->retTy) {
+            return target;
+        }
+        return typeManager.GetFunctionTy(
+            targetFuncTy->paramTys, retTy, ConfigOf(*targetFuncTy), typeManager.NormalizeCapTys(caps));
+    }
+    if (target->kind != source->kind || target->typeArgs.empty() ||
+        target->typeArgs.size() != source->typeArgs.size()) {
+        return target;
+    }
+    std::vector<Ptr<Ty>> typeArgs;
+    bool changed = false;
+    for (size_t i = 0; i < target->typeArgs.size(); ++i) {
+        auto widened = WidenCapabilities(typeManager, target->typeArgs[i], source->typeArgs[i]);
+        changed = changed || widened != target->typeArgs[i];
+        typeArgs.emplace_back(widened);
+    }
+    if (!changed) {
+        return target;
+    }
+    if (auto tupleTy = DynamicCast<TupleTy*>(target)) {
+        return typeManager.GetTupleTy(typeArgs, tupleTy->isClosureTy);
+    }
+    if (auto arrayTy = DynamicCast<ArrayTy*>(target)) {
+        return typeManager.GetArrayTy(typeArgs.front(), arrayTy->dims);
+    }
+    if (auto varrayTy = DynamicCast<VArrayTy*>(target)) {
+        return typeManager.GetVArrayTy(*typeArgs.front(), varrayTy->size);
+    }
+    auto decl = Ty::GetDeclPtrOfTy(target);
+    if (!decl || decl != Ty::GetDeclPtrOfTy(source) || Is<ClassThisTy>(target)) {
+        return target;
+    }
+    auto generic = decl->GetGeneric();
+    if (!generic || generic->typeParameters.size() != typeArgs.size()) {
+        return target;
+    }
+    auto widened = typeManager.GetInstantiatedTy(decl->GetTy(), TypeCheckUtil::GenerateTypeMapping(*decl, typeArgs));
+    return Ty::IsTyCorrect(widened) && widened->kind == target->kind ? widened : target;
+}
+
+/**
+ * The capability entries of @p source that @p target does not admit, position by position where
+ * the two have the same shape. Shapes that disagree are not this pass's business: type check
+ * judged them, and a mismatch there was reported long ago.
+ */
+void CollectUnadmitted(TypeManager& typeManager, Ptr<Ty> source, Ptr<Ty> target, std::vector<Ptr<Ty>>& unadmitted)
+{
+    if (!Ty::IsTyCorrect(source) || !Ty::IsTyCorrect(target) || source == target) {
+        return;
+    }
+    if (auto sourceFuncTy = DynamicCast<FuncTy*>(source)) {
+        auto targetFuncTy = DynamicCast<FuncTy*>(target);
+        if (!targetFuncTy || sourceFuncTy->paramTys.size() != targetFuncTy->paramTys.size()) {
+            return;
+        }
+        for (auto cap : sourceFuncTy->capTys) {
+            if (Ty::IsTyCorrect(cap) && !typeManager.IsCapTysSubsumed({cap}, targetFuncTy->capTys) &&
+                !Utils::In(cap, unadmitted)) {
+                unadmitted.emplace_back(cap);
+            }
+        }
+        CollectUnadmitted(typeManager, sourceFuncTy->retTy, targetFuncTy->retTy, unadmitted);
+        return;
+    }
+    if (source->kind != target->kind || source->typeArgs.size() != target->typeArgs.size() ||
+        Ty::GetDeclPtrOfTy(source) != Ty::GetDeclPtrOfTy(target)) {
+        return;
+    }
+    for (size_t i = 0; i < source->typeArgs.size(); ++i) {
+        CollectUnadmitted(typeManager, source->typeArgs[i], target->typeArgs[i], unadmitted);
+    }
+}
+
+/**
+ * The element type a 'for-in' over @p subjectTy binds: what 'next()' of the subject's 'iterator()'
+ * yields, out of its 'Option'. Iterating an iterator directly skips the first step. Null when the
+ * protocol cannot be followed at concrete types -- the pattern then keeps what type check gave it.
+ */
+Ptr<Ty> IteratedElementTy(TypeManager& typeManager, Ptr<Ty> subjectTy)
+{
+    auto instantiatedRet = [&typeManager](const FuncDecl& member, Ptr<Ty> receiverTy) -> Ptr<Ty> {
+        auto funcTy = DynamicCast<FuncTy*>(member.GetTy());
+        if (!funcTy || !Ty::IsTyCorrect(funcTy->retTy)) {
+            return nullptr;
+        }
+        auto mapping =
+            TypeCheckUtil::GenerateTypeMappingByTy(member.outerDecl ? member.outerDecl->GetTy() : nullptr, receiverTy);
+        return mapping.empty() ? funcTy->retTy : typeManager.GetInstantiatedTy(funcTy->retTy, mapping);
+    };
+    auto iteratorTy = subjectTy;
+    if (auto iterFd = FindNullaryMemberOf(typeManager, subjectTy, "iterator")) {
+        iteratorTy = instantiatedRet(*iterFd, subjectTy);
+    }
+    auto nextFd = FindNullaryMemberOf(typeManager, iteratorTy, "next");
+    if (!nextFd) {
+        return nullptr;
+    }
+    auto optionTy = instantiatedRet(*nextFd, iteratorTy);
+    if (!Ty::IsTyCorrect(optionTy) || optionTy->typeArgs.size() != 1) {
+        return nullptr;
+    }
+    return optionTy->typeArgs.front();
+}
+
 /**
  * Checked exceptions: the completion half of the phase ordering. A declaration's type is finished
- * by 'CompleteInferredCapabilityTypes', but the EXPRESSIONS that name it were typed during Sema,
- * while the list was still empty -- so a reference used as a value carried a clause-free type and
- * a call through it demanded nothing. This walk finishes those types, so the list rides the value
- * as the text says it does and the eventual call pays it.
+ * by 'CompleteInferredCapabilityTypes', but every type type check DERIVED from it was formed while
+ * the list was still empty -- so a value built from an inferred thrower carried a clause-free type
+ * and a call through it demanded nothing. This walk finishes those types, so the list rides the
+ * value as the text says it does and the eventual call pays it.
  *
- * Completed here: a reference or member access naming an inferred declaration, instantiated
- * through the reference's own type arguments; and the type of a binding whose initializer is
- * exactly such an expression and which declares no type of its own. Joins, aggregates and
- * generated wrappers are the same mechanism and are not yet covered -- but they are unreachable
- * without a completed reference type, so this is the prerequisite for them.
+ * Seeded by the references that name an inferred declaration (instantiated through the
+ * reference's own type arguments), the completed component flows along the derivations type check
+ * made, each re-made with the join of "Joins and meets":
+ * - a binding without a declared type takes its initializer's type, a 'for-in' pattern its
+ *   element type, and a reference to a binding the binding's type;
+ * - a block takes its last expression's, a parenthesized expression its operand's, and a desugared
+ *   expression its desugaring's;
+ * - 'if', 'match' and 'try' take the join of their branches;
+ * - an array literal's element type is the join of its elements, a tuple literal's components are
+ *   its elements';
+ * - a member access is re-instantiated through its (completed) receiver, a tuple access takes the
+ *   component, a call takes its (completed) callee's result;
+ * - a callable without a declared result type -- a function or a lambda -- takes the join of its
+ *   body's value and its 'return' expressions, and references to it follow.
+ * Walked post-order and repeated to a fixed point, since a binding or a callable may be referenced
+ * before its own completion is reached. Monotone -- components only grow -- so it terminates.
+ *
+ * Instantiations type check solved are not re-solved: a generic call's type arguments stay as they
+ * were inferred, and the replay reports an argument that no longer fits them. That is stricter than
+ * the text, never weaker.
  */
 class CapabilityTypeCompleter {
 public:
@@ -1719,102 +1897,364 @@ public:
     {
     }
 
-    void Complete(Package& pkg)
+    Sema::CompletedCapabilityNodes Complete(Package& pkg)
     {
-        Walker(&pkg, [this](Ptr<Node> node) {
-            if (auto re = DynamicCast<RefExpr*>(node.get())) {
-                CompleteReference(*re, re->ref.target);
-            } else if (auto ma = DynamicCast<MemberAccess*>(node.get())) {
-                CompleteReference(*ma, ma->target);
-            } else if (auto vd = DynamicCast<VarDecl*>(node.get())) {
-                CompleteBinding(*vd);
+        for (auto& [decl, caps] : inferred) {
+            if (decl && !caps.empty()) {
+                (void)changedDecls.emplace(decl);
             }
-            return VisitAction::WALK_CHILDREN;
-        }).Walk();
+        }
+        // Bounded as a guard only: every round that does not reach the fixed point grows some
+        // capability component, and the entries all come from the finitely many inferred lists.
+        constexpr size_t maxRounds = 32;
+        for (size_t round = 0; round < maxRounds; ++round) {
+            changedThisRound = false;
+            pendingReturns.clear();
+            Walker(&pkg, nullptr, [this](Ptr<Node> node) {
+                Visit(*node);
+                return VisitAction::KEEP_DECISION;
+            }).Walk();
+            if (!changedThisRound) {
+                break;
+            }
+        }
+        return std::move(completed);
     }
 
 private:
-    void CompleteReference(NameReferenceExpr& expr, Ptr<Decl> target)
+    bool IsChanged(Ptr<const Node> node) const
     {
-        auto func = DynamicCast<FuncDecl*>(target.get());
-        if (!func) {
-            return;
-        }
-        auto it = inferred.find(Ptr<FuncDecl>(func));
-        if (it == inferred.end() || it->second.empty()) {
-            return;
-        }
-        auto declTy = DynamicCast<FuncTy*>(func->GetTy());
-        auto exprTy = DynamicCast<FuncTy*>(expr.GetTy());
-        if (!declTy || !exprTy || declTy->capTys.empty()) {
-            return;
-        }
-        // The declaration's entries name its own type parameters; a reference may pin them.
-        TypeSubst mapping;
-        if (!expr.instTys.empty()) {
-            mapping = TypeCheckUtil::GenerateTypeMapping(*func, expr.instTys);
-        }
-        std::vector<Ptr<Ty>> caps;
-        for (auto cap : declTy->capTys) {
-            auto instantiated = mapping.empty() ? cap : typeManager.GetInstantiatedTy(cap, mapping);
-            if (Ty::IsTyCorrect(instantiated) && !Utils::In(instantiated, caps)) {
-                caps.emplace_back(instantiated);
-            }
-        }
-        caps = typeManager.NormalizeCapTys(caps);
-        if (caps.empty() || caps == exprTy->capTys) {
-            return;
-        }
-        expr.SetTy(typeManager.GetFunctionTy(exprTy->paramTys, exprTy->retTy,
-            {exprTy->IsCFunc(), exprTy->isClosureTy, exprTy->hasVariableLenArg, exprTy->noCast}, caps));
+        return node && completed.count(node) > 0;
     }
 
-    void CompleteBinding(VarDecl& vd)
+    void MarkChanged(const Node& node)
     {
-        // Only a binding that takes its type FROM the initializer: one with a declared type keeps
-        // it, and the mismatch -- if the initializer now carries a list the declared type does not
-        // admit -- is what the replay reports.
-        if (vd.type || !vd.initializer) {
+        (void)completed.emplace(Ptr<const Node>(&node));
+        changedThisRound = true;
+    }
+
+    /// Widen @p node's type by @p source; the node is recorded when its type actually grew.
+    void Widen(Node& node, Ptr<Ty> source)
+    {
+        auto widened = WidenCapabilities(typeManager, node.GetTy(), source);
+        if (widened != node.GetTy()) {
+            node.SetTy(widened);
+            MarkChanged(node);
+        }
+    }
+
+    void WidenDecl(Decl& decl, Ptr<Ty> source)
+    {
+        auto before = decl.GetTy();
+        Widen(decl, source);
+        if (decl.GetTy() != before) {
+            (void)changedDecls.emplace(&decl);
+        }
+    }
+
+    void WidenFrom(Node& node, Ptr<const Node> source)
+    {
+        if (IsChanged(source)) {
+            Widen(node, source->GetTy());
+        }
+    }
+
+    void Visit(Node& node)
+    {
+        if (auto expr = DynamicCast<Expr*>(&node); expr && expr->desugarExpr) {
+            WidenFrom(*expr, expr->desugarExpr.get());
+        }
+        switch (node.astKind) {
+            case ASTKind::REF_EXPR: {
+                auto& re = StaticCast<RefExpr&>(node);
+                CompleteReference(re, re.ref.target, nullptr);
+                break;
+            }
+            case ASTKind::MEMBER_ACCESS: {
+                auto& ma = StaticCast<MemberAccess&>(node);
+                CompleteReference(ma, ma.target, ma.baseExpr.get());
+                break;
+            }
+            case ASTKind::CALL_EXPR: {
+                auto& ce = StaticCast<CallExpr&>(node);
+                if (IsChanged(ce.baseFunc.get())) {
+                    if (auto funcTy = DynamicCast<FuncTy*>(ce.baseFunc->GetTy())) {
+                        Widen(ce, funcTy->retTy);
+                    }
+                }
+                break;
+            }
+            case ASTKind::SUBSCRIPT_EXPR:
+                CompleteSubscript(StaticCast<SubscriptExpr&>(node));
+                break;
+            case ASTKind::PAREN_EXPR:
+                WidenFrom(node, StaticCast<ParenExpr&>(node).expr.get());
+                break;
+            case ASTKind::BLOCK: {
+                auto last = StaticCast<Block&>(node).GetLastExprOrDecl();
+                if (Is<Expr>(last)) {
+                    WidenFrom(node, last);
+                }
+                break;
+            }
+            case ASTKind::IF_EXPR: {
+                auto& ie = StaticCast<IfExpr&>(node);
+                WidenFrom(ie, ie.thenBody.get());
+                WidenFrom(ie, ie.elseBody.get());
+                break;
+            }
+            case ASTKind::MATCH_EXPR: {
+                auto& me = StaticCast<MatchExpr&>(node);
+                for (auto& mc : me.matchCases) {
+                    WidenFrom(me, mc ? mc->exprOrDecls.get() : nullptr);
+                }
+                for (auto& mco : me.matchCaseOthers) {
+                    WidenFrom(me, mco ? mco->exprOrDecls.get() : nullptr);
+                }
+                break;
+            }
+            case ASTKind::TRY_EXPR: {
+                auto& te = StaticCast<TryExpr&>(node);
+                WidenFrom(te, te.tryBlock.get());
+                for (auto& cb : te.catchBlocks) {
+                    WidenFrom(te, cb.get());
+                }
+                break;
+            }
+            case ASTKind::ARRAY_LIT:
+                CompleteArrayLit(StaticCast<ArrayLit&>(node));
+                break;
+            case ASTKind::TUPLE_LIT:
+                CompleteTupleLit(StaticCast<TupleLit&>(node));
+                break;
+            case ASTKind::RETURN_EXPR: {
+                auto& re = StaticCast<ReturnExpr&>(node);
+                if (re.refFuncBody && IsChanged(re.expr.get())) {
+                    pendingReturns[re.refFuncBody].emplace_back(re.expr->GetTy());
+                }
+                break;
+            }
+            case ASTKind::FUNC_BODY:
+                CompleteResult(StaticCast<FuncBody&>(node));
+                break;
+            case ASTKind::LAMBDA_EXPR:
+                WidenFrom(node, StaticCast<LambdaExpr&>(node).funcBody.get());
+                break;
+            case ASTKind::VAR_DECL: {
+                auto& vd = StaticCast<VarDecl&>(node);
+                // Only a binding that takes its type FROM the initializer: one with a declared type
+                // keeps it, and a mismatch is what the replay reports.
+                if (!vd.type && IsChanged(vd.initializer.get())) {
+                    WidenDecl(vd, vd.initializer->GetTy());
+                }
+                break;
+            }
+            case ASTKind::VAR_WITH_PATTERN_DECL: {
+                auto& vpd = StaticCast<VarWithPatternDecl&>(node);
+                if (!vpd.type && IsChanged(vpd.initializer.get())) {
+                    WidenPattern(vpd.irrefutablePattern.get(), vpd.initializer->GetTy());
+                }
+                break;
+            }
+            case ASTKind::FOR_IN_EXPR: {
+                auto& fe = StaticCast<ForInExpr&>(node);
+                if (IsChanged(fe.inExpression.get())) {
+                    WidenPattern(fe.pattern.get(), IteratedElementTy(typeManager, fe.inExpression->GetTy()));
+                }
+                break;
+            }
+            default:
+                break;
+        }
+    }
+
+    /**
+     * A name for a completed declaration takes the declaration's completed type, instantiated
+     * through the reference's own type arguments and, for a member, through its receiver -- which
+     * is also how a member access over a completed receiver ('arr.get', 'arr[i]' desugared) learns
+     * the receiver's component.
+     */
+    void CompleteReference(NameReferenceExpr& expr, Ptr<Decl> target, Ptr<const Expr> receiver)
+    {
+        if (!target || (changedDecls.count(target) == 0 && !IsChanged(receiver))) {
             return;
         }
-        auto initTy = DynamicCast<FuncTy*>(vd.initializer->GetTy());
-        if (!initTy || initTy->capTys.empty() || vd.GetTy() == initTy) {
+        auto declTy = target->GetTy();
+        if (!Ty::IsTyCorrect(declTy)) {
             return;
         }
-        if (auto varTy = DynamicCast<FuncTy*>(vd.GetTy()); varTy && varTy->capTys.empty()) {
-            vd.SetTy(initTy);
+        TypeSubst mapping;
+        if (receiver && target->outerDecl && Ty::IsTyCorrect(receiver->GetTy())) {
+            auto outerGeneric = target->outerDecl->GetGeneric();
+            if (outerGeneric && !outerGeneric->typeParameters.empty()) {
+                mapping = TypeCheckUtil::GenerateTypeMappingByTy(target->outerDecl->GetTy(), receiver->GetTy());
+                if (mapping.empty()) {
+                    return; // reached through a supertype this pass does not follow: leave it
+                }
+            }
+        }
+        if (!expr.instTys.empty() && target->GetGeneric()) {
+            auto own = TypeCheckUtil::GenerateTypeMapping(*target, expr.instTys);
+            mapping.insert(own.begin(), own.end());
+        }
+        Widen(expr, mapping.empty() ? declTy : typeManager.GetInstantiatedTy(declTy, mapping));
+    }
+
+    void CompleteSubscript(SubscriptExpr& se)
+    {
+        if (!IsChanged(se.baseExpr.get())) {
+            return;
+        }
+        auto baseTy = se.baseExpr->GetTy();
+        if (se.isTupleAccess) {
+            auto tupleTy = DynamicCast<TupleTy*>(baseTy);
+            auto index = se.indexExprs.size() == 1 ? DynamicCast<LitConstExpr*>(se.indexExprs.front().get()) : nullptr;
+            if (tupleTy && index) {
+                auto position = index->constNumValue.asInt.Uint64();
+                if (position < tupleTy->typeArgs.size()) {
+                    Widen(se, tupleTy->typeArgs[position]);
+                }
+            }
+            return;
+        }
+        // A built-in 'VArray' access; every other subscript is an operator call, completed through
+        // its desugaring.
+        if (auto varrayTy = DynamicCast<VArrayTy*>(baseTy); varrayTy && !varrayTy->typeArgs.empty()) {
+            Widen(se, varrayTy->typeArgs.front());
+        }
+    }
+
+    void CompleteArrayLit(ArrayLit& al)
+    {
+        auto litTy = al.GetTy();
+        if (!Ty::IsTyCorrect(litTy) || litTy->typeArgs.size() != 1) {
+            return;
+        }
+        auto elemTy = litTy->typeArgs.front();
+        for (auto& child : al.children) {
+            if (IsChanged(child.get())) {
+                elemTy = WidenCapabilities(typeManager, elemTy, child->GetTy());
+            }
+        }
+        if (elemTy == litTy->typeArgs.front()) {
+            return;
+        }
+        // The literal's type with its element type widened: the same shape, one argument replaced.
+        std::vector<Ptr<Ty>> args{elemTy};
+        auto decl = Ty::GetDeclPtrOfTy(litTy);
+        if (auto varrayTy = DynamicCast<VArrayTy*>(litTy)) {
+            Widen(al, typeManager.GetVArrayTy(*elemTy, varrayTy->size));
+        } else if (decl && decl->GetGeneric()) {
+            Widen(al, typeManager.GetInstantiatedTy(decl->GetTy(), TypeCheckUtil::GenerateTypeMapping(*decl, args)));
+        }
+    }
+
+    void CompleteTupleLit(TupleLit& tl)
+    {
+        auto tupleTy = DynamicCast<TupleTy*>(tl.GetTy());
+        if (!tupleTy || tupleTy->typeArgs.size() != tl.children.size()) {
+            return;
+        }
+        std::vector<Ptr<Ty>> elems = tupleTy->typeArgs;
+        for (size_t i = 0; i < tl.children.size(); ++i) {
+            if (IsChanged(tl.children[i].get())) {
+                elems[i] = WidenCapabilities(typeManager, elems[i], tl.children[i]->GetTy());
+            }
+        }
+        Widen(tl, typeManager.GetTupleTy(elems, tupleTy->isClosureTy));
+    }
+
+    /// A callable whose result type type check inferred -- the compiler added its result type node
+    /// -- takes the join of what its body can produce: the body's value and every 'return'.
+    void CompleteResult(FuncBody& fb)
+    {
+        auto funcTy = DynamicCast<FuncTy*>(fb.GetTy());
+        if (!funcTy || !fb.retType || !fb.retType->TestAttr(Attribute::COMPILER_ADD)) {
+            return;
+        }
+        auto retTy = funcTy->retTy;
+        if (fb.body) {
+            if (auto last = fb.body->GetLastExprOrDecl(); Is<Expr>(last) && IsChanged(last)) {
+                retTy = WidenCapabilities(typeManager, retTy, last->GetTy());
+            }
+        }
+        if (auto it = pendingReturns.find(&fb); it != pendingReturns.end()) {
+            for (auto returned : it->second) {
+                retTy = WidenCapabilities(typeManager, retTy, returned);
+            }
+        }
+        if (retTy == funcTy->retTy) {
+            return;
+        }
+        auto completedTy = typeManager.GetFunctionTy(funcTy->paramTys, retTy, ConfigOf(*funcTy), funcTy->capTys);
+        fb.SetTy(completedTy);
+        fb.retType->SetTy(retTy);
+        MarkChanged(fb);
+        if (fb.funcDecl) {
+            fb.funcDecl->SetTy(completedTy);
+            (void)changedDecls.emplace(fb.funcDecl);
+            MarkChanged(*fb.funcDecl);
+        }
+    }
+
+    /// A pattern binding takes its part of the (completed) value it destructures.
+    void WidenPattern(Ptr<Pattern> pattern, Ptr<Ty> valueTy)
+    {
+        if (!pattern || !Ty::IsTyCorrect(valueTy)) {
+            return;
+        }
+        if (auto vp = DynamicCast<VarPattern*>(pattern.get()); vp && vp->varDecl) {
+            WidenDecl(*vp->varDecl, valueTy);
+            Widen(*vp, valueTy);
+        } else if (auto tp = DynamicCast<TuplePattern*>(pattern.get())) {
+            auto tupleTy = DynamicCast<TupleTy*>(valueTy);
+            if (tupleTy && tupleTy->typeArgs.size() == tp->patterns.size()) {
+                for (size_t i = 0; i < tp->patterns.size(); ++i) {
+                    WidenPattern(tp->patterns[i].get(), tupleTy->typeArgs[i]);
+                }
+                Widen(*tp, valueTy);
+            }
         }
     }
 
     TypeManager& typeManager;
     const InferredCapabilities& inferred;
+    /// Declarations whose type differs from the one type check gave them: those with an inferred
+    /// list, and those completion re-typed. A name for one of them is completed.
+    std::unordered_set<Ptr<const Decl>> changedDecls;
+    Sema::CompletedCapabilityNodes completed;
+    /// Per callable body, the completed types of its 'return' expressions this round.
+    std::unordered_map<Ptr<const FuncBody>, std::vector<Ptr<Ty>>> pendingReturns;
+    bool changedThisRound{false};
 };
 } // namespace
 
-void CompleteInferredCapabilityExprTypes(
+Sema::CompletedCapabilityNodes CompleteInferredCapabilityExprTypes(
     TypeManager& typeManager, const InferredCapabilities& inferred, AST::Package& pkg)
 {
-    if (inferred.empty()) {
-        return;
+    if (std::none_of(inferred.begin(), inferred.end(), [](auto& entry) { return !entry.second.empty(); })) {
+        return {};
     }
-    CapabilityTypeCompleter(typeManager, inferred).Complete(pkg);
+    return CapabilityTypeCompleter(typeManager, inferred).Complete(pkg);
 }
 
 namespace {
 /**
- * Checked exceptions: the replay half. Sema decided these positions while the inferred lists were
- * empty, so a value whose type has just acquired a list may no longer fit where it was accepted --
- * '() throws E -> R' is not a subtype of '() -> R'. Only the capability component can have
- * changed, so a failure here is always about capabilities and gets its own message; an ordinary
- * shape mismatch was reported by Sema long before.
+ * Checked exceptions: the replay half. Type check decided these positions while the inferred lists
+ * were empty, so a value whose type has since been completed may no longer fit where it was
+ * accepted -- '() throws E -> R' is not a subtype of '() -> R', and 'Array<() throws E -> R>' is
+ * not 'Array<() -> R>'. Only a source that completion changed is re-judged, and only its capability
+ * components can have changed, so a failure here is always about capabilities and gets its own
+ * message; an ordinary shape mismatch was reported by type check long before.
  *
  * Overload resolution is deliberately NOT replayed: it never consults capability lists, so its
  * result cannot have changed -- re-resolving would risk silently choosing different code.
  */
 class CapabilitySubtypeReplay {
 public:
-    CapabilitySubtypeReplay(TypeManager& typeManager, DiagnosticEngine& diag, bool asWarning)
-        : typeManager(typeManager), diag(diag), asWarning(asWarning)
+    CapabilitySubtypeReplay(TypeManager& typeManager, const Sema::CompletedCapabilityNodes& completed,
+        DiagnosticEngine& diag, bool asWarning)
+        : typeManager(typeManager), completed(completed), diag(diag), asWarning(asWarning)
     {
     }
 
@@ -1828,20 +2268,35 @@ public:
             } else if (auto ce = DynamicCast<CallExpr*>(node.get())) {
                 CheckArguments(*ce);
             } else if (auto re = DynamicCast<ReturnExpr*>(node.get()); re && re->expr) {
-                Check(*re->expr, ReturnTargetTy(*re), "this 'return'");
+                Check(*re->expr, DeclaredResultTy(re->refFuncBody), "this 'return'");
+            } else if (auto fb = DynamicCast<FuncBody*>(node.get())) {
+                CheckBodyValue(*fb);
             }
             return VisitAction::WALK_CHILDREN;
         }).Walk();
+        CheckCompletedOverrides();
     }
 
 private:
-    static Ptr<Ty> ReturnTargetTy(const ReturnExpr& re)
+    /// The WRITTEN result type of a callable; an inferred one was completed with its body instead.
+    static Ptr<Ty> DeclaredResultTy(Ptr<const FuncBody> fb)
     {
-        auto fb = re.refFuncBody;
-        if (!fb || !fb->retType) {
+        if (!fb || !fb->retType || fb->retType->TestAttr(Attribute::COMPILER_ADD)) {
             return nullptr;
         }
         return fb->retType->GetTy();
+    }
+
+    /// A body's last expression is its result as much as a 'return' is.
+    void CheckBodyValue(const FuncBody& fb)
+    {
+        auto target = DeclaredResultTy(&fb);
+        if (!fb.body || !target) {
+            return;
+        }
+        if (auto last = DynamicCast<Expr*>(fb.body->GetLastExprOrDecl())) {
+            Check(*last, target, "this result");
+        }
     }
 
     void CheckArguments(const CallExpr& ce)
@@ -1862,22 +2317,58 @@ private:
         }
     }
 
-    void Check(const Expr& source, Ptr<Ty> targetTy, const std::string& position)
+    /**
+     * An inferred result type is part of the declaration's contract as much as a written one: an
+     * override whose completed result carries a list its overridden declaration's result does not
+     * admit is rejected, exactly as a written one would have been by type check.
+     */
+    void CheckCompletedOverrides()
     {
-        auto sourceFuncTy = DynamicCast<FuncTy*>(source.GetTy());
-        auto targetFuncTy = DynamicCast<FuncTy*>(targetTy);
-        if (!sourceFuncTy || !targetFuncTy || sourceFuncTy->capTys.empty()) {
-            return; // nothing acquired a list here
+        // Declaration order, so the diagnostics do not depend on pointer order.
+        std::vector<Ptr<const FuncDecl>> decls;
+        for (auto node : completed) {
+            if (auto fd = DynamicCast<const FuncDecl*>(node.get())) {
+                decls.emplace_back(fd);
+            }
         }
-        if (typeManager.IsCapTysSubsumed(sourceFuncTy->capTys, targetFuncTy->capTys)) {
-            return;
-        }
-        std::string missing;
-        for (auto cap : sourceFuncTy->capTys) {
-            if (!Ty::IsTyCorrect(cap) || typeManager.IsCapTysSubsumed({cap}, targetFuncTy->capTys)) {
+        std::sort(decls.begin(), decls.end(), [](auto lhs, auto rhs) {
+            return std::tie(lhs->begin.fileID, lhs->begin.line, lhs->begin.column) <
+                std::tie(rhs->begin.fileID, rhs->begin.line, rhs->begin.column);
+        });
+        for (auto fd : decls) {
+            auto funcTy = DynamicCast<FuncTy*>(fd->GetTy());
+            if (!funcTy) {
                 continue;
             }
-            missing += (missing.empty() ? "" : ", ") + ("'" + Ty::ToString(cap) + "'");
+            for (auto parent : typeManager.GetOverridden(*fd)) {
+                auto parentTy = DynamicCast<FuncTy*>(parent->GetTy());
+                if (!parentTy) {
+                    continue;
+                }
+                std::vector<Ptr<Ty>> unadmitted;
+                CollectUnadmitted(typeManager, funcTy->retTy, parentTy->retTy, unadmitted);
+                Report(*fd, unadmitted, parentTy->retTy, "the result of the declaration it overrides");
+            }
+        }
+    }
+
+    void Check(const Expr& source, Ptr<Ty> targetTy, const std::string& position)
+    {
+        if (completed.count(Ptr<const Node>(&source)) == 0 || !Ty::IsTyCorrect(targetTy)) {
+            return; // type check judged exactly this type already
+        }
+        std::vector<Ptr<Ty>> unadmitted;
+        CollectUnadmitted(typeManager, source.GetTy(), targetTy, unadmitted);
+        Report(source, unadmitted, targetTy, position);
+    }
+
+    void Report(const Node& site, const std::vector<Ptr<Ty>>& unadmitted, Ptr<Ty> targetTy, const std::string& position)
+    {
+        std::string missing;
+        for (auto cap : typeManager.NormalizeCapTys(unadmitted)) {
+            if (Ty::IsTyCorrect(cap)) {
+                missing += (missing.empty() ? "" : ", ") + ("'" + Ty::ToString(cap) + "'");
+            }
         }
         if (missing.empty()) {
             return;
@@ -1886,18 +2377,23 @@ private:
         // migration level: at 'warn' a library still builds while its inferred lists are widened.
         auto kind = asWarning ? DiagKindRefactor::sema_chexc_inferred_list_not_admitted_warn
                               : DiagKindRefactor::sema_chexc_inferred_list_not_admitted;
-        diag.DiagnoseRefactor(kind, source, missing, Ty::ToString(targetTy), position);
+        diag.DiagnoseRefactor(kind, site, missing, Ty::ToString(targetTy), position);
     }
 
     TypeManager& typeManager;
+    const Sema::CompletedCapabilityNodes& completed;
     DiagnosticEngine& diag;
     bool asWarning;
 };
 } // namespace
 
-void ReplayCapabilitySubtyping(TypeManager& typeManager, AST::Package& pkg, DiagnosticEngine& diag, bool asWarning)
+void ReplayCapabilitySubtyping(TypeManager& typeManager, AST::Package& pkg, const CompletedCapabilityNodes& completed,
+    DiagnosticEngine& diag, bool asWarning)
 {
-    CapabilitySubtypeReplay(typeManager, diag, asWarning).Replay(pkg);
+    if (completed.empty()) {
+        return;
+    }
+    CapabilitySubtypeReplay(typeManager, completed, diag, asWarning).Replay(pkg);
 }
 
 std::vector<Ptr<Ty>> GetCapturesCapTys(const AST::Decl& decl)
