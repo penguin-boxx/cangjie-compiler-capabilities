@@ -469,7 +469,17 @@ GenericInfo GIM::GenericInstantiationManagerImpl::ConstructGenericInfo(
     Decl& decl, const std::vector<Ptr<Ty>>& instTys) const
 {
     CJC_ASSERT(decl.TestAttr(Attribute::GENERIC));
-    TypeSubst gTyToTyMap = GenerateTypeMapping(decl, instTys);
+    // Checked exceptions: capability lists are erased at run time ("Runtime ABI"), so two type
+    // arguments that differ only in them -- 'Box<() throws E -> Unit>' and 'Box<() -> Unit>' -- have
+    // one runtime shape and one mangled name, and must share one instantiation. Two would be two
+    // declarations under one symbol, which the back end cannot tell apart. The key, and hence the
+    // instantiated body, is taken at the erased types; checking is over by the time this runs.
+    std::vector<Ptr<Ty>> erasedTys;
+    erasedTys.reserve(instTys.size());
+    for (auto ty : instTys) {
+        erasedTys.emplace_back(typeManager.EraseCapTys(ty));
+    }
+    TypeSubst gTyToTyMap = GenerateTypeMapping(decl, erasedTys);
     CJC_ASSERT(!gTyToTyMap.empty());
     GenericInfo genericInfo(&decl, gTyToTyMap);
     return genericInfo;
