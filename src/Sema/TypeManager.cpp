@@ -12,6 +12,7 @@
 
 #include "cangjie/Sema/TypeManager.h"
 
+#include <algorithm>
 #include <string>
 #include <utility>
 #include <vector>
@@ -152,6 +153,47 @@ Ptr<TupleTy> TypeManager::GetTupleTy(const std::vector<Ptr<Ty>>& typeArgs, bool 
     return GetTypeTy<TupleTy>(typeArgs, isClosureTy);
 }
 
+namespace {
+/// A deterministic key for ordering capability-list entries: the printed type, qualified by the
+/// package of every nominal type in it, so equal keys mean the same type in practice and the key
+/// is the same in every compilation that sees the type -- the lists are stored in '.cjo' files and
+/// compared across packages and incremental rounds, so pointer order would not do.
+std::string CapOrderKey(Ptr<const Ty> ty)
+{
+    if (!ty) {
+        return {};
+    }
+    std::string key;
+    if (auto decl = Ty::GetDeclPtrOfTy(ty)) {
+        key = decl->fullPackageName + ":";
+    }
+    key += ty->String();
+    for (auto arg : ty->typeArgs) {
+        key += "|" + CapOrderKey(arg);
+    }
+    return key;
+}
+
+/// The list is a set ("Functional types": spelling does not create types), so the order of its
+/// entries must not be part of a type's identity. Sorting is a permutation and asks no subtyping
+/// question, so unlike normalization it is safe at interning, where bounds may not be attached yet.
+void SortCapTys(std::vector<Ptr<Ty>>& capTys)
+{
+    if (capTys.size() < 2) {
+        return;
+    }
+    std::vector<std::pair<std::string, Ptr<Ty>>> keyed;
+    keyed.reserve(capTys.size());
+    for (auto cap : capTys) {
+        keyed.emplace_back(CapOrderKey(cap), cap);
+    }
+    std::stable_sort(keyed.begin(), keyed.end(), [](auto& lhs, auto& rhs) { return lhs.first < rhs.first; });
+    for (size_t i = 0; i < keyed.size(); ++i) {
+        capTys[i] = keyed[i].second;
+    }
+}
+} // namespace
+
 Ptr<FuncTy> TypeManager::GetFunctionTy(
     const std::vector<Ptr<Ty>>& paramTys, Ptr<Ty> retTy, FuncTy::Config cfg, const std::vector<Ptr<Ty>>& capTys)
 {
@@ -161,6 +203,13 @@ Ptr<FuncTy> TypeManager::GetFunctionTy(
     // functional type nodes, loaded imports, joins), rather than at each elaboration site.
     if (capTysInert && !capTys.empty()) {
         return GetTypeTy<FuncTy>(paramTys, retTy, cfg, std::vector<Ptr<Ty>>{});
+    }
+    // The same funnel makes entry order irrelevant to identity: '() throws (A, B) -> R' and
+    // '() throws (B, A) -> R' are one type whichever producer built them.
+    if (capTys.size() > 1) {
+        auto sorted = capTys;
+        SortCapTys(sorted);
+        return GetTypeTy<FuncTy>(paramTys, retTy, cfg, sorted);
     }
     return GetTypeTy<FuncTy>(paramTys, retTy, cfg, capTys);
 }
@@ -983,6 +1032,9 @@ std::vector<Ptr<Ty>> TypeManager::NormalizeCapTys(const std::vector<Ptr<Ty>>& ca
             kept.emplace_back(cap);
         }
     }
+    // The canonical form is ordered too, so a list printed in a diagnostic or demanded entry by
+    // entry reads the same whatever order it was written in.
+    SortCapTys(kept);
     return kept;
 }
 
