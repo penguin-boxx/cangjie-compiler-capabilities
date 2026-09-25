@@ -1519,8 +1519,11 @@ bool IsInferenceEligible(const FuncDecl& fd)
     }
     // No capability scope encloses a finalizer -- it may run after the supplying handlers are
     // gone -- so it is not a declaration a list can be inferred for either: a checked throw
-    // inside one has nothing to discharge it and is reported at the throw.
-    if (fd.IsFinalizer()) {
+    // inside one has nothing to discharge it and is reported at the throw. A static initializer
+    // is the same: it runs during the program's global initialization, where no handler of the
+    // program's own is installed, exactly as a static field initializer does -- and it has no call
+    // site at which an inferred list could be paid.
+    if (fd.IsFinalizer() || IsStaticInitializer(fd)) {
         return false;
     }
     // Interface members are contracts: their lists are written explicitly.

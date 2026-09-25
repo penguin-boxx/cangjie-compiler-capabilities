@@ -422,8 +422,10 @@ void TypeChecker::TypeCheckerImpl::ChkPerformsClauseTypes(ASTContext& ctx, Throw
 void TypeChecker::TypeCheckerImpl::ChkThrowsClauseOfFuncBody(ASTContext& ctx, FuncBody& fb)
 {
     // No capability scope encloses a finalizer: it may run long after the handlers that supplied
-    // the capabilities are gone, so it carries no clause of either kind.
+    // the capabilities are gone, so it carries no clause of either kind. Nor does one enclose a
+    // static initializer, which runs during global initialization, with no caller to supply one.
     bool isFinalizer = fb.funcDecl && fb.funcDecl->IsFinalizer();
+    bool isStaticInit = fb.funcDecl && IsStaticInitializer(*fb.funcDecl);
     if (fb.performsClause) {
         // No default effect handler exists, so 'main' cannot carry effect requirements the way it
         // may carry exception ones (policy table).
@@ -432,6 +434,9 @@ void TypeChecker::TypeCheckerImpl::ChkThrowsClauseOfFuncBody(ASTContext& ctx, Fu
         }
         if (isFinalizer) {
             diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_clause_on_cfunc, *fb.performsClause, "a finalizer");
+        } else if (isStaticInit) {
+            diag.DiagnoseRefactor(
+                DiagKindRefactor::sema_chexc_clause_on_cfunc, *fb.performsClause, "a static initializer");
         }
         ChkPerformsClauseTypes(ctx, *fb.performsClause);
     }
@@ -444,6 +449,8 @@ void TypeChecker::TypeCheckerImpl::ChkThrowsClauseOfFuncBody(ASTContext& ctx, Fu
     }
     if (isFinalizer) {
         diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_clause_on_cfunc, *fb.throwsClause, "a finalizer");
+    } else if (isStaticInit) {
+        diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_clause_on_cfunc, *fb.throwsClause, "a static initializer");
     } else if (fb.funcDecl && fb.funcDecl->TestAttr(Attribute::FOREIGN)) {
         diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_clause_on_cfunc, *fb.throwsClause, "a foreign function");
     } else if (fb.TestAttr(Attribute::C)) {
