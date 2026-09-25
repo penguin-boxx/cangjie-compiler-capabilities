@@ -1272,7 +1272,13 @@ private:
             for (auto& decl : file->decls) {
                 CJC_NULLPTR_CHECK(decl);
                 if (decl->astKind == ASTKind::MAIN_DECL) {
-                    continue; // 'main' clauses go to the default handler; never inferred.
+                    // 'main' itself is never inferred -- its clause goes to the default handler --
+                    // but the local functions declared in its body are ordinary eligible
+                    // declarations, as in any other body.
+                    if (auto md = StaticCast<MainDecl*>(decl.get()); md->desugarDecl) {
+                        CollectLocalFuncs(*md->desugarDecl);
+                    }
+                    continue;
                 }
                 CollectEligibleMember(*decl);
                 for (auto& member : decl->GetMemberDecls()) {
