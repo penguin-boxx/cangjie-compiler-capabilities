@@ -17,8 +17,8 @@
 #include <utility>
 #include <vector>
 
-#include "TypeCheckUtil.h"
 #include "LocalTypeArgumentSynthesis.h"
+#include "TypeCheckUtil.h"
 
 #include "ExtraScopes.h"
 #include "cangjie/AST/Match.h"
@@ -1094,6 +1094,48 @@ Ptr<Ty> TypeManager::EraseCapTys(Ptr<Ty> ty)
     return SubstituteTypeArgs(ty, typeArgs);
 }
 
+Ptr<Ty> TypeManager::MapCapabilityTypes(
+    Ptr<Ty> ty, const std::function<std::vector<Ptr<Ty>>(const std::vector<Ptr<Ty>>&)>& map)
+{
+    if (!Ty::IsTyCorrect(ty)) {
+        return ty;
+    }
+    if (auto ft = DynamicCast<FuncTy*>(ty)) {
+        auto args = ft->paramTys;
+        for (auto& arg : args) {
+            arg = MapCapabilityTypes(arg, map);
+        }
+        return GetFunctionTy(args, MapCapabilityTypes(ft->retTy, map),
+            {ft->isC, ft->isClosureTy, ft->hasVariableLenArg, ft->noCast}, map(ft->capTys));
+    }
+    auto args = ty->typeArgs;
+    bool changed = false;
+    for (auto& arg : args) {
+        auto normalized = MapCapabilityTypes(arg, map);
+        changed = changed || normalized != arg;
+        arg = normalized;
+    }
+    return changed ? SubstituteTypeArgs(ty, args) : ty;
+}
+
+Ptr<Ty> TypeManager::NormalizeCapabilityTypes(Ptr<Ty> ty)
+{
+    return MapCapabilityTypes(ty, [this](const std::vector<Ptr<Ty>>& caps) { return NormalizeCapTys(caps); });
+}
+
+Ptr<Ty> TypeManager::EraseExceptionCapTys(Ptr<Ty> ty, Ptr<Ty> exceptionRoot)
+{
+    return MapCapabilityTypes(ty, [this, exceptionRoot](const std::vector<Ptr<Ty>>& caps) {
+        std::vector<Ptr<Ty>> retained;
+        for (auto cap : caps) {
+            if (!Ty::IsTyCorrect(cap) || !IsSubtype(cap, exceptionRoot)) {
+                retained.emplace_back(cap);
+            }
+        }
+        return retained;
+    });
+}
+
 bool TypeManager::IsFuncParametersSubtype(const FuncTy& leaf, const FuncTy& root)
 {
     bool noCast = leaf.noCast || root.noCast;
@@ -1462,8 +1504,8 @@ bool TypeManager::IsTyExtendInterface(const Ty& classTy, const Ty& interfaceTy)
     return false;
 }
 
-bool TypeManager::HasExtendInterfaceTyHelper(Ty& superTy, const std::set<Ptr<ExtendDecl>>& extends,
-    const std::vector<Ptr<Ty>>& typeArgs)
+bool TypeManager::HasExtendInterfaceTyHelper(
+    Ty& superTy, const std::set<Ptr<ExtendDecl>>& extends, const std::vector<Ptr<Ty>>& typeArgs)
 {
     PData::CommitScope cs(constraints);
     for (auto& extend : extends) {
@@ -2526,7 +2568,7 @@ TypeSubst GetGreedySubst(Constraint& cst)
     }
     return m;
 }
-}
+} // namespace
 
 Ptr<AST::Ty> TypeManager::TryGreedySubst(Ptr<AST::Ty> ty)
 {

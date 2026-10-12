@@ -382,6 +382,13 @@ void Collector::CollectPropDecl(ASTContext& ctx, PropDecl& pd, bool buildTrie)
     auto nodeInfo = NodeInfo(pd, pd.identifier, ctx.currentScopeLevel, ctx.currentScopeName);
     AddSymbol(ctx, nodeInfo, buildTrie);
     BuildSymbolTable(ctx, pd.type.get(), buildTrie);
+    for (auto clause : {pd.throwsClause.get(), pd.performsClause.get()}) {
+        if (clause) {
+            for (auto& type : clause->capTypes) {
+                BuildSymbolTable(ctx, type.get(), buildTrie);
+            }
+        }
+    }
     for (auto& propMemberdecl : pd.setters) {
         propMemberdecl->identifierForLsp = propMemberdecl->identifier;
         if (propMemberdecl->identifier == "set") {

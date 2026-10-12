@@ -47,10 +47,10 @@ flatbuffers::Offset<NodeFormat::FeaturesDirective> NodeWriter::SerializeFeatures
         return flatbuffers::Offset<NodeFormat::FeaturesDirective>();
     }
     auto ftrNodeBase = SerializeNodeBase(ftrDirective);
-    auto featuresPos = NodeFormat::Position(ftrDirective->featuresPos.fileID,
-                                            ftrDirective->featuresPos.line, ftrDirective->featuresPos.column);
+    auto featuresPos = NodeFormat::Position(
+        ftrDirective->featuresPos.fileID, ftrDirective->featuresPos.line, ftrDirective->featuresPos.column);
     std::vector<flatbuffers::Offset<NodeFormat::Annotation>> annosVec;
-    for (const auto &item : ftrDirective->annotations) {
+    for (const auto& item : ftrDirective->annotations) {
         annosVec.emplace_back(SerializeAnnotation(item));
     }
     auto annos = builder.CreateVector(annosVec);
@@ -58,12 +58,12 @@ flatbuffers::Offset<NodeFormat::FeaturesDirective> NodeWriter::SerializeFeatures
     return NodeFormat::CreateFeaturesDirective(builder, ftrNodeBase, annos, featuresSet, &featuresPos);
 }
 
-flatbuffers::Offset<NodeFormat::FeaturesSet> NodeWriter::SerializeFeaturesSet(const AST::FeaturesSet &fSet)
+flatbuffers::Offset<NodeFormat::FeaturesSet> NodeWriter::SerializeFeaturesSet(const AST::FeaturesSet& fSet)
 {
     auto ftrSetBase = SerializeNodeBase(&fSet);
     auto lCurlPos = NodeFormat::Position(fSet.lCurlPos.fileID, fSet.lCurlPos.line, fSet.lCurlPos.column);
     std::vector<flatbuffers::Offset<NodeFormat::FeatureId>> itemsVec;
-    for (const auto &item : fSet.content) {
+    for (const auto& item : fSet.content) {
         itemsVec.emplace_back(SerializeFeatureId(item));
     }
     auto items = builder.CreateVector(itemsVec);
@@ -72,12 +72,12 @@ flatbuffers::Offset<NodeFormat::FeaturesSet> NodeWriter::SerializeFeaturesSet(co
     return NodeFormat::CreateFeaturesSet(builder, ftrSetBase, &lCurlPos, items, commas, &rCurlPos);
 }
 
-flatbuffers::Offset<NodeFormat::FeatureId> NodeWriter::SerializeFeatureId(const AST::FeatureId &ftrId)
+flatbuffers::Offset<NodeFormat::FeatureId> NodeWriter::SerializeFeatureId(const AST::FeatureId& ftrId)
 {
     auto nodeBase = SerializeNodeBase(&ftrId);
     std::vector<std::string> idents;
     std::vector<Position> poses;
-    for (auto &ident : ftrId.identifiers) {
+    for (auto& ident : ftrId.identifiers) {
         idents.emplace_back(ident.Val());
         poses.emplace_back(ident.Begin());
     }
@@ -140,7 +140,8 @@ flatbuffers::Offset<NodeFormat::ImportContent> NodeWriter::SerializeImportConten
         NodeFormat::Position(content.rightCurlPos.fileID, content.rightCurlPos.line, content.rightCurlPos.column);
 
     return NodeFormat::CreateImportContent(builder, icNodeBase, kind, prefixPaths, prefixPoses, prefixDotPoses, ident,
-        &identPos, &asPos, asIdent, &asIdentPos, &leftCurlPos, items, commaPoses, &rightCurlPos, content.hasDoubleColon);
+        &identPos, &asPos, asIdent, &asIdentPos, &leftCurlPos, items, commaPoses, &rightCurlPos,
+        content.hasDoubleColon);
 }
 
 flatbuffers::Offset<NodeFormat::ImportSpec> NodeWriter::SerializeImportSpec(AstImportSpec importSpec)
@@ -399,7 +400,7 @@ flatbuffers::Offset<NodeFormat::Decl> NodeWriter::SerializeDeclOfMacroExpandPara
     return NodeFormat::CreateDecl(
         builder, SerializeDeclBase(mep), NodeFormat::AnyDecl_MACRO_EXPAND_PARAM, mepNode.Union());
 }
- 
+
 flatbuffers::Offset<NodeFormat::Block> NodeWriter::SerializeBlock(AstBlock block)
 {
     if (block == nullptr) {
@@ -432,6 +433,19 @@ flatbuffers::Offset<NodeFormat::Block> NodeWriter::SerializeBlock(AstBlock block
         builder, fbNodeBase, &leftCurPos, fbBody, &rightCurPos, block->TestAttr(Attribute::UNSAFE), &unsafePos);
 }
 
+flatbuffers::Offset<NodeFormat::CapabilityClause> NodeWriter::SerializeCapabilityClause(const ThrowsClause* clause)
+{
+    if (!clause) {
+        return {};
+    }
+    std::vector<flatbuffers::Offset<NodeFormat::Type>> types;
+    for (auto& type : clause->capTypes) {
+        types.emplace_back(SerializeType(type.get()));
+    }
+    auto position = FlatPosCreateHelper(clause->throwsPos);
+    return NodeFormat::CreateCapabilityClause(builder, builder.CreateVector(types), clause->hasEllipsis, &position);
+}
+
 flatbuffers::Offset<NodeFormat::FuncBody> NodeWriter::SerializeFuncBody(AstFuncBody funcBody)
 {
     if (funcBody == nullptr) {
@@ -458,8 +472,10 @@ flatbuffers::Offset<NodeFormat::FuncBody> NodeWriter::SerializeFuncBody(AstFuncB
     auto hasBody = bodyPtr != nullptr;
     auto fbBody = SerializeBlock(bodyPtr);
     auto fbGeneric = SerializeGeneric(funcBody->generic.get());
-    return NodeFormat::CreateFuncBody(
-        builder, fbNodeBaseFnBody, fbParamList, &arrowPos, &colonPos, fbRetType, hasBody, fbBody, fbGeneric);
+    auto throwsClause = SerializeCapabilityClause(funcBody->throwsClause.get());
+    auto performsClause = SerializeCapabilityClause(funcBody->performsClause.get());
+    return NodeFormat::CreateFuncBody(builder, fbNodeBaseFnBody, fbParamList, &arrowPos, &colonPos, fbRetType, hasBody,
+        fbBody, fbGeneric, throwsClause, performsClause);
 }
 
 flatbuffers::Offset<NodeFormat::DeclBase> NodeWriter::SerializeDeclBase(AstDecl decl)
@@ -617,8 +633,10 @@ flatbuffers::Offset<NodeFormat::Type> NodeWriter::SerializeFuncType(AstType type
     auto rightParenPos = FlatPosCreateHelper(funcType->rightParenPos);
     auto arrowPos = FlatPosCreateHelper(funcType->arrowPos);
     auto fbRetType = SerializeType(funcType->retType.get());
-    auto fbFuncType = NodeFormat::CreateFuncType(
-        builder, fbTypeBase, &leftParenPos, fbTypeVec, &rightParenPos, &arrowPos, fbRetType, funcType->isC);
+    auto throwsClause = SerializeCapabilityClause(funcType->throwsClause.get());
+    auto performsClause = SerializeCapabilityClause(funcType->performsClause.get());
+    auto fbFuncType = NodeFormat::CreateFuncType(builder, fbTypeBase, &leftParenPos, fbTypeVec, &rightParenPos,
+        &arrowPos, fbRetType, funcType->isC, throwsClause, performsClause);
     return NodeFormat::CreateType(builder, fbTypeBase, NodeFormat::AnyType_FUNC_TYPE, fbFuncType.Union());
 }
 
@@ -897,7 +915,8 @@ flatbuffers::Offset<NodeFormat::Decl> NodeWriter::SerializeDecl(AstDecl decl)
             {ASTKind::MACRO_EXPAND_DECL,
                 [](NodeWriter& nw, AstDecl decl) { return nw.SerializeMacroExpandDecl(decl); }},
             {ASTKind::FUNC_PARAM, [](NodeWriter& nw, AstDecl decl) { return nw.SerializeDeclOfFuncParam(decl); }},
-            {ASTKind::MACRO_EXPAND_PARAM, [](NodeWriter& nw, AstDecl decl) { return nw.SerializeDeclOfMacroExpandParam(decl); }},
+            {ASTKind::MACRO_EXPAND_PARAM,
+                [](NodeWriter& nw, AstDecl decl) { return nw.SerializeDeclOfMacroExpandParam(decl); }},
             {ASTKind::VAR_WITH_PATTERN_DECL,
                 [](NodeWriter& nw, AstDecl decl) { return nw.SerializeVarWithPatternDecl(decl); }},
         };
@@ -985,8 +1004,10 @@ flatbuffers::Offset<NodeFormat::Decl> NodeWriter::SerializePropDecl(AstDecl decl
     auto fbSetters = FlatVectorCreateHelper<NodeFormat::FuncDecl, FuncDecl, const FuncDecl*>(
         propDecl->setters, &NodeWriter::SerializeFuncDecl);
     auto rightCurlPos = FlatPosCreateHelper(propDecl->rightCurlPos);
-    auto fbPropDecl =
-        NodeFormat::CreatePropDecl(builder, fbVarDecl, &colonPos, &leftCurlPos, fbGetters, fbSetters, &rightCurlPos);
+    auto throwsClause = SerializeCapabilityClause(propDecl->throwsClause.get());
+    auto performsClause = SerializeCapabilityClause(propDecl->performsClause.get());
+    auto fbPropDecl = NodeFormat::CreatePropDecl(
+        builder, fbVarDecl, &colonPos, &leftCurlPos, fbGetters, fbSetters, &rightCurlPos, throwsClause, performsClause);
     return NodeFormat::CreateDecl(builder, fbDeclBase, NodeFormat::AnyDecl_PROP_DECL, fbPropDecl.Union());
 }
 

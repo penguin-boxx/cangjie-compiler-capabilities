@@ -11,6 +11,7 @@
  */
 
 #include "TypeCheckerImpl.h"
+#include "cangjie/Sema/CapabilityCheck.h"
 
 #include <algorithm>
 #include <functional>
@@ -65,8 +66,15 @@ inline void DiagUnableToInferDecl(DiagnosticEngine& diag, const Decl& decl)
 void TypeChecker::TypeCheckerImpl::CheckFuncDecl(ASTContext& ctx, FuncDecl& fd)
 {
     CJC_NULLPTR_CHECK(fd.funcBody);
-    if (fd.TestAttr(Attribute::IS_CHECK_VISITED)) {
+    if (fd.TestAttr(Attribute::IS_CHECK_VISITED) &&
+        (!ci->invocation.globalOptions.enableChexc || !Sema::IsInferenceEligible(fd) ||
+            capabilityContracts[&fd] == ContractState::COMPLETE)) {
         return;
+    }
+    // A constructor can be completed on use before its class body is traversed. Check the
+    // source call ordering before typing/desugaring, exactly once at the callable boundary.
+    if (fd.TestAttr(Attribute::CONSTRUCTOR) && fd.outerDecl) {
+        CheckConstructor(ctx, *fd.outerDecl, fd);
     }
     fd.EnableAttr(Attribute::IS_CHECK_VISITED);
     // NOTE: Property decl's getter/setter function should be ignored from 'redef' checking.
@@ -305,8 +313,7 @@ void TypeChecker::TypeCheckerImpl::CheckVarWithPatternDecl(ASTContext& ctx, VarW
     }
 }
 
-template <typename T>
-void TypeChecker::TypeCheckerImpl::SynchronizeTypeAndInitializer(const CheckerContext& ctx, T& vd)
+template <typename T> void TypeChecker::TypeCheckerImpl::SynchronizeTypeAndInitializer(const CheckerContext& ctx, T& vd)
 {
     if (vd.type != nullptr && vd.initializer == nullptr) {
         Synthesize(ctx, vd.type.get());
@@ -723,7 +730,8 @@ Ptr<Ty> TypeChecker::TypeCheckerImpl::SynFuncParam(ASTContext& ctx, FuncParam& f
     if (fp.type) {
         Synthesize({ctx, SynPos::NONE}, fp.type.get());
         if (!Ty::IsTyCorrect(fp.type->GetTy())) {
-            Synthesize({ctx, SynPos::EXPR_ARG}, fp.assignment.get()); // If fp has assignment, synthesize to report error.
+            Synthesize(
+                {ctx, SynPos::EXPR_ARG}, fp.assignment.get()); // If fp has assignment, synthesize to report error.
             return TypeManager::GetInvalidTy();
         }
         fp.SetTy(fp.type->GetTy());

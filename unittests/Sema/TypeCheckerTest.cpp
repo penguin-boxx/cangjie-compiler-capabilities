@@ -4,16 +4,18 @@
 //
 // See https://cangjie-lang.cn/pages/LICENSE for license information.
 
-#include <cstdlib>
-#include <string>
-#include <unordered_map>
-#include <vector>
-#include "gtest/gtest.h"
 #include "TestCompilerInstance.h"
 #include "cangjie/AST/Match.h"
 #include "cangjie/AST/PrintNode.h"
 #include "cangjie/AST/Walker.h"
 #include "cangjie/Basic/Match.h"
+#include "cangjie/Sema/CapabilityCheck.h"
+#include "cangjie/Sema/TypeManager.h"
+#include "gtest/gtest.h"
+#include <cstdlib>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -33,7 +35,7 @@ namespace {
 std::unordered_map<std::string, std::string> GetEnvironmentVars()
 {
     std::unordered_map<std::string, std::string> envVars;
-    char **env = CJ_ENVIRON;
+    char** env = CJ_ENVIRON;
     while (env && *env) {
         std::string entry(*env);
         size_t pos = entry.find('=');
@@ -46,7 +48,7 @@ std::unordered_map<std::string, std::string> GetEnvironmentVars()
     }
     return envVars;
 }
-}
+} // namespace
 
 class TypeCheckerTest : public testing::Test {
 protected:
@@ -81,20 +83,23 @@ protected:
         // (GetCangjieLibTargetPathName returns "<os>_<arch>_cjnative") instead
         // of hard-coding "darwin_arm64"/"darwin_aarch64", which must otherwise
         // be kept in sync with the actual output directory name.
-        std::string cangjiePath =
-            cangjieHome + "/modules/" + invocation.globalOptions.GetCangjieLibTargetPathName();
+        std::string cangjiePath = cangjieHome + "/modules/" + invocation.globalOptions.GetCangjieLibTargetPathName();
 #ifdef _WIN32
         char* oldHome = getenv("CANGJIE_HOME");
         char* oldPath = getenv("CANGJIE_PATH");
-        if (oldHome) savedCangjieHome = oldHome;
-        if (oldPath) savedCangjiePath = oldPath;
+        if (oldHome)
+            savedCangjieHome = oldHome;
+        if (oldPath)
+            savedCangjiePath = oldPath;
         _putenv_s("CANGJIE_HOME", cangjieHome.c_str());
         _putenv_s("CANGJIE_PATH", cangjiePath.c_str());
 #else
         char* oldHome = getenv("CANGJIE_HOME");
         char* oldPath = getenv("CANGJIE_PATH");
-        if (oldHome) savedCangjieHome = oldHome;
-        if (oldPath) savedCangjiePath = oldPath;
+        if (oldHome)
+            savedCangjieHome = oldHome;
+        if (oldPath)
+            savedCangjiePath = oldPath;
         setenv("CANGJIE_HOME", cangjieHome.c_str(), 1);
         setenv("CANGJIE_PATH", cangjiePath.c_str(), 1);
 #endif
@@ -227,7 +232,8 @@ class H {
     func f(...x: Int64): Unit
 }
 main() { H().f(1) }
-    )", false);
+    )",
+        false);
 }
 
 TEST_F(TypeCheckerTest, InvalidVariadicAfterValidOverloadDoesNotAffectCallTarget)
@@ -238,7 +244,8 @@ class H {
     func f(...x: Int64): Unit
 }
 main() { H().f(1) }
-    )", true);
+    )",
+        true);
 }
 
 TEST_F(TypeCheckerTest, InvalidVariadicBeforeValidOverloadDoesNotAffectCallTarget)
@@ -249,7 +256,8 @@ class H {
     func f(x: Int64): Unit
 }
 main() { H().f(1) }
-    )", true);
+    )",
+        true);
 }
 
 TEST_F(TypeCheckerTest, InvalidVariadicAfterValidOverloadDoesNotAffectFunctionReference)
@@ -285,7 +293,8 @@ class H <: I {
     func f(...x: Int64): Unit
 }
 main() { H().f(1) }
-    )", true);
+    )",
+        true);
 }
 
 TEST_F(TypeCheckerTest, InvalidVariadicBeforeValidImplementationDoesNotAffectInterfaceConformance)
@@ -299,7 +308,8 @@ class H <: I {
     func f(x: Int64): Unit {}
 }
 main() { H().f(1) }
-    )", true);
+    )",
+        true);
 }
 
 TEST_F(TypeCheckerTest, MacroDeclTest)
@@ -651,10 +661,10 @@ TEST_F(TypeCheckerTest, OrderOfInitializationCheck)
     instance->invocation.globalOptions.implicitPrelude = true;
     instance->invocation.globalOptions.outputMode = GlobalOptions::OutputMode::STATIC_LIB;
     instance->loadSrcFilesFromCache = true;
-    instance->bufferCache[fileB] = CompilerInstance::SrcCodeCacheInfo(
-        CompilerInstance::SrcCodeChangeState::ADDED, contentB.value());
-    instance->bufferCache[fileA] = CompilerInstance::SrcCodeCacheInfo(
-        CompilerInstance::SrcCodeChangeState::ADDED, contentA.value());
+    instance->bufferCache[fileB] =
+        CompilerInstance::SrcCodeCacheInfo(CompilerInstance::SrcCodeChangeState::ADDED, contentB.value());
+    instance->bufferCache[fileA] =
+        CompilerInstance::SrcCodeCacheInfo(CompilerInstance::SrcCodeChangeState::ADDED, contentA.value());
 
     // The bufferCache is an unordered_map whose iteration order is unspecified, so the fileID assigned
     // during the cache iteration is not guaranteed by insertion order. Pre-register b.cj before a.cj in
@@ -783,7 +793,7 @@ main(): Int64 {
     ASSERT_EQ(diag.GetErrorCount(), 0) << "interpolation desugar should not produce errors";
 
     // Locate the desugared interpolation literal and walk its synthesized sub-tree.
-    Ptr<Expr> desugarRoot {nullptr};
+    Ptr<Expr> desugarRoot{nullptr};
     Walker finder(instance->GetSourcePackages()[0]->files[0].get(), [&desugarRoot](Ptr<Node> node) -> VisitAction {
         if (auto lce = DynamicCast<LitConstExpr>(node); lce && lce->siExpr && lce->desugarExpr) {
             desugarRoot = lce->desugarExpr.get();
@@ -804,11 +814,198 @@ main(): Int64 {
         if (!node->TestAttr(Attribute::COMPILER_ADD)) {
             return VisitAction::WALK_CHILDREN;
         }
-        EXPECT_FALSE(node->begin.IsZero())
-            << "synthesized interpolation desugar node has zero begin position";
-        EXPECT_FALSE(node->end.IsZero())
-            << "synthesized interpolation desugar node has zero end position";
+        EXPECT_FALSE(node->begin.IsZero()) << "synthesized interpolation desugar node has zero begin position";
+        EXPECT_FALSE(node->end.IsZero()) << "synthesized interpolation desugar node has zero end position";
         return VisitAction::WALK_CHILDREN;
     });
     checker.Walk();
+}
+
+TEST(CapabilityResolution, InnermostOwnerSurvivesNormalization)
+{
+    Cangjie::TypeManager types;
+    Cangjie::AST::ClassDecl exception;
+    auto ty = types.GetClassTy(exception, {});
+    Cangjie::AST::FuncDecl outer;
+    Cangjie::AST::LambdaExpr literal;
+    Cangjie::AST::TryExpr handler;
+    Cangjie::Sema::CapabilityDemand demand{ty, &literal, "test demand", false};
+    Cangjie::Sema::CapabilityContext context;
+    context.scopes.push_back({{ty}, &outer});
+    context.scopes.push_back({types.NormalizeCapTys({ty, ty}), &literal});
+    auto result = Cangjie::Sema::ResolveCapability(types, context, demand);
+    EXPECT_EQ(result.kind, Cangjie::Sema::CapabilityResolutionKind::SUPPLIED);
+    EXPECT_EQ(result.owner, &literal);
+    EXPECT_EQ(result.supplyingType, ty);
+    context.scopes.push_back({{ty}, &handler});
+    result = Cangjie::Sema::ResolveCapability(types, context, demand);
+    EXPECT_EQ(result.owner, &handler);
+    context.scopes.pop_back();
+    context.scopes.pop_back();
+    EXPECT_EQ(Cangjie::Sema::ResolveCapability(types, context, demand).owner, &outer);
+}
+
+TEST(CapabilityResolution, ResidualOwnershipAndIndependentContexts)
+{
+    Cangjie::TypeManager types;
+    Cangjie::AST::ClassDecl exception;
+    auto ty = types.GetClassTy(exception, {});
+    Cangjie::AST::FuncDecl outer;
+    Cangjie::AST::ThrowExpr site;
+    Cangjie::Sema::CapabilityDemand demand{ty, &site, "test demand", false};
+    Cangjie::Sema::CapabilityContext context;
+    context.inferenceOwner = &outer;
+    auto result = Cangjie::Sema::ResolveCapability(types, context, demand);
+    EXPECT_EQ(result.kind, Cangjie::Sema::CapabilityResolutionKind::RESIDUAL);
+    EXPECT_EQ(result.owner, &outer);
+    auto discarded = context;
+    discarded.scopes.push_back({{ty}, &site});
+    EXPECT_EQ(Cangjie::Sema::ResolveCapability(types, discarded, demand).kind,
+        Cangjie::Sema::CapabilityResolutionKind::SUPPLIED);
+    EXPECT_EQ(Cangjie::Sema::ResolveCapability(types, context, demand).kind,
+        Cangjie::Sema::CapabilityResolutionKind::RESIDUAL);
+    demand.isEffect = true;
+    result = Cangjie::Sema::ResolveCapability(types, context, demand);
+    EXPECT_EQ(result.kind, Cangjie::Sema::CapabilityResolutionKind::MISSING);
+    EXPECT_EQ(result.demand.demandSite, &site);
+    context.inferenceOwner = nullptr;
+    demand.isEffect = false;
+    EXPECT_EQ(Cangjie::Sema::ResolveCapability(types, context, demand).kind,
+        Cangjie::Sema::CapabilityResolutionKind::MISSING);
+}
+
+TEST_F(TypeCheckerTest, CapabilityContractsCompleteDuringSema)
+{
+    instance->cangjieHome = projectPath + "/output";
+    invocation.globalOptions.enableChexc = true;
+    instance->typeManager->SetCapTysInert(false);
+    instance->code = R"(
+class Checked <: Exception {}
+func identity<T>(value: T): T { value }
+func caller(): Unit { leaf() }
+func factory() { identity(leaf) }
+func leaf(): Unit { throw Checked() }
+main(): Int64 { 0 }
+)";
+    instance->Compile(CompileStage::SEMA);
+    ASSERT_EQ(diag.GetErrorCount(), 0);
+    size_t checked = 0;
+    Walker(instance->GetSourcePackages()[0].get(), [&](Ptr<Node> node) {
+        auto fd = DynamicCast<FuncDecl*>(node);
+        if (!fd || (fd->identifier != "caller" && fd->identifier != "leaf" && fd->identifier != "factory")) {
+            return VisitAction::WALK_CHILDREN;
+        }
+        auto ty = DynamicCast<FuncTy*>(fd->GetTy());
+        EXPECT_NE(ty, nullptr);
+        if (ty) {
+            EXPECT_EQ(fd->GetTy(), fd->funcBody->GetTy());
+            if (fd->identifier == "factory") {
+                EXPECT_TRUE(ty->capTys.empty());
+                auto returned = DynamicCast<FuncTy*>(ty->retTy);
+                EXPECT_NE(returned, nullptr);
+                if (returned) {
+                    EXPECT_EQ(returned->capTys.size(), 1);
+                }
+            } else {
+                EXPECT_EQ(ty->capTys.size(), 1);
+            }
+            ++checked;
+        }
+        return VisitAction::WALK_CHILDREN;
+    }).Walk();
+    EXPECT_EQ(checked, 3);
+}
+
+TEST_F(TypeCheckerTest, CapabilityCycleIsFatalAtWarningLevelDuringSema)
+{
+    instance->cangjieHome = projectPath + "/output";
+    invocation.globalOptions.enableChexc = true;
+    instance->typeManager->SetCapTysInert(false);
+    invocation.globalOptions.chexcSeverity = GlobalOptions::ChexcSeverity::CS_WARN;
+    instance->code = R"(
+func first(): Unit { second() }
+func second(): Unit { first() }
+main(): Int64 { 0 }
+)";
+    instance->Compile(CompileStage::SEMA);
+    EXPECT_GT(diag.GetErrorCount(), 0);
+}
+
+TEST_F(TypeCheckerTest, CompleteLocalSignaturePermitsRecursionDuringSema)
+{
+    instance->cangjieHome = projectPath + "/output";
+    invocation.globalOptions.enableChexc = true;
+    instance->typeManager->SetCapTysInert(false);
+    instance->code = R"(
+func enclosing(): Unit {
+    func recursive(n: Int64): Unit {
+        if (n > 0) { recursive(n - 1) }
+    }
+    recursive(2)
+}
+main(): Int64 { 0 }
+)";
+    instance->Compile(CompileStage::SEMA);
+    EXPECT_EQ(diag.GetErrorCount(), 0);
+}
+
+TEST_F(TypeCheckerTest, CapabilityContractsAreCompleteForCjd)
+{
+    instance->cangjieHome = projectPath + "/output";
+    invocation.globalOptions.enableChexc = true;
+    invocation.globalOptions.compileCjd = true;
+    instance->typeManager->SetCapTysInert(false);
+    instance->code = R"(
+class Checked <: Exception {}
+func caller(): Unit { leaf() }
+func leaf(): Unit { throw Checked() }
+)";
+    ASSERT_TRUE(instance->Compile(CompileStage::SEMA));
+    ASSERT_EQ(diag.GetErrorCount(), 0);
+    size_t checked = 0;
+    Walker(instance->GetSourcePackages()[0].get(), [&](Ptr<Node> node) {
+        if (auto fd = DynamicCast<FuncDecl*>(node); fd && (fd->identifier == "leaf" || fd->identifier == "caller")) {
+            auto ty = DynamicCast<FuncTy*>(fd->GetTy());
+            EXPECT_NE(ty, nullptr);
+            if (ty) {
+                EXPECT_EQ(ty->capTys.size(), 1);
+            }
+            ++checked;
+        }
+        return VisitAction::WALK_CHILDREN;
+    }).Walk();
+    EXPECT_EQ(checked, 2);
+}
+
+TEST_F(TypeCheckerTest, CapabilityContractsAreCompleteForLsp)
+{
+    instance->cangjieHome = projectPath + "/output";
+    invocation.globalOptions.enableChexc = true;
+    invocation.globalOptions.enableMacroInLSP = true;
+    instance->typeManager->SetCapTysInert(false);
+    instance->code = R"(
+class Checked <: Exception {}
+func factory() { leaf }
+func leaf(): Unit { throw Checked() }
+main(): Int64 { 0 }
+)";
+    ASSERT_TRUE(instance->Compile(CompileStage::SEMA));
+    ASSERT_EQ(diag.GetErrorCount(), 0);
+    size_t checked = 0;
+    Walker(instance->GetSourcePackages()[0].get(), [&](Ptr<Node> node) {
+        if (auto fd = DynamicCast<FuncDecl*>(node); fd && fd->identifier == "factory") {
+            auto ty = DynamicCast<FuncTy*>(fd->GetTy());
+            EXPECT_NE(ty, nullptr);
+            if (ty) {
+                auto result = DynamicCast<FuncTy*>(ty->retTy);
+                EXPECT_NE(result, nullptr);
+                if (result) {
+                    EXPECT_EQ(result->capTys.size(), 1);
+                }
+            }
+            ++checked;
+        }
+        return VisitAction::WALK_CHILDREN;
+    }).Walk();
+    EXPECT_EQ(checked, 1);
 }

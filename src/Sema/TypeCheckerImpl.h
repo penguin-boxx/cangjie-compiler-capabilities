@@ -41,12 +41,12 @@ struct MatchingStat {
 
 struct FunctionMatchingUnit {
 public:
-    int64_t id = -1;                         /**< The index in targets.*/
-    AST::FuncDecl& fd;                       /**< Current unit's function, one of the candidates. */
-    std::vector<Ptr<AST::Ty>> tysInArgOrder; /**< The parameters types in arguments order.*/
-    SubstPack typeMapping;                   /**< For generic type comparison.*/
+    int64_t id = -1;                                        /**< The index in targets.*/
+    AST::FuncDecl& fd;                                      /**< Current unit's function, one of the candidates. */
+    std::vector<Ptr<AST::Ty>> tysInArgOrder;                /**< The parameters types in arguments order.*/
+    SubstPack typeMapping;                                  /**< For generic type comparison.*/
     std::pair<std::vector<Diagnostic>, MatchingStat> diags; /**< Stashed diag msg.*/
-    CstVersionID ver; /**< ID to fetch constraints generated for this candidate.*/
+    CstVersionID ver;                                       /**< ID to fetch constraints generated for this candidate.*/
     FunctionMatchingUnit(AST::FuncDecl& f, const std::vector<Ptr<AST::Ty>>& tys, const SubstPack& map) : fd(f)
     {
         tysInArgOrder = tys;
@@ -95,13 +95,9 @@ struct CollectDeclsInfo {
     std::vector<Ptr<AST::ArrayLit>> annotations;
 };
 
-enum class MatchResult {
-    NONE, UNIQUE, AMBIGUOUS
-};
+enum class MatchResult { NONE, UNIQUE, AMBIGUOUS };
 
-enum class LambdaSource {
-    USER, SPAWN, TRY_HANDLE
-};
+enum class LambdaSource { USER, SPAWN, TRY_HANDLE };
 
 /// Mark the position of the synthesized expr/decl. It currently has not effect on decl.
 enum class SynPos {
@@ -117,9 +113,18 @@ struct CheckerContext {
     {
     }
 
-    ASTContext& Ctx() const { return astContext; }
-    SynPos SynthPos() const { return synthesizePos; }
-    CheckerContext With(SynPos newPos) const { return {astContext, newPos}; }
+    ASTContext& Ctx() const
+    {
+        return astContext;
+    }
+    SynPos SynthPos() const
+    {
+        return synthesizePos;
+    }
+    CheckerContext With(SynPos newPos) const
+    {
+        return {astContext, newPos};
+    }
 
 private:
     ASTContext& astContext; // a cache for ast info, not real context
@@ -1002,8 +1007,7 @@ private:
      */
     bool CheckGenericCallCompatible(
         ASTContext& ctx, FunctionCandidate& candidate, SubstPack& typeMapping, Ptr<AST::Ty> targetRet);
-    void FilterTypeMappings(
-        const AST::Expr& expr, AST::FuncDecl& fd, std::vector<MultiTypeSubst>& typeMappings);
+    void FilterTypeMappings(const AST::Expr& expr, AST::FuncDecl& fd, std::vector<MultiTypeSubst>& typeMappings);
     bool CheckCandidateConstrains(const AST::CallExpr& ce, const AST::FuncDecl& fd, const SubstPack& typeMapping);
     bool CheckAndGetMappingForTypeDecl(const AST::Expr& baseExpr, const AST::Decl& typeDecl,
         const AST::Decl& targetDecl, const SubstPack& typeMapping);
@@ -1128,8 +1132,7 @@ private:
     bool ChkEnumPattern(ASTContext& ctx, AST::Ty& target, AST::EnumPattern& p);
     bool ChkVarOrEnumPattern(ASTContext& ctx, AST::Ty& target, AST::VarOrEnumPattern& p);
     bool ChkExceptTypePattern(ASTContext& ctx, AST::ExceptTypePattern& etp, std::vector<Ptr<AST::Ty>>& included);
-    bool ChkHandlePatterns(ASTContext& ctx, AST::Handler& h,
-        std::vector<Ptr<AST::Ty>>& included);
+    bool ChkHandlePatterns(ASTContext& ctx, AST::Handler& h, std::vector<Ptr<AST::Ty>>& included);
     std::optional<Ptr<AST::Ty>> ChkCommandTypePattern(
         ASTContext& ctx, AST::CommandTypePattern& ctp, std::vector<Ptr<AST::Ty>>& included);
     bool ChkTryWildcardPattern(Ptr<AST::Ty> target, AST::WildcardPattern& p, std::vector<Ptr<AST::Ty>>& included);
@@ -1308,6 +1311,15 @@ private:
     void CheckEntryFunc(AST::FuncDecl& fd);
     bool CheckNormalFuncBody(ASTContext& ctx, AST::FuncBody& fb, std::vector<Ptr<AST::Ty>>& paramTys);
     bool CheckFuncBody(ASTContext& ctx, AST::FuncBody& fb);
+    bool CheckFuncBodyImpl(ASTContext& ctx, AST::FuncBody& fb);
+    enum class ContractState { UNSTARTED, ACTIVE, COMPLETE, FAILED };
+    std::unordered_map<Ptr<AST::FuncDecl>, ContractState> capabilityContracts;
+    std::vector<std::pair<Ptr<AST::FuncDecl>, Ptr<const AST::Node>>> capabilityRequests;
+    bool NeedSynOnUsed(const AST::Decl& decl) const;
+    bool EnsureContract(ASTContext& ctx, AST::Decl& decl, const AST::Node& site);
+    bool CheckActiveContract(AST::FuncDecl& decl, const AST::Node& site);
+    bool CheckCapabilitySubtype(Ptr<AST::Ty> source, Ptr<AST::Ty> target, const AST::Node& site);
+
     /**
      * Checked exceptions: validate an elaborated 'throws' or 'captures' clause -- every entry
      * must be a subtype of core 'Exception' (type parameters allowed when suitably bounded),
@@ -1331,8 +1343,8 @@ private:
     void ChkClauseOnlyTypeArguments(const AST::CallExpr& ce, const AST::FuncDecl& func) const;
     /**
      * Checked exceptions: validate the 'captures' clause of a class or struct declaration
-     * -- elaborate and validate its entries like 'throws' entries and ban
-     * primary constructors on capturing declarations (they cannot capture; author ruling).
+     * -- elaborate and validate its entries like 'throws' entries. Primary and default
+     * constructors demand the same captures at construction sites as explicit constructors.
      */
     void ChkCapturesClauseOfDecl(ASTContext& ctx, AST::InheritableDecl& decl);
     /// Checked exceptions: a subclass of a capturing class must capture at least what it captures.
@@ -1362,8 +1374,8 @@ private:
     OwnedPtr<AST::CallExpr> CheckCustomAnnotation(ASTContext& ctx, const AST::Decl& decl, AST::Annotation& ann);
     bool HasModifier(const std::set<AST::Modifier>& modifiers, TokenKind kind) const;
 
-    void CheckLegalityOfUsage(ASTContext &ctx, AST::Package &pkg);
-    void CheckClosures(const ASTContext &ctx, AST::Node &node) const;
+    void CheckLegalityOfUsage(ASTContext& ctx, AST::Package& pkg);
+    void CheckClosures(const ASTContext& ctx, AST::Node& node) const;
 
     // Desugar primary constructor into `init` and fields before cjmp customDef merging
     void CheckPrimaryCtorBeforeMerge(AST::Node& root);
@@ -1406,7 +1418,7 @@ private:
     Ptr<AST::Decl> GetAccessibleDecl(
         const ASTContext& ctx, const AST::Expr& e, const std::vector<Ptr<AST::Decl>>& targets) const;
 
-        /**
+    /**
      * Check Whether there exists ref or access of member function before
      * the finishing the initialization of the class
      */
@@ -1659,50 +1671,29 @@ private:
     void CheckLegalityOfUnsafeAndInout(AST::Node& root);
 
     bool ShouldSkipDeprecationDiagnostic(const Ptr<AST::Decl> target, bool strict);
-    void CheckUsageOfDeprecatedWithTarget(
-        const Ptr<AST::Node> usage,
-        const Ptr<AST::Decl> target
-    );
+    void CheckUsageOfDeprecatedWithTarget(const Ptr<AST::Node> usage, const Ptr<AST::Decl> target);
     void CheckUsageOfDeprecated(AST::Node& node);
     void CheckUsageOfDeprecatedParameters(const Ptr<AST::Node> usage);
-    void CheckUsageOfDeprecatedNominative(
-        const Ptr<AST::Node> usage,
-        const Ptr<AST::Decl> target
-    );
+    void CheckUsageOfDeprecatedNominative(const Ptr<AST::Node> usage, const Ptr<AST::Decl> target);
     void CheckOverridingOrRedefiningOfDeprecated(
-        const Ptr<AST::Decl> overridden,
-        const Ptr<AST::Decl> overriding,
-        const std::string& declType
-    );
-    void CheckOverridingOrRedefinitionOfDeprecatedFunction(
-        const Ptr<AST::ClassDecl> cd,
-        const Ptr<AST::Decl> member
-    );
-    void CheckOverridingOrRedefinitionOfDeprecatedProperty(
-        const Ptr<AST::ClassDecl> cd,
-        const Ptr<AST::Decl> member
-    );
+        const Ptr<AST::Decl> overridden, const Ptr<AST::Decl> overriding, const std::string& declType);
+    void CheckOverridingOrRedefinitionOfDeprecatedFunction(const Ptr<AST::ClassDecl> cd, const Ptr<AST::Decl> member);
+    void CheckOverridingOrRedefinitionOfDeprecatedProperty(const Ptr<AST::ClassDecl> cd, const Ptr<AST::Decl> member);
     void CheckOverridingOrRedefinitionOfDeprecated(const Ptr<AST::ClassDecl> cd);
     void CheckUsageOfDeprecatedSetter(const Ptr<AST::Node> usage);
     void CheckDeprecationLevelOnInheritors(const Ptr<AST::ClassLikeDecl> classLike);
     bool IsDeprecatedStrict(const Ptr<AST::Decl> decl) const;
     std::string GetDiagnoseKindOfFuncDecl(const Ptr<AST::Decl> target) const;
-    std::optional<std::string> GetDiagnoseKindOfFuncDecl(
-            const Ptr<AST::Node> usage,
-            const Ptr<AST::Decl> target
-    ) const;
+    std::optional<std::string> GetDiagnoseKindOfFuncDecl(const Ptr<AST::Node> usage, const Ptr<AST::Decl> target) const;
     std::string GetDiagnoseKindOfVarDecl(const Ptr<AST::Decl> target) const;
     /**
      * Return name and/or kind of deprecated declaration.
      * Return std::nullopt if the declaration deprecation should not be reported.
-    */
+     */
     std::optional<std::string> GetKindfOfDeprecatedDeclaration(
         const Ptr<AST::Decl> target, const Ptr<AST::Node> usage) const;
     void DiagnoseDeprecatedUsage(
-        const Ptr<AST::Node> usage,
-        const Ptr<AST::Decl> target,
-        const std::string& nameOfDiagnose = ""
-    );
+        const Ptr<AST::Node> usage, const Ptr<AST::Decl> target, const std::string& nameOfDiagnose = "");
 
     /**
      * Check memberAccess's targets are legal or not.

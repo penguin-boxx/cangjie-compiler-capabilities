@@ -14,6 +14,7 @@
 #define CANGJIE_SEMA_TYPE_MANAGER_H
 
 #include <cassert>
+#include <functional>
 #include <stack>
 #include <unordered_map>
 
@@ -243,6 +244,12 @@ public:
      * lists.
      */
     Ptr<AST::Ty> EraseCapTys(Ptr<AST::Ty> ty);
+    /// Rebuild nested functional components at a producer boundary, outside interning.
+    Ptr<AST::Ty> NormalizeCapabilityTypes(Ptr<AST::Ty> ty);
+    Ptr<AST::Ty> EraseExceptionCapTys(Ptr<AST::Ty> ty, Ptr<AST::Ty> exceptionRoot);
+    Ptr<AST::Ty> MapCapabilityTypes(
+        Ptr<AST::Ty> ty, const std::function<std::vector<Ptr<AST::Ty>>(const std::vector<Ptr<AST::Ty>>&)>& map);
+
     TypeCompatibility CheckTypeCompatibility(
         Ptr<AST::Ty> lvalue, Ptr<AST::Ty> rvalue, bool implicitBoxed = true, bool isGeneric = false);
     bool CheckGenericDeclInstantiation(Ptr<const AST::Decl> d, const std::vector<Ptr<AST::Ty>>& typeArgs);
@@ -701,8 +708,8 @@ private:
 
     std::unordered_set<Ptr<AST::Ty>> GetAllExtendInterfaceTyHelper(
         const std::set<Ptr<AST::ExtendDecl>>& extends, const std::vector<Ptr<AST::Ty>>& typeArgs);
-    bool HasExtendInterfaceTyHelper(AST::Ty& superTy, const std::set<Ptr<AST::ExtendDecl>>& extends,
-        const std::vector<Ptr<AST::Ty>>& typeArgs);
+    bool HasExtendInterfaceTyHelper(
+        AST::Ty& superTy, const std::set<Ptr<AST::ExtendDecl>>& extends, const std::vector<Ptr<AST::Ty>>& typeArgs);
 
     Ptr<AST::Ty> SubstituteTypeArgs(Ptr<AST::Ty> baseTy, std::vector<Ptr<AST::Ty>>& typeArgs);
     std::vector<Ptr<AST::Ty>> RecursiveSubstituteTypeAliasInTy(

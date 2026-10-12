@@ -45,8 +45,8 @@
 #include "cangjie/Utils/Utils.h"
 
 #ifdef CANGJIE_CODEGEN_CJNATIVE_BACKEND
-#include "cangjie/Mangle/CHIRMangler.h"
 #include "cangjie/CHIR/Checker/ComputeAnnotations.h"
+#include "cangjie/Mangle/CHIRMangler.h"
 #endif
 #ifdef RELEASE
 #include "cangjie/Utils/Signal.h"
@@ -574,7 +574,7 @@ void UpdateMemberDeclMangleNameForCachedInfo(const RawMangled2DeclMap& rawMangle
     } else {
         CJC_ABORT();
     }
-    for (auto &m : memCache.members) {
+    for (auto& m : memCache.members) {
         UpdateMemberDeclMangleNameForCachedInfo(rawMangleName2DeclMap, m);
     }
 }
@@ -587,19 +587,19 @@ void UpdateTopLevelDeclMangleNameForCachedInfo(
     } else {
         CJC_ABORT();
     }
-    for (auto &m : topCache.members) {
+    for (auto& m : topCache.members) {
         UpdateMemberDeclMangleNameForCachedInfo(rawMangleName2DeclMap, m);
     }
 }
-}
+} // namespace
 
 void CompilerInstance::UpdateMangleNameForCachedInfo()
 {
-    for (auto &it : cachedInfo.curPkgASTCache) {
+    for (auto& it : cachedInfo.curPkgASTCache) {
         auto rawMangle = it.first;
         UpdateTopLevelDeclMangleNameForCachedInfo(rawMangleName2DeclMap, rawMangle, it.second);
     }
-    for (auto &it : cachedInfo.importedASTCache) {
+    for (auto& it : cachedInfo.importedASTCache) {
         auto rawMangle = it.first;
         UpdateTopLevelDeclMangleNameForCachedInfo(rawMangleName2DeclMap, rawMangle, it.second);
     }
@@ -731,22 +731,8 @@ bool CompilerInstance::PerformCapabilityCheck()
     CJC_NULLPTR_CHECK(importManager);
     for (auto& srcPkg : GetSourcePackages()) {
         CJC_NULLPTR_CHECK(srcPkg);
-        // Capability parameter inference runs first and its results act as the declared clauses
-        // of the declarations it covers (parameters before arguments). Effect requirements are
-        // never inferred, so with exception checking off there is nothing to infer.
-        auto inferred = checkExceptions ? Sema::InferCapabilities(*typeManager, *importManager, *srcPkg, diag)
-                                        : Sema::InferredCapabilities{};
-        // The clause components of types are completed between capability parameter inference and
-        // capability argument checking, so a type is the single source of its list -- first the
-        // declarations, then the expressions that name them, and then the judgements type check
-        // made while those lists were still empty are replayed. Keep these five calls adjacent and
-        // in this order: the replay reads what the two completions wrote, and the argument check
-        // reads all three.
-        Sema::CompleteInferredCapabilityTypes(*typeManager, inferred);
-        auto completed = Sema::CompleteInferredCapabilityExprTypes(*typeManager, inferred, *srcPkg);
-        Sema::ReplayCapabilitySubtyping(*typeManager, *srcPkg, completed, diag, asWarning);
-        Sema::CheckInferredOverrides(*typeManager, inferred, diag, asWarning);
-        Sema::CheckCapabilities(*typeManager, *importManager, *srcPkg, missHandler, inferred, diag);
+        Sema::CheckCompletedOverrides(*typeManager, *importManager, *srcPkg, diag, asWarning);
+        Sema::CheckCapabilities(*typeManager, *importManager, *srcPkg, missHandler, diag);
     }
     return diag.GetErrorCount() == errorCountBefore;
 }
@@ -849,8 +835,7 @@ void DoNewMangling(
                 if (lambda.TestAttr(Attribute::GENERIC) || !Ty::IsTyCorrect(lambda.GetTy())) {
                     return VisitAction::SKIP_CHILDREN;
                 }
-                lambda.mangledName = baseMangler.MangleLambda(lambda,
-                    filteredPrefix);
+                lambda.mangledName = baseMangler.MangleLambda(lambda, filteredPrefix);
                 return VisitAction::WALK_CHILDREN;
             },
             []([[maybe_unused]] const Annotation& anno) {
@@ -1291,8 +1276,8 @@ bool CompilerInstance::DetectCangjieHome()
     }
     // Detect from exepath.
     if (invocation.globalOptions.executablePath.empty()) {
-        diag.DiagnoseRefactor(DiagKindRefactor::frontend_failed_to_detect_cangjie_home,
-            DEFAULT_POSITION, "can not resolve executable path");
+        diag.DiagnoseRefactor(DiagKindRefactor::frontend_failed_to_detect_cangjie_home, DEFAULT_POSITION,
+            "can not resolve executable path");
         return false;
     } else {
         cangjieHome =

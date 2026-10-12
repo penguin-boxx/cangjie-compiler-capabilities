@@ -30,7 +30,8 @@ Ptr<Ty> TypeChecker::TypeCheckerImpl::SynBlock(const CheckerContext& ctx, Block&
         bool existInvalid = false;
         for (size_t i = 0; i < b.body.size(); i++) {
             auto& node = b.body[i];
-            auto exprPos = i == b.body.size() - 1 && ctx.SynthPos() != SynPos::UNUSED ? SynPos::IMPLICIT_RETURN : SynPos::UNUSED;
+            auto exprPos =
+                i == b.body.size() - 1 && ctx.SynthPos() != SynPos::UNUSED ? SynPos::IMPLICIT_RETURN : SynPos::UNUSED;
             existInvalid = !SynthesizeAndReplaceIdealTy(ctx.With(exprPos), *node) || existInvalid;
         }
         Ptr<Node> lastNode = b.body[b.body.size() - 1].get();
@@ -53,7 +54,7 @@ bool TypeChecker::TypeCheckerImpl::ChkBlock(ASTContext& ctx, Ty& target, Block& 
         b.SetTy(unitTy);
         // NOTE: This function may return false, the caller should handle diagnostics.
         // Only unsafe block is allowed to exist on its own, and needs to diagnose here.
-        auto ret = typeManager.IsSubtype(b.GetTy(), &target);
+        auto ret = CheckCapabilitySubtype(b.GetTy(), &target, b);
         if (!ret && b.TestAttr(Attribute::UNSAFE)) {
             auto builder = diag.DiagnoseRefactor(DiagKindRefactor::sema_mismatched_types, b);
             builder.AddMainHintArguments(target.String(), b.GetTy()->String());
@@ -75,7 +76,8 @@ bool TypeChecker::TypeCheckerImpl::ChkBlock(ASTContext& ctx, Ty& target, Block& 
     }
     if (lastNode->IsDecl()) {
         bool typeMatched = typeManager.IsSubtype(unitTy, &target);
-        isWellTyped = SynthesizeAndReplaceIdealTy({ctx, SynPos::IMPLICIT_RETURN}, *lastNode) && typeMatched && isWellTyped;
+        isWellTyped =
+            SynthesizeAndReplaceIdealTy({ctx, SynPos::IMPLICIT_RETURN}, *lastNode) && typeMatched && isWellTyped;
         if (isWellTyped) {
             b.SetTy(unitTy);
             return true;

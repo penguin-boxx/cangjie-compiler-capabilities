@@ -40,8 +40,8 @@
 #include "cangjie/Basic/Print.h"
 #include "cangjie/Frontend/CompilerInstance.h"
 #include "cangjie/Utils/CheckUtils.h"
-#include "cangjie/Utils/Utils.h"
 #include "cangjie/Utils/ProfileRecorder.h"
+#include "cangjie/Utils/Utils.h"
 
 namespace Cangjie {
 using namespace Sema;
@@ -292,30 +292,6 @@ void TypeChecker::TypeCheckerImpl::ChkCapturesClauseOfDecl(ASTContext& ctx, Inhe
     if (auto cd = DynamicCast<const ClassDecl*>(&decl)) {
         ChkCapturesSuperclassCoverage(*cd);
     }
-    // A clause that is statically empty -- written '()' or an alias that expands to nothing -- is
-    // equivalent to omitting it: the type is not capturing, and none of the rules below apply.
-    if (TypeCheckUtil::GetDeclCapturesCapTys(decl).empty()) {
-        return;
-    }
-    auto typeName = decl.astKind == ASTKind::CLASS_DECL ? "class" : "struct";
-    // A capturing type has no primary constructor -- always '~local' -- and no implicit default
-    // constructor either: every constructor requires the captured capabilities at its call site,
-    // so there has to be one to carry the requirement.
-    bool hasCtor = false;
-    for (auto& member : decl.GetMemberDecls()) {
-        CJC_NULLPTR_CHECK(member);
-        if (member->astKind == ASTKind::PRIMARY_CTOR_DECL) {
-            diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_primary_ctor_on_capturing,
-                MakeRangeForDeclIdentifier(*member), typeName, decl.identifier.Val());
-            hasCtor = true;
-        } else if (member->TestAttr(Attribute::CONSTRUCTOR) && !member->TestAttr(Attribute::COMPILER_ADD)) {
-            hasCtor = true;
-        }
-    }
-    if (!hasCtor) {
-        diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_capturing_needs_ctor, MakeRangeForDeclIdentifier(decl),
-            typeName, decl.identifier.Val());
-    }
 }
 
 void TypeChecker::TypeCheckerImpl::ChkImportedCapabilityMetadata(Package& pkg)
@@ -460,7 +436,165 @@ void TypeChecker::TypeCheckerImpl::ChkThrowsClauseOfFuncBody(ASTContext& ctx, Fu
     }
 }
 
+bool TypeChecker::TypeCheckerImpl::CheckCapabilitySubtype(Ptr<Ty> source, Ptr<Ty> target, const Node& site)
+{
+    if (typeManager.IsSubtype(source, target)) {
+        return true;
+    }
+    const auto& options = ci->invocation.globalOptions;
+    if (!options.enableChexc || options.chexcSeverity != GlobalOptions::ChexcSeverity::CS_WARN ||
+        !Ty::IsTyCorrect(source) || !Ty::IsTyCorrect(target)) {
+        return false;
+    }
+    auto exception = importManager.GetCoreDecl<ClassDecl>(CLASS_EXCEPTION);
+    if (!exception ||
+        !typeManager.IsSubtype(typeManager.EraseExceptionCapTys(source, exception->GetTy()),
+            typeManager.EraseExceptionCapTys(target, exception->GetTy()))) {
+        return false;
+    }
+    diag.DiagnoseRefactor(
+        DiagKindRefactor::sema_chexc_type_requirement_warn, site, Ty::ToString(source), Ty::ToString(target));
+    return true;
+}
+
+bool TypeChecker::TypeCheckerImpl::NeedSynOnUsed(const Decl& decl) const
+{
+    auto fd = DynamicCast<const FuncDecl*>(&decl);
+    if (ci->invocation.globalOptions.enableChexc && fd && Sema::IsInferenceEligible(*fd)) {
+        auto it = capabilityContracts.find(const_cast<FuncDecl*>(fd));
+        if (it == capabilityContracts.end() || it->second != ContractState::COMPLETE) {
+            return true;
+        }
+    }
+    return TypeCheckUtil::NeedSynOnUsed(decl);
+}
+
+bool TypeChecker::TypeCheckerImpl::CheckActiveContract(FuncDecl& decl, const Node& site)
+{
+    auto it = capabilityContracts.find(&decl);
+    if (it == capabilityContracts.end() || it->second == ContractState::UNSTARTED ||
+        it->second == ContractState::COMPLETE) {
+        return true;
+    }
+    if (it->second == ContractState::ACTIVE) {
+        // A declaration failure is committed even when its consumer is speculative.
+        auto restoreDiagnostics = diag.AutoStashDisableDiagnoseStatus();
+        if (auto ft = DynamicCast<FuncTy*>(decl.GetTy()); ft && ft->retTy->HasQuestTy()) {
+            // An unfinished ordinary result keeps the existing return-inference diagnostic.
+            if (auto expr = DynamicCast<const Expr*>(&site)) {
+                DiagUnableToInferReturnType(diag, decl, *expr);
+            } else {
+                DiagUnableToInferReturnType(diag, decl);
+            }
+            it->second = ContractState::FAILED;
+            return false;
+        }
+        auto builder =
+            diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_recursive_inference, site, decl.identifier.Val());
+        for (auto& request : capabilityRequests) {
+            builder.AddNote(*request.second, MakeRange(request.second->begin, request.second->end),
+                "completing the capability contract of '" + request.first->identifier.Val() + "'");
+        }
+        it->second = ContractState::FAILED;
+    }
+    return false;
+}
+
+bool TypeChecker::TypeCheckerImpl::EnsureContract(ASTContext& ctx, Decl& decl, const Node& site)
+{
+    if (auto fd = DynamicCast<FuncDecl*>(&decl); fd && !CheckActiveContract(*fd, site)) {
+        return false;
+    }
+    if (NeedSynOnUsed(decl)) {
+        auto depth = capabilityRequests.size();
+        if (auto fd = DynamicCast<FuncDecl*>(&decl);
+            fd && ci->invocation.globalOptions.enableChexc && Sema::IsInferenceEligible(*fd)) {
+            capabilityRequests.emplace_back(fd, &site);
+        }
+        Synthesize({ctx, SynPos::NONE}, &decl);
+        capabilityRequests.resize(depth);
+    }
+    if (auto fd = DynamicCast<FuncDecl*>(&decl)) {
+        if (!CheckActiveContract(*fd, site)) {
+            return false;
+        }
+        if (ci->invocation.globalOptions.enableChexc && Sema::IsInferenceEligible(*fd)) {
+            auto state = capabilityContracts.find(fd);
+            if (state == capabilityContracts.end() || state->second != ContractState::COMPLETE) {
+                return false;
+            }
+        }
+    }
+    return Ty::IsTyCorrect(decl.GetTy()) && !decl.GetTy()->HasQuestTy();
+}
+
 bool TypeChecker::TypeCheckerImpl::CheckFuncBody(ASTContext& ctx, FuncBody& fb)
+{
+    auto fd = fb.funcDecl;
+    bool infer = ci->invocation.globalOptions.enableChexc && fd && Sema::IsInferenceEligible(*fd);
+    if (infer) {
+        if (!CheckActiveContract(*fd, *fd)) {
+            return false;
+        }
+        if (capabilityContracts[fd] == ContractState::COMPLETE) {
+            return Ty::IsTyCorrect(fd->GetTy());
+        }
+        capabilityContracts[fd] = ContractState::ACTIVE;
+        if (capabilityRequests.empty() || capabilityRequests.back().first != fd) {
+            capabilityRequests.emplace_back(fd, fd);
+        }
+    }
+    auto errorsBefore = diag.GetErrorCount();
+    bool valid = CheckFuncBodyImpl(ctx, fb);
+    valid = valid && diag.GetErrorCount() == errorsBefore;
+    if (fd && !fd->ownerFunc && fb.body &&
+        (ci->invocation.globalOptions.enableChexc || ci->invocation.globalOptions.enableEH)) {
+        // Initializer typing is a dependency of each constructor, not of every class member.
+        if (fd->TestAttr(Attribute::CONSTRUCTOR) && !fd->TestAttr(Attribute::STATIC) && fd->outerDecl) {
+            for (auto& member : fd->outerDecl->GetMemberDecls()) {
+                auto field = DynamicCast<VarDecl*>(member.get());
+                if (field && !field->TestAttr(Attribute::STATIC) && field->initializer) {
+                    auto ty = Synthesize({ctx, SynPos::NONE}, field);
+                    valid = Ty::IsTyCorrect(ty) && valid;
+                }
+            }
+        }
+        if (valid) {
+            bool dependenciesValid = true;
+            auto requirements = Sema::CollectCapabilityRequirements(typeManager, importManager, *fd,
+                [this, &ctx, &dependenciesValid](FuncDecl& dependency, const Node& site) {
+                    bool ready = EnsureContract(ctx, dependency, site);
+                    dependenciesValid = ready && dependenciesValid;
+                    return ready;
+                });
+            valid = dependenciesValid && valid;
+            if (infer && valid && capabilityContracts[fd] != ContractState::FAILED) {
+                auto ft = DynamicCast<FuncTy*>(fb.GetTy());
+                if (ft && Ty::IsTyCorrect(ft)) {
+                    // A reused AST may carry an older inferred list. Recompute from the
+                    // written parameters and current residuals so invalidation can shrink it.
+                    auto caps = TypeCheckUtil::GetFuncBodyCapTys(fb);
+                    caps.insert(caps.end(), requirements.begin(), requirements.end());
+                    auto complete = typeManager.GetFunctionTy(ft->paramTys, ft->retTy,
+                        {ft->isC, ft->isClosureTy, ft->hasVariableLenArg, ft->noCast},
+                        typeManager.NormalizeCapTys(caps));
+                    fb.SetTy(complete);
+                    fd->SetTy(complete);
+                } else {
+                    valid = false;
+                }
+            }
+        }
+    }
+    if (infer) {
+        valid = valid && capabilityContracts[fd] != ContractState::FAILED;
+        capabilityContracts[fd] = valid ? ContractState::COMPLETE : ContractState::FAILED;
+        capabilityRequests.pop_back();
+    }
+    return valid;
+}
+
+bool TypeChecker::TypeCheckerImpl::CheckFuncBodyImpl(ASTContext& ctx, FuncBody& fb)
 {
     ChkThrowsClauseOfFuncBody(ctx, fb);
     if (fb.retType) {
@@ -517,7 +651,7 @@ bool TypeChecker::TypeCheckerImpl::CheckNormalFuncBody(ASTContext& ctx, FuncBody
     // Check and update return type for foreign functions.
     if (!Ty::IsTyCorrect(fb.retType->GetTy())) {
         if (!fb.TestAttr(Attribute::IS_CHECK_VISITED)) {
-            fb.EnableAttr(Attribute::IS_CHECK_VISITED); // Avoid re-enter funcDecl check, when function is invalid.
+            fb.EnableAttr(Attribute::IS_CHECK_VISITED);     // Avoid re-enter funcDecl check, when function is invalid.
             Synthesize({ctx, SynPos::NONE}, fb.body.get()); // Synthesize for other decl/expr in function body.
         }
         fb.SetTy(typeManager.GetFunctionTy(paramTys, fb.retType->GetTy(), {isCFunc, false, hasVariableLenArg}, capTys));
@@ -616,6 +750,9 @@ void AddSetterGetterInProp(const InheritableDecl& cld)
             continue;
         }
         auto propDecl = RawStaticCast<PropDecl*>(decl);
+        if (!propDecl->getters.empty() || !propDecl->setters.empty()) {
+            continue;
+        }
         // Getter
         OwnedPtr<FuncDecl> getter = MakeOwnedNode<FuncDecl>();
         getter->propDecl = propDecl;
@@ -631,6 +768,12 @@ void AddSetterGetterInProp(const InheritableDecl& cld)
         auto getFuncParamList = MakeOwnedNode<FuncParamList>();
         OwnedPtr<FuncBody> getFuncBody = MakeOwnedNode<FuncBody>();
         getFuncBody->paramLists.push_back(std::move(getFuncParamList));
+        if (propDecl->throwsClause) {
+            getFuncBody->throwsClause = ASTCloner::Clone(propDecl->throwsClause.get());
+        }
+        if (propDecl->performsClause) {
+            getFuncBody->performsClause = ASTCloner::Clone(propDecl->performsClause.get());
+        }
         getter->funcBody = std::move(getFuncBody);
         propDecl->getters.emplace_back(std::move(getter));
         if (!propDecl->isVar) {
@@ -652,6 +795,12 @@ void AddSetterGetterInProp(const InheritableDecl& cld)
         setFuncParamList->params.push_back(std::move(param));
         OwnedPtr<FuncBody> setFuncBody = MakeOwnedNode<FuncBody>();
         setFuncBody->paramLists.push_back(std::move(setFuncParamList));
+        if (propDecl->throwsClause) {
+            setFuncBody->throwsClause = ASTCloner::Clone(propDecl->throwsClause.get());
+        }
+        if (propDecl->performsClause) {
+            setFuncBody->performsClause = ASTCloner::Clone(propDecl->performsClause.get());
+        }
         setter->funcBody = std::move(setFuncBody);
         propDecl->setters.emplace_back(std::move(setter));
     }
@@ -1015,6 +1164,13 @@ void RestoreCached(ASTContext& ctx, Ptr<Node> node, CacheEntry& cache, bool reco
 bool TypeChecker::TypeCheckerImpl::IsChecked(ASTContext& ctx, Node& node) const
 {
     auto decl = As<ASTKind::DECL>(&node);
+    if (auto fd = DynamicCast<FuncDecl*>(decl);
+        fd && ci->invocation.globalOptions.enableChexc && Sema::IsInferenceEligible(*fd)) {
+        auto state = capabilityContracts.find(fd);
+        if (state == capabilityContracts.end() || state->second != ContractState::COMPLETE) {
+            return false;
+        }
+    }
     auto type = As<ASTKind::TYPE>(&node);
     bool visitedDecl = decl && (decl->TestAttr(Attribute::IS_CHECK_VISITED) || decl->TestAttr(Attribute::IMPORTED));
     bool visitedExpr =
@@ -1045,6 +1201,9 @@ std::optional<Ptr<Ty>> TypeChecker::TypeCheckerImpl::PerformBasicChecksForSynthe
 
 Ptr<Ty> TypeChecker::TypeCheckerImpl::Synthesize(const CheckerContext& ctx, Ptr<Node> node)
 {
+    if (auto fd = DynamicCast<FuncDecl*>(node); fd && !CheckActiveContract(*fd, *fd)) {
+        return TypeManager::GetInvalidTy();
+    }
     if (auto res = PerformBasicChecksForSynthesize(ctx.Ctx(), node)) {
         return *res;
     }
@@ -1386,7 +1545,7 @@ bool TypeChecker::TypeCheckerImpl::Check(ASTContext& ctx, Ptr<Ty> target, Ptr<No
         } else {
             Synthesize({ctx, SynPos::NONE}, node);
             ReplaceIdealTy(*node);
-            chkRet = typeManager.IsSubtype(node->GetTy(), realTarget);
+            chkRet = CheckCapabilitySubtype(node->GetTy(), realTarget, *node);
         }
     } else {
         switch (node->astKind) {
@@ -1556,7 +1715,7 @@ bool TypeChecker::TypeCheckerImpl::Check(ASTContext& ctx, Ptr<Ty> target, Ptr<No
             default: {
                 Synthesize({ctx, SynPos::NONE}, node);
                 ReplaceIdealTy(*node);
-                chkRet = typeManager.IsSubtype(node->GetTy(), realTarget);
+                chkRet = CheckCapabilitySubtype(node->GetTy(), realTarget, *node);
                 break;
             }
         }
@@ -1656,6 +1815,10 @@ void TypeChecker::TypeCheckerImpl::CheckCallsInConstructor(
 
 Ptr<Ty> TypeChecker::TypeCheckerImpl::SynthesizeWithCache(const CheckerContext& ctx, Ptr<Node> node)
 {
+    if (auto decl = DynamicCast<Decl*>(node); decl && NeedSynOnUsed(*decl)) {
+        return Synthesize(ctx, node);
+    }
+
     CJC_NULLPTR_CHECK(node);
     if (!typeManager.GetUnsolvedTyVars().empty()) {
         return Synthesize(ctx, node);
@@ -1688,12 +1851,17 @@ bool TypeChecker::TypeCheckerImpl::CheckWithCache(ASTContext& ctx, Ptr<Ty> targe
 
 Ptr<Ty> TypeChecker::TypeCheckerImpl::SynthesizeWithNegCache(const CheckerContext& ctx, Ptr<Node> node)
 {
+    if (auto decl = DynamicCast<Decl*>(node); decl && NeedSynOnUsed(*decl)) {
+        return Synthesize(ctx, node);
+    }
+
     CJC_NULLPTR_CHECK(node);
     if (!typeManager.GetUnsolvedTyVars().empty()) {
         return Synthesize(ctx, node);
     }
     CacheKey key = GetCacheKeyForSyn(ctx.Ctx(), node);
-    if (ctx.Ctx().typeCheckCache[node].synCache.count(key) != 0 && !ctx.Ctx().typeCheckCache[node].synCache[key].successful) {
+    if (ctx.Ctx().typeCheckCache[node].synCache.count(key) != 0 &&
+        !ctx.Ctx().typeCheckCache[node].synCache[key].successful) {
         auto& cache = ctx.Ctx().typeCheckCache[node].synCache[key];
         RestoreCached(ctx.Ctx(), node, cache);
         return cache.result;
@@ -1740,8 +1908,13 @@ bool TypeChecker::TypeCheckerImpl::CheckWithEffectiveCache(
     return CheckAndCache(ctx, target, node, key);
 }
 
-Ptr<Ty> TypeChecker::TypeCheckerImpl::SynthesizeWithEffectiveCache(const CheckerContext& ctx, Ptr<Node> node, bool recoverDiag)
+Ptr<Ty> TypeChecker::TypeCheckerImpl::SynthesizeWithEffectiveCache(
+    const CheckerContext& ctx, Ptr<Node> node, bool recoverDiag)
 {
+    if (auto decl = DynamicCast<Decl*>(node); decl && NeedSynOnUsed(*decl)) {
+        return Synthesize(ctx, node);
+    }
+
     if (!typeManager.GetUnsolvedTyVars().empty() || !node) {
         return Synthesize(ctx, node);
     }
@@ -1905,14 +2078,11 @@ void TypeChecker::TypeCheckerImpl::CheckPrimaryCtorForClassOrStruct(InheritableD
 }
 
 void TypeChecker::TypeCheckerImpl::TypeCheckCompositeBody(
-    ASTContext& ctx, const Decl& structDecl, const std::vector<OwnedPtr<Decl>>& body)
+    ASTContext& ctx, const Decl&, const std::vector<OwnedPtr<Decl>>& body)
 {
     for (auto& decl : body) {
         CJC_ASSERT(decl);
         if (auto fd = DynamicCast<FuncDecl*>(decl.get()); fd) {
-            if (fd->TestAttr(Attribute::CONSTRUCTOR)) {
-                CheckConstructor(ctx, structDecl, *fd);
-            }
             if (fd->IsFinalizer()) {
                 CheckFinalizer(*fd);
             }
@@ -2164,7 +2334,8 @@ void MarkImplicitUsedFunctions(const Package& pkg)
             {"arrayInitByCollection", "arrayInitByFunction", "composition", "handleException",
                 "createOverflowExceptionMsg", "createArithmeticExceptionMsg", "getCommandLineArgs"}},
         {AST_PACKAGE_NAME,
-            {MACRO_OBJECT_NAME, "refreshTokensPosition", "refreshPos", "unsafePointerCastFromUint8Array", "transformTokens"}}};
+            {MACRO_OBJECT_NAME, "refreshTokensPosition", "refreshPos", "unsafePointerCastFromUint8Array",
+                "transformTokens"}}};
     auto found = SPECIAL_EXPORTED_FUNCS.find(pkg.fullPackageName);
     if (found == SPECIAL_EXPORTED_FUNCS.end()) {
         return;
@@ -2280,6 +2451,8 @@ void TypeChecker::TypeCheckForPackages(const std::vector<Ptr<Package>>& pkgs) co
 
 std::vector<Ptr<ASTContext>> TypeChecker::TypeCheckerImpl::PreTypeCheck(const std::vector<Ptr<AST::Package>>& pkgs)
 {
+    capabilityContracts.clear();
+    capabilityRequests.clear();
     Utils::ProfileRecorder recorder("Semantic", "Pre TypeCheck");
     std::vector<Ptr<ASTContext>> contexts;
     // Only check for packages that have corresponding ASTContext.
@@ -2320,6 +2493,19 @@ void TypeChecker::TypeCheckerImpl::PostTypeCheck(std::vector<Ptr<ASTContext>>& c
     Utils::ProfileRecorder recorder("Semantic", "Post TypeCheck");
     // Post checking for legality of semantic.
     for (auto& ctx : contexts) {
+        if (ci->invocation.globalOptions.enableChexc && diag.GetErrorCount() == 0) {
+            // Successful Sema must not expose a provisional contract to AST validation,
+            // serialization, lowering, or clients that stop before CAPABILITY_CHECK.
+            Walker(ctx->curPackage, [this](Ptr<Node> node) {
+                auto fd = DynamicCast<FuncDecl*>(node);
+                if (fd && Sema::IsInferenceEligible(*fd)) {
+                    auto state = capabilityContracts.find(fd);
+                    CJC_ASSERT(state != capabilityContracts.end() && state->second == ContractState::COMPLETE);
+                    CJC_ASSERT(fd->GetTy() == fd->funcBody->GetTy());
+                }
+                return VisitAction::WALK_CHILDREN;
+            }).Walk();
+        }
         CheckOverflow(*ctx->curPackage);
         ChkAssumeThrowsAnnotations(*ctx, *ctx->curPackage);
         ChkImportedCapabilityMetadata(*ctx->curPackage);

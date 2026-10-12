@@ -428,6 +428,12 @@ void PrintPropDecl(unsigned indent, const PropDecl& propDecl, std::ostream& stre
     PrintIndent(stream, indent, "PropDecl:", propDecl.identifier.Val(), "{");
     PrintBasic(indent + ONE_INDENT, propDecl, stream);
     PrintModifiers(propDecl, indent, stream);
+    if (propDecl.throwsClause) {
+        PrintThrowsClause(indent + ONE_INDENT, *propDecl.throwsClause, stream);
+    }
+    if (propDecl.performsClause) {
+        PrintThrowsClause(indent + ONE_INDENT, *propDecl.performsClause, stream);
+    }
     PrintNode(propDecl.type.get(), indent + ONE_INDENT, "type", stream);
     for (auto& propMemberDecl : propDecl.setters) {
         PrintNode(propMemberDecl.get(), indent + ONE_INDENT, "", stream);

@@ -411,6 +411,11 @@ WARNING(sema_hide_must_at_end, APILEVEL_CHECK, "annotation '%s' must be placed b
 
 WARNING(sema_unused_import, UNUSED, "unused import '%s'", "unused import")
 
+WARNING(sema_chexc_type_requirement_warn, CHEXC,
+    "capability requirements of '%s' are not admitted by expected type '%s'", "incompatible exception requirements")
+ERROR(sema_chexc_recursive_inference, "recursive capability inference for '%s'",
+    "write a complete throws clause to break this contract dependency")
+
 // Checked exceptions (experimental, behind '--experimental --enable-chexc').
 ERROR(sema_chexc_clause_type_not_exception, "type '%s' in '%s' clause is not a subtype of class 'Exception'",
     "this type must be a subtype of class 'Exception'")

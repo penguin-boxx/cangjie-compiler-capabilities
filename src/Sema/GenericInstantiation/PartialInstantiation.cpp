@@ -269,6 +269,12 @@ OwnedPtr<Decl> PartialInstantiation::InstantiatePrimaryCtorDecl(const PrimaryCto
 OwnedPtr<Decl> PartialInstantiation::InstantiatePropDecl(const PropDecl& pd, const VisitFunc& visitor)
 {
     auto ret = MakeOwned<PropDecl>();
+    if (pd.throwsClause) {
+        ret->throwsClause = InstantiateThrowsClause(*pd.throwsClause, visitor);
+    }
+    if (pd.performsClause) {
+        ret->performsClause = InstantiateThrowsClause(*pd.performsClause, visitor);
+    }
     ret->type = InstantiateType(pd.type.get(), visitor);
     ret->colonPos = pd.colonPos;
     ret->leftCurlPos = pd.leftCurlPos;
@@ -1535,8 +1541,8 @@ OwnedPtr<ImportSpec> PartialInstantiation::InstantiateImportSpec(const ImportSpe
         CopyNodeField(ret->modifier.get(), *is.modifier);
         ret->modifier->isExplicit = is.modifier->isExplicit;
     }
-    std::function<void(const ImportContent&, ImportContent&)> cloneContent
-        = [&cloneContent](const ImportContent& src, ImportContent& dst) {
+    std::function<void(const ImportContent&, ImportContent&)> cloneContent = [&cloneContent](const ImportContent& src,
+                                                                                 ImportContent& dst) {
         CopyNodeField(&dst, src);
         dst.kind = src.kind;
         dst.prefixPaths = src.prefixPaths;

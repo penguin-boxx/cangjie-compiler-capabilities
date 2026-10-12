@@ -217,8 +217,8 @@ OwnedPtr<Decl> ParserImpl::ParseVarWithPatternDecl(
     return ret;
 }
 
-OwnedPtr<Decl> ParserImpl::ParseVarOrLetOrConst(ScopeKind scopeKind,
-    const std::set<Modifier>& modifiers, std::vector<OwnedPtr<AST::Annotation>> annos, const Token& keyToken)
+OwnedPtr<Decl> ParserImpl::ParseVarOrLetOrConst(ScopeKind scopeKind, const std::set<Modifier>& modifiers,
+    std::vector<OwnedPtr<AST::Annotation>> annos, const Token& keyToken)
 {
     OwnedPtr<Decl> ret;
     if (Seeing(TokenKind::WILDCARD) || Seeing(TokenKind::LPAREN) ||
@@ -227,8 +227,7 @@ OwnedPtr<Decl> ParserImpl::ParseVarOrLetOrConst(ScopeKind scopeKind,
     } else if (Seeing(TokenKind::IDENTIFIER) || SeeingContextualKeyword()) {
         ret = ParseVarDecl(scopeKind, modifiers, keyToken);
     } else {
-        DiagExpectedIdentifierOrPattern(
-            keyToken == "var", keyToken.Begin(), keyToken == "const");
+        DiagExpectedIdentifierOrPattern(keyToken == "var", keyToken.Begin(), keyToken == "const");
         ret = MakeOwned<InvalidDecl>(lookahead.Begin());
         ConsumeUntil(TokenKind::NL);
     }
@@ -415,9 +414,6 @@ OwnedPtr<FuncDecl> ParserImpl::ParsePropMemberDecl(const std::set<AST::Modifier>
     } else {
         ret->funcBody = ParseFuncBody(ScopeKind::PROP_MEMBER_GETTER_BODY);
     }
-    if (!ret->funcBody->body) {
-        DiagMissingBody(!ret->identifier.Valid() ? "" : "function", " '" + ret->identifier + "'", lastToken.End());
-    }
 
     ret->end = ret->funcBody->end;
 
@@ -566,7 +562,8 @@ void ParserImpl::CheckJavaInteropMember(Decl& decl)
             break;
         }
 
-        default: break;
+        default:
+            break;
     }
 }
 
@@ -597,7 +594,7 @@ void ParserImpl::CheckObjCInteropMember(Decl& member)
                 fd.outerDecl->EnableAttr(Attribute::IS_BROKEN);
                 fd.EnableAttr(Attribute::IS_BROKEN);
                 ffiParser->ObjC().DiagObjCMirrorCannotHaveFinalizer(fd);
-            }  else {
+            } else {
                 // method branch
                 CheckMemberFuncObjCMirror(fd);
                 ffiParser->CheckForeignNameAnnotation(fd);
@@ -623,7 +620,8 @@ void ParserImpl::CheckObjCInteropMember(Decl& member)
             break;
         }
 
-        default: break;
+        default:
+            break;
     }
 }
 
@@ -645,8 +643,7 @@ void ParserImpl::CheckMemberFuncJavaMirror(FuncDecl& decl)
         decl.outerDecl->EnableAttr(Attribute::HAS_BROKEN, Attribute::IS_BROKEN);
     }
 
-    FFICheckClassLikeFuncBody(decl,
-        DiagKindRefactor::parse_java_mirror_function_must_have_return_type,
+    FFICheckClassLikeFuncBody(decl, DiagKindRefactor::parse_java_mirror_function_must_have_return_type,
         DiagKindRefactor::parse_java_mirror_function_cannot_have_body);
 
     if (decl.outerDecl->astKind == ASTKind::INTERFACE_DECL &&
@@ -675,8 +672,7 @@ void ParserImpl::CheckMemberFuncObjCMirror(FuncDecl& func)
         func.outerDecl->EnableAttr(Attribute::HAS_BROKEN, Attribute::IS_BROKEN);
     }
 
-    FFICheckClassLikeFuncBody(func,
-        DiagKindRefactor::parse_objc_mirror_method_must_have_return_type,
+    FFICheckClassLikeFuncBody(func, DiagKindRefactor::parse_objc_mirror_method_must_have_return_type,
         DiagKindRefactor::parse_objc_mirror_method_cannot_have_body);
 }
 
@@ -749,8 +745,7 @@ void ParserImpl::CheckInitCtorDeclObjCMirror(FuncDecl& ctor)
 
     if (ctor.funcBody && ctor.funcBody->body) {
         ctor.EnableAttr(Attribute::IS_BROKEN);
-        ParseDiagnoseRefactor(
-            DiagKindRefactor::parse_objc_mirror_ctor_cannot_have_body, ctor.funcBody->body->begin);
+        ParseDiagnoseRefactor(DiagKindRefactor::parse_objc_mirror_ctor_cannot_have_body, ctor.funcBody->body->begin);
     } else if (ctor.funcBody) {
         auto body = MakeOwned<Block>();
         body->EnableAttr(Attribute::COMPILER_ADD, Attribute::IMPLICIT_ADD);
@@ -832,8 +827,7 @@ void ParserImpl::CheckPrimaryCtorDeclObjCMirror(PrimaryCtorDecl& ctor)
     ParseDiagnoseRefactor(DiagKindRefactor::parse_objc_mirror_cannot_have_primary_ctor, ctor);
 }
 
-template <typename T>
-void ParserImpl::ParseFuncDeclAnnos(std::vector<OwnedPtr<AST::Annotation>>& annos, T& funcDecl)
+template <typename T> void ParserImpl::ParseFuncDeclAnnos(std::vector<OwnedPtr<AST::Annotation>>& annos, T& funcDecl)
 {
     funcDecl.annotations = std::move(annos);
     for (auto& it : funcDecl.annotations) {
@@ -921,7 +915,7 @@ OwnedPtr<FuncDecl> ParserImpl::ParseFinalizer(
     Next(); // skip ~
     auto tildeBegin{lastToken.Begin()};
     OwnedPtr<FuncDecl> funcDecl = MakeOwned<FuncDecl>();
-    [[maybe_unused]]ChainScope cs(*this, funcDecl.get());
+    [[maybe_unused]] ChainScope cs(*this, funcDecl.get());
     funcDecl->begin = tildeBegin;
     Skip(TokenKind::INIT); // skip init
     funcDecl->identifier = SrcIdentifier{"~init", tildeBegin, lastToken.End(), false};
@@ -950,8 +944,7 @@ OwnedPtr<FuncDecl> ParserImpl::ParseFinalizer(
         }
     }
     if (funcDecl->funcBody && funcDecl->funcBody->retType) {
-        ParseDiagnoseRefactor(
-            DiagKindRefactor::parse_invalid_return_type, *funcDecl->funcBody->retType, "finalizer");
+        ParseDiagnoseRefactor(DiagKindRefactor::parse_invalid_return_type, *funcDecl->funcBody->retType, "finalizer");
         funcDecl->EnableAttr(Attribute::HAS_BROKEN);
     }
     return funcDecl;
@@ -1110,7 +1103,6 @@ OwnedPtr<ClassBody> ParserImpl::ParseClassBody(ClassDecl& cd)
             CheckInitCtorDeclBody(*ctor);
         }
 
-
         if (auto fd = As<ASTKind::FUNC_DECL>(decl.get())) {
             CheckClassLikeFuncBodyAbstractness(*fd);
         } else if (auto pd = As<ASTKind::PROP_DECL>(decl.get())) {
@@ -1178,9 +1170,8 @@ OwnedPtr<Decl> ParserImpl::ParseEnumConstructor(
         return MakeOwned<InvalidDecl>(lookahead.Begin());
     }
     auto lkCopy(lookahead);
-    ret = Skip(TokenKind::LPAREN)
-        ? ParseEnumConstructorWithArgs(lkCopy, annos)
-        : ParseNoArgsEnumConstructor(lkCopy, annos);
+    ret = Skip(TokenKind::LPAREN) ? ParseEnumConstructorWithArgs(lkCopy, annos)
+                                  : ParseNoArgsEnumConstructor(lkCopy, annos);
     [[maybe_unused]] ChainScope cs(*this, ret.get());
     if (!modifiers.empty()) {
         auto firstMod = *SortModifierByPos(modifiers)[0];
@@ -1204,8 +1195,7 @@ OwnedPtr<Decl> ParserImpl::ParseEnumConstructorWithArgs(const Token& id, PtrVect
     int nameIndex = 1;
     ParseOneOrMoreWithSeparator(
         TokenKind::COMMA,
-        [&funcParamList](
-            const Position commaPos) { funcParamList->params.back()->commaPos = commaPos; },
+        [&funcParamList](const Position commaPos) { funcParamList->params.back()->commaPos = commaPos; },
         [this, &nameIndex, &funcParamList]() {
             OwnedPtr<FuncParam> funcParam = MakeOwned<FuncParam>();
             funcParam->identifier = "p" + std::to_string(nameIndex);
@@ -1484,8 +1474,9 @@ void ParserImpl::ParseEnumBody(EnumDecl& enumDecl)
             enumDecl.bitOrPosVector.emplace_back(lastToken.Begin());
         }
         bool seeingEllipse = Seeing(TokenKind::ELLIPSIS);
-        if ((!seeingEllipse && !Seeing(TokenKind::IDENTIFIER) && !SeeingMacroCallDecl() &&
-            !SeeingContextualKeyword() && !SeeingAtWhen()) || SeeingKeywordWithDecl()) {
+        if ((!seeingEllipse && !Seeing(TokenKind::IDENTIFIER) && !SeeingMacroCallDecl() && !SeeingContextualKeyword() &&
+                !SeeingAtWhen()) ||
+            SeeingKeywordWithDecl()) {
             if (!chainedAST.back()->TestAttr(Attribute::IS_BROKEN)) {
                 DiagExpectedIdentifierEnumDecl(&enumDecl);
             }
@@ -1749,9 +1740,8 @@ OwnedPtr<ExtendDecl> ParserImpl::ParseExtendDecl(
 
 void ParserImpl::SetUnsafe(Ptr<Node> node, const std::set<Modifier>& modifiers)
 {
-    auto iter = std::find_if(modifiers.begin(), modifiers.end(), [](auto& mod) {
-        return mod.modifier == TokenKind::UNSAFE;
-    });
+    auto iter =
+        std::find_if(modifiers.begin(), modifiers.end(), [](auto& mod) { return mod.modifier == TokenKind::UNSAFE; });
     if (!IsUnsafeBackend(backend) && iter != modifiers.end()) {
         DiagUnsafeWillBeIgnored(*iter);
         return;
@@ -1809,7 +1799,8 @@ OwnedPtr<Generic> ParserImpl::ParseGeneric()
             if (lookahead.kind != TokenKind::GT && gpd) {
                 ret->typeParameters.emplace_back(std::move(gpd));
             }
-        }, TokenKind::GT);
+        },
+        TokenKind::GT);
     if (!Skip(TokenKind::GT)) {
         if (!ret->TestAttr(Attribute::IS_BROKEN)) {
             ret->end = lastToken.End();
@@ -1872,8 +1863,8 @@ std::vector<OwnedPtr<GenericConstraint>> ParserImpl::ParseGenericConstraints()
         SpreadAttrAndConsume(genericConstraint->type.get(), genericConstraint.get(), {TokenKind::UPPERBOUND});
         auto illegalConstraint = ParseGenericUpperBound(genericConstraint);
         if (!illegalConstraint) {
-            genericConstraint->begin = genericConstraint->wherePos.IsZero() ?
-                genericConstraint->type->begin : genericConstraint->wherePos;
+            genericConstraint->begin =
+                genericConstraint->wherePos.IsZero() ? genericConstraint->type->begin : genericConstraint->wherePos;
             genericConstraint->end = lastToken.End();
             ret.push_back(std::move(genericConstraint));
         }
@@ -2069,13 +2060,12 @@ void ParserImpl::CheckFuncBody(ScopeKind scopeKind, FuncDecl& decl)
         Check here if a function could be abstract,
         and when the outerDecl will be known - clarify it for mirrors / common declarations
      */
-    if (fb && !fb->body && !parseDeclFile && scopeKind != ScopeKind::UNKNOWN_SCOPE
-        && !decl.TestAnyAttr(Attribute::FOREIGN, Attribute::INTRINSIC, Attribute::OBJ_C_MIRROR)) {
+    if (fb && !fb->body && !parseDeclFile && scopeKind != ScopeKind::UNKNOWN_SCOPE &&
+        !decl.TestAnyAttr(Attribute::FOREIGN, Attribute::INTRINSIC, Attribute::OBJ_C_MIRROR)) {
         if (CanBeAbstract(decl, scopeKind)) {
             decl.EnableAttr(Attribute::ABSTRACT);
         } else if (!fb->TestAttr(Attribute::HAS_BROKEN) && !inClassLikeScope && !decl.TestAttr(Attribute::COMMON)) {
-            DiagMissingBody("function",
-                !decl.identifier.Valid() ? "" : " '" + decl.identifier + "'", lastToken.End());
+            DiagMissingBody("function", !decl.identifier.Valid() ? "" : " '" + decl.identifier + "'", lastToken.End());
         }
     }
 
@@ -2101,9 +2091,7 @@ void ParserImpl::CheckFuncBody(ScopeKind scopeKind, FuncDecl& decl)
 }
 
 void ParserImpl::FFICheckClassLikeFuncBody(
-    FuncDecl& decl,
-    DiagKindRefactor functionMustHaveReturnType,
-    DiagKindRefactor functionCanNotHaveBody)
+    FuncDecl& decl, DiagKindRefactor functionMustHaveReturnType, DiagKindRefactor functionCanNotHaveBody)
 {
     if (!decl.funcBody) {
         return;
@@ -2129,10 +2117,9 @@ void ParserImpl::CheckClassLikeFuncBodyAbstractness(FuncDecl& decl)
 
     bool isJavaMirrorOrJavaImpl = decl.outerDecl->IsJavaMirror() || decl.outerDecl->IsJavaImpl();
     // explicit ABSTRACT modifier allowed only in COMMON ABSTRACT class or in JFFI
-    if (HasModifier(decl.modifiers, TokenKind::ABSTRACT) && !isCommon && !inAbstractCJMP &&
-        !isJavaMirrorOrJavaImpl) {
-        ParseDiagnoseRefactor(DiagKindRefactor::parse_explicitly_abstract_only_for_cjmp_abstract_class,
-            decl, "function");
+    if (HasModifier(decl.modifiers, TokenKind::ABSTRACT) && !isCommon && !inAbstractCJMP && !isJavaMirrorOrJavaImpl) {
+        ParseDiagnoseRefactor(
+            DiagKindRefactor::parse_explicitly_abstract_only_for_cjmp_abstract_class, decl, "function");
     }
 
     if (decl.funcBody && decl.funcBody->body) {
@@ -2289,11 +2276,9 @@ void ParserImpl::ParsePropMemberBody(const ScopeKind& scopeKind, FuncBody& fb)
     // 'performs' preceding 'throws' -- enforced by the shared helper.
     ParseCapabilityClauses(fb);
     if (!Seeing(TokenKind::LCURL)) {
-        ParseDiagnoseRefactor(DiagKindRefactor::parse_expected_left_brace, lookahead, ConvertToken(lookahead));
-        ConsumeUntilDecl(TokenKind::LCURL);
-        if (!Seeing(TokenKind::LCURL)) {
-            return;
-        }
+        // The enclosing property validates whether abstract accessors are permitted.
+        fb.end = lastToken.End();
+        return;
     }
     fb.body = ParseBlock(ScopeKind::FUNC_BODY);
     fb.end = fb.body->end;
@@ -2324,7 +2309,7 @@ OwnedPtr<FuncBody> ParserImpl::ParseFuncBody(ScopeKind scopeKind)
             enableThis = true;
         }
         if (SeeingAny(GetTypeFirst()) || SeeingContextualKeyword()) {
-            ret->retType = ParseType();
+            ret->retType = ParseType(true);
         } else {
             ret->EnableAttr(Attribute::IS_BROKEN);
             DiagExpectedIdentifierFuncBody(ret.get());
@@ -2369,8 +2354,9 @@ void ParserImpl::ParseFuncParameters(const ScopeKind& scopeKind, FuncBody& fb)
         } while (Seeing(TokenKind::LPAREN));
     } else {
         (void)fb.paramLists.emplace_back(MakeInvalid<FuncParamList>(lookahead.Begin()));
-        ParseDiagnoseRefactor(scopeKind == ScopeKind::MAIN_BODY ? DiagKindRefactor::parse_expected_left_paren :
-            DiagKindRefactor::parse_expected_lt_paren, lookahead, ConvertToken(lookahead));
+        ParseDiagnoseRefactor(scopeKind == ScopeKind::MAIN_BODY ? DiagKindRefactor::parse_expected_left_paren
+                                                                : DiagKindRefactor::parse_expected_lt_paren,
+            lookahead, ConvertToken(lookahead));
         fb.EnableAttr(Attribute::HAS_BROKEN);
     }
 }

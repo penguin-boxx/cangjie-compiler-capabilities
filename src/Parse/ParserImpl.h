@@ -75,7 +75,7 @@ public:
     OwnedPtr<AST::Decl> ParseDecl(
         ScopeKind scopeKind, std::set<AST::Modifier> modifiers = {}, std::vector<OwnedPtr<AST::Annotation>> annos = {});
     OwnedPtr<AST::Expr> ParseExpr(ExprKind ek = ExprKind::ALL);
-    OwnedPtr<AST::Type> ParseType();
+    OwnedPtr<AST::Type> ParseType(bool allowDeclClause = false);
     OwnedPtr<AST::Pattern> ParsePattern(
         const std::set<AST::Attribute>& attributes = {}, bool isVar = false, bool inDecl = false);
     std::vector<OwnedPtr<AST::Node>> ParseNodes(std::variant<ScopeKind, ExprKind> scope, AST::Node& currentMacroCall,
@@ -591,17 +591,17 @@ private:
     void ParseExtendedType(AST::ExtendDecl& extendDecl);
     void ParseExtendBody(AST::ExtendDecl& ed);
     OwnedPtr<AST::RefType> ParseRefType(bool onlyRef = false);
-    OwnedPtr<AST::Type> ParseBaseType();
+    OwnedPtr<AST::Type> ParseBaseType(bool allowDeclClause = false);
     OwnedPtr<AST::Type> ParseQualifiedType();
     OwnedPtr<AST::Type> ParseVarrayType();
     // Processes paren-related types, such as ParentType, TupleType, FuncType, and CFuncType.
-    OwnedPtr<AST::Type> ParseTypeWithParen();
+    OwnedPtr<AST::Type> ParseTypeWithParen(bool allowDeclClause = false);
     OwnedPtr<AST::Type> ParseTupleType(
         std::vector<OwnedPtr<AST::Type>> types, const Position lParenPos, const Position rParenPos) const;
     OwnedPtr<AST::ParenType> ParseParenType(
         const Position& lParenPos, const Position& rParenPos, OwnedPtr<AST::Type> type);
-    OwnedPtr<AST::FuncType> ParseFuncType(
-        std::vector<OwnedPtr<AST::Type>> types, const Position& lParenPos, const Position& rParenPos);
+    OwnedPtr<AST::FuncType> ParseFuncType(std::vector<OwnedPtr<AST::Type>> types, const Position& lParenPos,
+        const Position& rParenPos, bool allowDeclClause);
     /**
      * Parse a checked-exception `throws` clause (experimental, gated on '--enable-chexc';
      * recognized by spelling at clause positions, see SeeingChexcClause). Grammar:
@@ -622,7 +622,7 @@ private:
      * to the superclass list and `where` block is arbitrary.
      */
     void TryParseCapturesClause(AST::InheritableDecl& decl);
-    OwnedPtr<AST::Type> ParsePrefixType();
+    OwnedPtr<AST::Type> ParsePrefixType(bool allowDeclClause = false);
     OwnedPtr<AST::GenericParamDecl> ParseGenericParamDecl();
     OwnedPtr<AST::Generic> ParseGeneric();
     /* return type is `<bool, vector<unique_ptr<Type>>>`

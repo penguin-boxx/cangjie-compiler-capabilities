@@ -519,6 +519,12 @@ table FuncParam {
   macroParam: MacroParam;
 }
 
+table CapabilityClause {
+  types: [Type];
+  has_ellipsis: bool;
+  keyword_pos: Position;
+}
+
 table FuncBody {
   base: NodeBase;
   // paramList not support Curry Func
@@ -529,6 +535,8 @@ table FuncBody {
   has_body: bool;
   body: Block; // maybe a better name
   generic: Generic;
+  throws_clause: CapabilityClause;
+  performs_clause: CapabilityClause;
 }
 
 table JumpExpr {
@@ -591,6 +599,8 @@ table FuncType {
   arrow_pos: Position;
   ret_type: Type;
   isC: bool;
+  throws_clause: CapabilityClause;
+  performs_clause: CapabilityClause;
 }
 
 table ThisType {
@@ -770,6 +780,8 @@ table PropDecl {
   getters: [FuncDecl];
   setters: [FuncDecl];
   right_curl_pos: Position;
+  throws_clause: CapabilityClause;
+  performs_clause: CapabilityClause;
 }
 
 table GenericConstraint {

@@ -39,14 +39,6 @@ Ptr<Ty> TypeChecker::TypeCheckerImpl::CastTargetTy(Type& target)
         diag.DiagnoseRefactor(asWarning ? DiagKindRefactor::sema_chexc_cast_target_func_warn
                                         : DiagKindRefactor::sema_chexc_cast_target_func,
             target, Ty::ToString(targetTy));
-    } else if (checkExceptions && TypeCheckUtil::IsCapturingTy(targetTy)) {
-        // A capturing type's instances are 'local!'-only, which no cast result can honestly be:
-        // a reflectively constructed one carries an unknown capability set, and reading it back
-        // into checked typing would give it a set it does not have.
-        bool asWarning = ci->invocation.globalOptions.chexcSeverity == GlobalOptions::ChexcSeverity::CS_WARN;
-        diag.DiagnoseRefactor(asWarning ? DiagKindRefactor::sema_chexc_cast_target_capturing_warn
-                                        : DiagKindRefactor::sema_chexc_cast_target_capturing,
-            target, Ty::ToString(targetTy));
     }
     return targetTy;
 }

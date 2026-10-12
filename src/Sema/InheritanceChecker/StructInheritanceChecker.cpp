@@ -30,14 +30,13 @@
 #include "cangjie/Modules/ModulesUtils.h"
 #include "cangjie/Sema/TestManager.h"
 #include "cangjie/Sema/TypeManager.h"
-#include "NativeFFI/Java/AfterTypeCheck/Utils.h"
 
+#include "CJMP/MPTypeCheckerImpl.h"
 #include "Diags.h"
-#include "TypeCheckUtil.h"
-#include "TypeCheckerImpl.h"
 #include "NativeFFI/Java/TypeCheck/InheritanceChecker.h"
 #include "NativeFFI/ObjC/Utils/OCStructInheritanceCheckerImpl.h"
-#include "CJMP/MPTypeCheckerImpl.h"
+#include "TypeCheckUtil.h"
+#include "TypeCheckerImpl.h"
 
 using namespace Cangjie;
 using namespace AST;
@@ -288,8 +287,7 @@ void TypeChecker::TypeCheckerImpl::CheckInheritance(Package& pkg)
 
     auto movedMembers = checker.MoveStructInheritedMembers();
     // Ensure javaCache is empty before moving in (it should be if called at the correct point in pipeline).
-    CJC_ASSERT_WITH_MSG(this->structMemberMap.empty(),
-        "structMemberMap should be empty when moving inherited members");
+    CJC_ASSERT_WITH_MSG(this->structMemberMap.empty(), "structMemberMap should be empty when moving inherited members");
 
     this->structMemberMap = std::move(movedMembers);
 }
@@ -1381,8 +1379,8 @@ bool StructInheritanceChecker::CheckReturnOverrideByGeneric(const FuncTy& parent
     return false;
 }
 
-void StructInheritanceChecker::CheckThrowsClauseCompatible(const AST::FuncDecl& parentFunc,
-    const AST::FuncDecl& childFunc, const FuncTy& parentTy, const FuncTy& childTy) const
+void StructInheritanceChecker::CheckThrowsClauseCompatible(
+    const AST::FuncDecl& parentFunc, const AST::FuncDecl& childFunc, const FuncTy&, const FuncTy&) const
 {
     // Checked exceptions: the override's (redefinition's) capability list must be
     // pointwise subsumed by the original's -- every exception type in the override's 'throws' list
@@ -1394,35 +1392,6 @@ void StructInheritanceChecker::CheckThrowsClauseCompatible(const AST::FuncDecl& 
     // The pair is remembered for the capability pass: a list this declaration only acquires by
     // inference is compared against the overridden one there, since inference runs later.
     typeManager.RecordOverride(childFunc, parentFunc);
-    for (auto capTy : childTy.capTys) {
-        if (typeManager.IsCapTysSubsumed({capTy}, parentTy.capTys)) {
-            continue;
-        }
-        // The level applies to this rule as it does to every other capability diagnostic: at 'warn'
-        // the program is still built, so the violating override has to stay an override -- pairing
-        // is blind to capability lists precisely so that it can. An effect entry is never
-        // downgraded: effect requirements are checked on their own axis, at one severity. With
-        // exception checking off the rule is ordinary type compatibility, so it stays an error.
-        bool asWarning = opts.enableChexc && opts.chexcSeverity == GlobalOptions::ChexcSeverity::CS_WARN &&
-            !TypeCheckUtil::IsCommandTy(typeManager, importManager, capTy);
-        auto kind = asWarning ? DiagKindRefactor::sema_chexc_override_missing_capability_warn
-                              : DiagKindRefactor::sema_chexc_override_missing_capability;
-        // A property accessor has no identifier in source and a compiler-generated one has no
-        // position at all; the property is what a diagnostic can point at. An imported declaration
-        // has no position either, so the note is dropped rather than emitted at position zero.
-        auto blame = GetDiagnosableDecl(childFunc);
-        if (!blame) {
-            continue;
-        }
-        auto builder = diag.DiagnoseRefactor(
-            kind, MakeRangeForDeclIdentifier(*blame), Ty::ToString(capTy), GetDiagnosableDeclName(childFunc));
-        builder.AddMainHintArguments(Ty::ToString(capTy));
-        if (auto parentBlame = GetDiagnosableDecl(parentFunc)) {
-            builder.AddNote(MakeRangeForDeclIdentifier(*parentBlame),
-                parentTy.capTys.empty() ? "the overridden or implemented declaration has no 'throws' clause"
-                                        : "the overridden or implemented declaration is declared here");
-        }
-    }
 }
 
 bool StructInheritanceChecker::CheckImplementationRelation(

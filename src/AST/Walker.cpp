@@ -35,8 +35,7 @@ template class WalkerT<const Node>;
 } // namespace Cangjie::AST
 template VisitAction Walker::Walk(Ptr<Node> curNode) const;
 template VisitAction ConstWalker::Walk(Ptr<const Node> curNode) const;
-template <class NodeT>
-VisitAction WalkerT<NodeT>::Walk(Ptr<NodeT> curNode) const
+template <class NodeT> VisitAction WalkerT<NodeT>::Walk(Ptr<NodeT> curNode) const
 {
     if (!curNode) {
         return VisitAction::WALK_CHILDREN;
@@ -247,6 +246,10 @@ VisitAction WalkerT<NodeT>::Walk(Ptr<NodeT> curNode) const
             }
             case ASTKind::PROP_DECL: {
                 auto pd = StaticAs<ASTKind::PROP_DECL>(curNode);
+                if (Walk(pd->throwsClause.get()) == VisitAction::STOP_NOW ||
+                    Walk(pd->performsClause.get()) == VisitAction::STOP_NOW) {
+                    return VisitAction::STOP_NOW;
+                }
                 for (auto& modifier : pd->modifiers) {
                     if (Walk(const_cast<Modifier*>(&modifier)) == VisitAction::STOP_NOW) {
                         return VisitAction::STOP_NOW;
@@ -589,7 +592,7 @@ VisitAction WalkerT<NodeT>::Walk(Ptr<NodeT> curNode) const
                     return VisitAction::STOP_NOW;
                 }
                 if (Walk(te->finallyLambda.get()) == VisitAction::STOP_NOW) {
-                        return VisitAction::STOP_NOW;
+                    return VisitAction::STOP_NOW;
                 }
                 action = VisitAction::WALK_CHILDREN;
                 break;
@@ -613,7 +616,7 @@ VisitAction WalkerT<NodeT>::Walk(Ptr<NodeT> curNode) const
             case ASTKind::RESUME_EXPR: {
                 auto re = StaticAs<ASTKind::RESUME_EXPR>(curNode);
                 if (Walk(re->withExpr.get()) == VisitAction::STOP_NOW ||
-                        Walk(re->throwingExpr.get()) == VisitAction::STOP_NOW) {
+                    Walk(re->throwingExpr.get()) == VisitAction::STOP_NOW) {
                     return VisitAction::STOP_NOW;
                 }
                 action = VisitAction::WALK_CHILDREN;

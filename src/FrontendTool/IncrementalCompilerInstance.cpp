@@ -14,6 +14,7 @@
 #include <sstream>
 
 #include "cangjie/AST/Utils.h"
+#include "cangjie/AST/Walker.h"
 #include "cangjie/Basic/StringConvertor.h"
 #include "cangjie/Basic/Version.h"
 #include "cangjie/Driver/TempFileManager.h"
@@ -52,10 +53,23 @@ namespace {
  */
 bool HasRecompiledInferredDecl(const IncreResult& res)
 {
-    return std::any_of(res.declsToRecompile.begin(), res.declsToRecompile.end(), [](Ptr<Decl> decl) {
-        auto fd = DynamicCast<const FuncDecl*>(decl.get());
-        return fd && Sema::IsInferenceEligible(*fd);
-    });
+    for (auto decl : res.declsToRecompile) {
+        for (auto owner = decl; owner; owner = owner->outerDecl) {
+            if (auto fd = DynamicCast<const FuncDecl*>(owner); fd && Sema::IsInferenceEligible(*fd)) {
+                return true;
+            }
+        }
+        bool inferred = false;
+        Walker(decl, [&inferred](Ptr<Node> node) {
+            auto fd = DynamicCast<FuncDecl*>(node);
+            inferred = inferred || (fd && Sema::IsInferenceEligible(*fd));
+            return inferred ? VisitAction::STOP_NOW : VisitAction::WALK_CHILDREN;
+        }).Walk();
+        if (inferred) {
+            return true;
+        }
+    }
+    return false;
 }
 } // namespace
 

@@ -19,14 +19,14 @@ using namespace Cangjie;
 using namespace AST;
 
 // BaseType is atomicType in BNF.
-OwnedPtr<AST::Type> ParserImpl::ParseBaseType()
+OwnedPtr<AST::Type> ParserImpl::ParseBaseType(bool allowDeclClause)
 {
     if (Seeing(TokenKind::IDENTIFIER) || SeeingContextualKeyword()) {
         return ParseQualifiedType();
     }
     // Paren Type, Tuple Type, or Function Type
     if (Skip(TokenKind::LPAREN)) {
-        return ParseTypeWithParen();
+        return ParseTypeWithParen(allowDeclClause);
     }
     if (SeeingPrimTypes()) {
         OwnedPtr<PrimitiveType> primType = MakeOwned<PrimitiveType>();
@@ -183,7 +183,7 @@ OwnedPtr<Type> ParserImpl::ParseTypeParameterInTupleType(
     return type;
 }
 
-OwnedPtr<AST::Type> ParserImpl::ParseTypeWithParen()
+OwnedPtr<AST::Type> ParserImpl::ParseTypeWithParen(bool allowDeclClause)
 {
     Position lParenPos = lastToken.Begin();
     std::vector<OwnedPtr<Type>> types;
@@ -209,13 +209,22 @@ OwnedPtr<AST::Type> ParserImpl::ParseTypeWithParen()
     }
     Position rParenPos = lastToken.Begin();
     if (Skip(TokenKind::ARROW)) {
-        return ParseFuncType(std::move(types), lParenPos, rParenPos);
+        return ParseFuncType(std::move(types), lParenPos, rParenPos, allowDeclClause);
     }
-    // Checked exceptions (experimental): a contextual `throws` after ')' also selects the
-    // function-type path, e.g. `(A) throws (E1, E2) -> R`. The clause must be followed by '->'.
-    // Effects: 'performs' does the same and precedes 'throws', so
-    // `(A) performs H throws E -> R` stacks both.
-    if (SeeingChexcClause("performs") || SeeingChexcClause("throws")) {
+    // A clause after a tuple/parenthesized return type belongs to the declaration unless
+    // it is followed by an arrow. Speculate without leaking diagnostics or consuming it.
+    bool hasFunctionClause = SeeingChexcClause("performs") || SeeingChexcClause("throws");
+    if (hasFunctionClause && allowDeclClause && !types.empty()) {
+        ParserScope scope(*this);
+        diag.Prepare();
+        while (SeeingChexcClause("performs") || SeeingChexcClause("throws")) {
+            (void)ParseThrowsClause(true);
+        }
+        hasFunctionClause = Seeing(TokenKind::ARROW);
+        diag.ClearTransaction();
+        scope.ResetParserScope();
+    }
+    if (hasFunctionClause) {
         OwnedPtr<ThrowsClause> performsClause;
         OwnedPtr<ThrowsClause> throwsClause;
         if (SeeingChexcClause("performs")) {
@@ -240,7 +249,7 @@ OwnedPtr<AST::Type> ParserImpl::ParseTypeWithParen()
             invalid->EnableAttr(Attribute::IS_BROKEN);
             return invalid;
         }
-        auto ft = ParseFuncType(std::move(types), lParenPos, rParenPos);
+        auto ft = ParseFuncType(std::move(types), lParenPos, rParenPos, allowDeclClause);
         ft->performsClause = std::move(performsClause);
         ft->throwsClause = std::move(throwsClause);
         return ft;
@@ -255,7 +264,7 @@ OwnedPtr<AST::Type> ParserImpl::ParseTypeWithParen()
     }
     // This is treated as a broken function, which has empty types and no arrow.
     ParseDiagnoseRefactor(DiagKindRefactor::parse_expected_arrow_in_func_type, lookahead.Begin());
-    return ParseFuncType(std::move(types), lParenPos, rParenPos);
+    return ParseFuncType(std::move(types), lParenPos, rParenPos, allowDeclClause);
 }
 
 OwnedPtr<ParenType> ParserImpl::ParseParenType(
@@ -278,14 +287,14 @@ OwnedPtr<ParenType> ParserImpl::ParseParenType(
 }
 
 OwnedPtr<FuncType> ParserImpl::ParseFuncType(
-    std::vector<OwnedPtr<Type>> types, const Position& lParenPos, const Position& rParenPos)
+    std::vector<OwnedPtr<Type>> types, const Position& lParenPos, const Position& rParenPos, bool allowDeclClause)
 {
     OwnedPtr<FuncType> ft = MakeOwned<FuncType>();
     ft->arrowPos = lastToken.Begin();
     ft->begin = lParenPos;
     ft->leftParenPos = lParenPos;
     ft->rightParenPos = rParenPos;
-    ft->retType = ParseType();
+    ft->retType = ParseType(allowDeclClause);
     ft->end = ft->retType->end;
     ft->paramTypes = std::move(types);
     return ft;
@@ -420,7 +429,7 @@ OwnedPtr<AST::ThrowsClause> ParserImpl::ParseCapturesClause()
 }
 
 // Parse the syntactic sugar of option types.
-OwnedPtr<AST::Type> ParserImpl::ParsePrefixType()
+OwnedPtr<AST::Type> ParserImpl::ParsePrefixType(bool allowDeclClause)
 {
     // See the symbol '?'.
     if (Seeing(TokenKind::QUEST)) {
@@ -442,7 +451,7 @@ OwnedPtr<AST::Type> ParserImpl::ParsePrefixType()
             }
         }
         // Parse the type after the last '?'.
-        OwnedPtr<AST::Type> baseType = ParseBaseType();
+        OwnedPtr<AST::Type> baseType = ParseBaseType(allowDeclClause);
         skipNL = true;
         // Skip tailing newline, if previous skip newline enabled.
         while (prevSkipNL && Skip(TokenKind::NL)) {
@@ -451,14 +460,14 @@ OwnedPtr<AST::Type> ParserImpl::ParsePrefixType()
         optionType->componentType = std::move(baseType);
         return optionType;
     } else {
-        OwnedPtr<AST::Type> baseType = ParseBaseType();
+        OwnedPtr<AST::Type> baseType = ParseBaseType(allowDeclClause);
         return baseType;
     }
 }
 
-OwnedPtr<AST::Type> ParserImpl::ParseType()
+OwnedPtr<AST::Type> ParserImpl::ParseType(bool allowDeclClause)
 {
-    auto postType = ParsePrefixType();
+    auto postType = ParsePrefixType(allowDeclClause);
     if (Seeing(TokenKind::ARROW)) {
             if (postType->astKind == ASTKind::FUNC_TYPE) {
                 DiagRedundantArrowAfterFunc(*postType);

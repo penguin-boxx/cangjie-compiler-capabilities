@@ -21,7 +21,7 @@ ASTKIND(TYPE_ALIAS_DECL, "type_alias_decl", TypeAliasDecl, 760)
 ASTKIND(PRIMARY_CTOR_DECL, "primary_ctor_decl", PrimaryCtorDecl, 744)
 ASTKIND(BUILTIN_DECL, "builtin_decl", BuiltInDecl, 736)
 ASTKIND(VAR_DECL, "var_decl", VarDecl, 808) // begin of subtypes of VarDecl and VarDeclAbstract.
-ASTKIND(PROP_DECL, "prop_decl", PropDecl, 896)
+ASTKIND(PROP_DECL, "prop_decl", PropDecl, 920)
 ASTKIND(MACRO_EXPAND_PARAM, "macro_expand_param", MacroExpandParam, 1648)
 ASTKIND(FUNC_PARAM, "func_param", FuncParam, 872)                                // end of subtypes of VarDecl.
 ASTKIND(VAR_WITH_PATTERN_DECL, "var_with_pattern_decl", VarWithPatternDecl, 800) // end of subtypes of VarDeclAbstract.

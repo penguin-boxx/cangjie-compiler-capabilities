@@ -14,6 +14,7 @@
 #ifndef CANGJIE_SEMA_CAPABILITYCHECK_H
 #define CANGJIE_SEMA_CAPABILITYCHECK_H
 
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -45,7 +46,7 @@ struct CapabilityDemand {
 /**
  * Miss-handler seam: the demand/supply walker is parameterized over what happens
  * to unsatisfied demands. The reporting handler below diagnoses each miss; capability-parameter
- * inference will later plug in a collecting handler that gathers residual demands instead.
+ * inference uses a collecting handler that gathers residual demands instead.
  */
 class CapabilityMissHandler {
 public:
@@ -98,96 +99,49 @@ private:
 };
 
 /**
- * True when @p decl leaves its module, so its capability list is authoritative and never inferred.
- * The test is *effective* visibility -- the narrowest of the declaration's own modifier and those of
- * its enclosing declarations -- plus interface membership, an interface member being a public
- * contract whether or not the modifier is written.
+ * Whether the declaration leaves its module by effective visibility. Nested functions do not
+ * inherit the export status of their enclosing function; interface members are authoritative.
  */
+bool IsExportedDecl(const AST::Decl& decl);
 /**
- * Checked exceptions: whether @p fd takes its capability list from its own body -- it has a body,
- * does not leave the module by effective visibility, is not a finalizer, a static initializer or an
- * interface member, and either carries no 'throws' clause or one ending in '...'. The single
- * definition: the incremental frontend asks the same question and must get the same answer, or a
- * body edit can leave callers checked against a stale contract.
+ * Whether a source callable infers requirements from its own body. Module-local callables may
+ * omit the clause; nested functions opt in with ellipsis. Finalizers, static initializers,
+ * interface members and default-argument clones never infer an independent contract.
+ * Incremental invalidation uses this same predicate.
  */
 bool IsInferenceEligible(const AST::FuncDecl& fd);
-bool IsExportedDecl(const AST::Decl& decl);
 
-/**
- * Capability lists inferred for declarations without an authoritative clause.
- * Kept beside the AST rather than written into declaration types: the checking pass stays a
- * pure check, and call sites resolve a callee's list through this map.
- */
-using InferredCapabilities = std::unordered_map<Ptr<AST::FuncDecl>, std::vector<Ptr<AST::Ty>>>;
+enum class CapabilityKind { UNTRACKED, EXCEPTION, EFFECT };
+/// Classify nominal types and bounded type parameters without scheduling or reporting.
+CapabilityKind ClassifyCapability(TypeManager& typeManager, const ImportManager& importManager, Ptr<AST::Ty> ty);
 
-/**
- * Infer capability parameter lists for the inference-eligible declarations of @p pkg
- *: the least solution of the monotone equations over each strongly connected
- * component of the intra-package call graph, computed bottom-up. Declarations carrying an
- * authoritative clause are constants; a clause ending in `...` contributes its entries and
- * still takes part. Polymorphic recursion is rejected with a diagnostic.
- */
-InferredCapabilities InferCapabilities(
-    TypeManager& typeManager, const ImportManager& importManager, AST::Package& pkg, DiagnosticEngine& diag);
-
-/**
- * Complete the types of the declarations covered by @p inferred (capability
- * parameters, then clause components of types, then capability arguments). Each declaration's
- * functional type is re-interned with its inferred entries, so the declaration's own type is the
- * single source of its capability list. The expression types formed from those declarations
- * during type check are completed afterwards, by 'CompleteInferredCapabilityExprTypes'.
- */
-void CompleteInferredCapabilityTypes(TypeManager& typeManager, const InferredCapabilities& inferred);
-
-/**
- * The nodes whose types expression completion changed: expressions, and the declarations whose
- * types were taken from one (a binding without a declared type, a callable without a declared
- * result type). The replay consults it, so that only a judgement whose source actually changed is
- * re-made.
- */
-using CompletedCapabilityNodes = std::unordered_set<Ptr<const AST::Node>>;
-
-/**
- * Checked exceptions: finish the capability component of the EXPRESSION types that depend on an
- * inferred list. Those types were formed during type check, while the lists were still empty, so
- * without this a call through such a value demands nothing at all. Starting from the references
- * that name an inferred declaration, the completed component is propagated to whatever type check
- * derived from them -- bindings and references to them, joins, literal aggregates, member and
- * subscript results, call results, inferred result types -- to a fixed point. Run after
- * 'CompleteInferredCapabilityTypes'; returns what it changed.
- */
-CompletedCapabilityNodes CompleteInferredCapabilityExprTypes(
-    TypeManager& typeManager, const InferredCapabilities& inferred, AST::Package& pkg);
-
-/**
- * Checked exceptions: re-check the capability-sensitive judgements type check made while the
- * inferred lists were empty — assignment, initialization against a declared type, argument
- * passing, 'return' and a body's result against a declared result type, and an inferred result
- * type against the declaration it overrides — wherever the source is in @p completed. Only the
- * capability components can have changed, so a failure here is always about capabilities.
- * Overload resolution is never replayed: it does not consult lists. @p asWarning follows the
- * checking level, as for every other capability obligation.
- */
-void ReplayCapabilitySubtyping(TypeManager& typeManager, AST::Package& pkg, const CompletedCapabilityNodes& completed,
+/** Lexical ownership is independent of canonical list positions. */
+struct CapabilityScope {
+    std::vector<Ptr<AST::Ty>> types;
+    Ptr<const AST::Node> owner;
+};
+struct CapabilityContext {
+    std::vector<CapabilityScope> scopes;
+    Ptr<const AST::FuncDecl> inferenceOwner{nullptr};
+};
+enum class CapabilityResolutionKind { SUPPLIED, RESIDUAL, MISSING };
+struct CapabilityResolution {
+    CapabilityResolutionKind kind;
+    CapabilityDemand demand;
+    Ptr<const AST::Node> owner;
+    Ptr<AST::Ty> supplyingType{nullptr};
+};
+/// Pure resolution: the caller owns accumulation and diagnostic delivery.
+CapabilityResolution ResolveCapability(
+    TypeManager& typeManager, const CapabilityContext& context, const CapabilityDemand& demand);
+using EnsureCapabilityContract = std::function<bool(AST::FuncDecl&, const AST::Node&)>;
+/// Collect from one accepted typed declaration. The callback completes implicit operations.
+std::vector<Ptr<AST::Ty>> CollectCapabilityRequirements(TypeManager& typeManager, const ImportManager& importManager,
+    AST::FuncDecl& decl, const EnsureCapabilityContract& ensure);
+void CheckCompletedOverrides(TypeManager& typeManager, const ImportManager& importManager, AST::Package& pkg,
     DiagnosticEngine& diag, bool asWarning);
-
-/**
- * Checked exceptions: report every inferred list that requires more than the declaration it
- * overrides or implements. Written lists are compared during type check; an inferred one cannot be,
- * because inference runs after it -- so the override pairs recorded then are consumed here.
- */
-void CheckInferredOverrides(
-    TypeManager& typeManager, const InferredCapabilities& inferred, DiagnosticEngine& diag, bool asWarning);
-
-/**
- * Run capability argument checking over every callable body and initializer of @p pkg on the
- * typed AST (after sema type check, before desugar destroys 'TryExpr' structure). The pass
- * never mutates types; every unsatisfied demand is passed to @p missHandler. @p inferred
- * supplies the lists computed by InferCapabilities: they act as the declared clause of their
- * declaration and are demanded at its call sites.
- */
 void CheckCapabilities(TypeManager& typeManager, const ImportManager& importManager, AST::Package& pkg,
-    CapabilityMissHandler& missHandler, const InferredCapabilities& inferred, DiagnosticEngine& diag);
+    CapabilityMissHandler& missHandler, DiagnosticEngine& diag);
 
 /**
  * The capability list of @p decl's 'captures' clause, with capability list aliases

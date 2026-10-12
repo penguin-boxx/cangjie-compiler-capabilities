@@ -33,7 +33,7 @@ const std::unordered_map<AST::AnnotationKind, std::string> ANNO_KIND_TO_NAME = [
     }
     return result;
 }();
-}
+} // namespace Cangjie
 
 Parser::Parser(unsigned int fileID, const std::string& input, DiagnosticEngine& diag, SourceManager& sm,
     bool attachComment, bool parseDeclFile)
@@ -79,9 +79,7 @@ void ParserImpl::CheckAndHandleUnexpectedTopLevelDeclAfterFeatures()
     if (!IsExpectedTokenAfterFeaturesOrPackage(true)) {
         DiagAndSuggestKeywordForExpectedDeclaration({"features", "macro", "package", "import", "func", "let", "var",
             "const", "enum", "type", "struct", "class", "interface", "extend", "main"});
-        auto consumeTarget = [this]() {
-            return IsExpectedTokenAfterFeaturesOrPackage(true);
-        };
+        auto consumeTarget = [this]() { return IsExpectedTokenAfterFeaturesOrPackage(true); };
         ConsumeUntilAny(consumeTarget, false);
     }
 }
@@ -133,11 +131,11 @@ OwnedPtr<File> ParserImpl::ParseTopLevel()
     ret->filePath = source.path;
     ret->fileHash = source.fileHash;
     SkipBlank(TokenKind::NL);
-     /**
+    /**
      * preamble
      *  : featureDirective? packageHeader? importSpec*
      *  ;
-    */
+     */
     // Parse features in TopLevel
     PtrVector<Annotation> annos;
     if (SeeingBuiltinAnnotation()) {
@@ -415,11 +413,15 @@ OwnedPtr<Decl> ParserImpl::ParsePropDecl(
     // PropDecl must declare type explicitly, otherwise we report error during Parsing.
     if (Skip(TokenKind::COLON)) {
         ret->colonPos = lastToken.Begin();
-        ret->type = ParseType();
+        ret->type = ParseType(true);
     } else {
         ret->type = MakeOwned<InvalidType>(lookahead.Begin());
         DiagExpectCharacter("':'", "property declaration must declare type explicitly");
     }
+    FuncBody clauses;
+    ParseCapabilityClauses(clauses);
+    ret->throwsClause = std::move(clauses.throwsClause);
+    ret->performsClause = std::move(clauses.performsClause);
     auto attrs = CheckDeclModifiers(modifiers, scopeKind, DefKind::PROPERTY);
     std::for_each(attrs.begin(), attrs.end(), [&](auto&& it) { ret->EnableAttr(it); });
     if (ret->TestAttr(Attribute::MUT)) {
@@ -429,6 +431,29 @@ OwnedPtr<Decl> ParserImpl::ParsePropDecl(
     auto inClassLikeScope = scopeKind == ScopeKind::CLASS_BODY || scopeKind == ScopeKind::INTERFACE_BODY;
     if (Skip(TokenKind::LCURL)) {
         ParsePropBody(modifiers, *ret);
+        bool hasAbstractAccessor = false;
+        for (auto* accessors : {&ret->getters, &ret->setters}) {
+            for (auto& accessor : *accessors) {
+                auto& fb = *accessor->funcBody;
+                if (!fb.throwsClause && ret->throwsClause) {
+                    fb.throwsClause = ASTCloner::Clone(ret->throwsClause.get());
+                }
+                if (!fb.performsClause && ret->performsClause) {
+                    fb.performsClause = ASTCloner::Clone(ret->performsClause.get());
+                }
+                if (!fb.body) {
+                    if (CanBeAbstract(*accessor, scopeKind)) {
+                        accessor->EnableAttr(Attribute::ABSTRACT);
+                        hasAbstractAccessor = true;
+                    } else {
+                        DiagMissingBody("function", " '" + accessor->identifier + "'", accessor->end);
+                    }
+                }
+            }
+        }
+        if (hasAbstractAccessor) {
+            ret->EnableAttr(Attribute::ABSTRACT);
+        }
     } else if (inClassLikeScope || scopeKind == ScopeKind::UNKNOWN_SCOPE || ret->TestAttr(Attribute::COMMON)) {
         if (CanBeAbstract(*ret, scopeKind)) {
             ret->EnableAttr(Attribute::ABSTRACT);
@@ -462,10 +487,9 @@ void ParserImpl::CheckClassLikePropAbstractness(AST::PropDecl& prop)
     bool inAbstractCJMPClass = inAbstractCJMP && inClass;
     bool inObjCMirror = prop.outerDecl->TestAttr(Attribute::OBJ_C_MIRROR);
 
-    if (HasModifier(prop.modifiers, TokenKind::ABSTRACT) && !isCommon && !inAbstractCJMP &&
-        !isJavaMirrorOrJavaImpl) {
-        ParseDiagnoseRefactor(DiagKindRefactor::parse_explicitly_abstract_only_for_cjmp_abstract_class,
-            lastToken.End(), "property");
+    if (HasModifier(prop.modifiers, TokenKind::ABSTRACT) && !isCommon && !inAbstractCJMP && !isJavaMirrorOrJavaImpl) {
+        ParseDiagnoseRefactor(
+            DiagKindRefactor::parse_explicitly_abstract_only_for_cjmp_abstract_class, lastToken.End(), "property");
     }
 
     if (inObjCMirror) {
