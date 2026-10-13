@@ -76,6 +76,21 @@ void Collector::CollectFileNode(ASTContext& ctx, File& file, bool buildTrie)
     AddSymbol(ctx, nodeInfo, buildTrie);
     for (auto& import : file.imports) {
         BuildSymbolTable(ctx, import.get(), buildTrie);
+        // Checked exceptions: the exception types of an '@AssumeThrows' import
+        // annotation are named in the file's top-level scope, which is the scope in effect here.
+        for (auto& anno : import->annotations) {
+            if (!anno || (!anno->assumeThrows && !anno->assumePerforms)) {
+                continue;
+            }
+            for (auto clause : {anno->assumeThrows.get(), anno->assumePerforms.get()}) {
+                if (!clause) {
+                    continue;
+                }
+                for (auto& capType : clause->capTypes) {
+                    BuildSymbolTable(ctx, capType.get(), buildTrie);
+                }
+            }
+        }
     }
     // Must use three-stage for loop instead of iterator-style for loop because that function "__maininvoke" will be
     // generated during function declaration symbol collection.
@@ -130,10 +145,24 @@ void Collector::CollectClassDecl(ASTContext& ctx, ClassDecl& cd, bool buildTrie)
     for (auto& type : cd.inheritedTypes) {
         BuildSymbolTable(ctx, type.get(), buildTrie);
     }
+    CollectCapturesClause(ctx, cd, buildTrie);
     auto bodyNodeInfo = NodeInfo(*cd.body, "", ctx.currentScopeLevel, scopeManager.CalcScopeGateName(ctx));
     AddSymbol(ctx, bodyNodeInfo, buildTrie);
     BuildSymbolTable(ctx, cd.body.get(), buildTrie);
     scopeManager.FinalizeScope(ctx);
+}
+
+void Collector::CollectCapturesClause(ASTContext& ctx, const InheritableDecl& decl, bool buildTrie)
+{
+    // Checked exceptions (experimental): the 'captures' clause types may reference the
+    // declaration's generic parameters, so they are collected inside its scope, like the
+    // capability types of a 'throws' clause.
+    if (!decl.capturesClause) {
+        return;
+    }
+    for (auto& capType : decl.capturesClause->capTypes) {
+        BuildSymbolTable(ctx, capType.get(), buildTrie);
+    }
 }
 
 void Collector::CollectClassBody(ASTContext& ctx, const ClassBody& cb, bool buildTrie)
@@ -230,6 +259,7 @@ void Collector::CollectStructDecl(ASTContext& ctx, StructDecl& sd, bool buildTri
     for (auto& type : sd.inheritedTypes) {
         BuildSymbolTable(ctx, type.get(), buildTrie);
     }
+    CollectCapturesClause(ctx, sd, buildTrie);
     if (sd.body == nullptr) {
         scopeManager.FinalizeScope(ctx);
         return;
@@ -333,6 +363,16 @@ void Collector::CollectFuncBody(ASTContext& ctx, FuncBody& fb, bool buildTrie)
         BuildSymbolTable(ctx, funcParamList.get(), buildTrie);
     }
     BuildSymbolTable(ctx, fb.retType.get(), buildTrie);
+    for (auto clause : {fb.performsClause.get(), fb.throwsClause.get()}) {
+        if (clause == nullptr) {
+            continue;
+        }
+        // Checked exceptions (experimental): capability types may reference the function's
+        // generic parameters, so they are collected inside the function's scope.
+        for (auto& capType : clause->capTypes) {
+            BuildSymbolTable(ctx, capType.get(), buildTrie);
+        }
+    }
     if (fb.body != nullptr) {
         for (auto& n : fb.body->body) {
             BuildSymbolTable(ctx, n.get(), buildTrie);
@@ -347,6 +387,13 @@ void Collector::CollectPropDecl(ASTContext& ctx, PropDecl& pd, bool buildTrie)
     auto nodeInfo = NodeInfo(pd, pd.identifier, ctx.currentScopeLevel, ctx.currentScopeName);
     AddSymbol(ctx, nodeInfo, buildTrie);
     BuildSymbolTable(ctx, pd.type.get(), buildTrie);
+    for (auto clause : {pd.throwsClause.get(), pd.performsClause.get()}) {
+        if (clause) {
+            for (auto& type : clause->capTypes) {
+                BuildSymbolTable(ctx, type.get(), buildTrie);
+            }
+        }
+    }
     for (auto& propMemberdecl : pd.setters) {
         propMemberdecl->identifierForLsp = propMemberdecl->identifier;
         if (propMemberdecl->identifier == "set") {
@@ -682,6 +729,13 @@ void Collector::BuildSymbolTable(ASTContext& ctx, Ptr<Node> node, bool buildTrie
             BuildSymbolTable(ctx, anno->baseExpr.get(), buildTrie);
             for (auto& funcArg : anno->args) {
                 BuildSymbolTable(ctx, funcArg.get(), buildTrie);
+            }
+            for (auto clause : {anno->assumeThrows.get(), anno->assumePerforms.get()}) {
+                if (clause) {
+                    for (auto& type : clause->capTypes) {
+                        BuildSymbolTable(ctx, type.get(), buildTrie);
+                    }
+                }
             }
             break;
         }
@@ -1310,6 +1364,14 @@ void Collector::BuildSymbolTable(ASTContext& ctx, Ptr<Node> node, bool buildTrie
             AddSymbol(ctx, nodeInfo, buildTrie);
             for (auto& paramType : ft->paramTypes) {
                 BuildSymbolTable(ctx, paramType.get(), buildTrie);
+            }
+            for (auto clause : {ft->performsClause.get(), ft->throwsClause.get()}) {
+                if (clause == nullptr) {
+                    continue;
+                }
+                for (auto& capType : clause->capTypes) {
+                    BuildSymbolTable(ctx, capType.get(), buildTrie);
+                }
             }
             BuildSymbolTable(ctx, ft->retType.get(), buildTrie);
             break;

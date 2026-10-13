@@ -10,15 +10,15 @@
 #include "Diags.h"
 #include "EnumSugarChecker.h"
 #include "EnumSugarTargetsFinder.h"
+#include "ExtraScopes.h"
 #include "LocalTypeArgumentSynthesis.h"
 #include "TypeCheckUtil.h"
-#include "ExtraScopes.h"
 
 #include "cangjie/AST/Create.h"
 #include "cangjie/AST/Match.h"
 #include "cangjie/Basic/Match.h"
-#include "cangjie/Modules/ModulesUtils.h"
 #include "cangjie/Macro/TestEntryConstructor.h"
+#include "cangjie/Modules/ModulesUtils.h"
 
 using namespace Cangjie;
 using namespace Sema;
@@ -69,22 +69,6 @@ bool CheckInferrableEnumReference(DiagnosticEngine& diag, TypeManager& tyMgr, Ex
     return true;
 }
 
-bool CheckNonFunctionReference(DiagnosticEngine& diag, TypeManager& tyMgr, Ty& target, Expr& refNode)
-{
-    auto refTarget = refNode.GetTarget();
-    bool checkEnumCtor = refTarget && refTarget->TestAttr(AST::Attribute::ENUM_CONSTRUCTOR);
-    if (checkEnumCtor && IsEnumNeedSynthesis(refNode, *refTarget)) {
-        // Check and update type for enum target without typeArgument.
-        return CheckInferrableEnumReference(diag, tyMgr, refNode, target);
-    }
-
-    bool isWellTyped = tyMgr.IsSubtype(refNode.GetTy(), &target);
-    if (!isWellTyped) {
-        DiagMismatchedTypes(diag, refNode, target);
-        refNode.SetTy(TypeManager::GetInvalidTy());
-    }
-    return isWellTyped;
-}
 
 ASTKind GetTargetsSameASTKind(const std::vector<Ptr<Decl>>& targets)
 {
@@ -298,9 +282,7 @@ void TypeChecker::TypeCheckerImpl::DiagMemberAccessNotFound(const MemberAccess& 
     if (IsFieldOperator(ma.field)) {
         return; // Do not report error for operator overload access.
     }
-    if (ci->invocation.globalOptions.compileTestsOnly &&
-        TestEntryConstructor::IsTestRegistrationFunction(ma.target)
-    ) {
+    if (ci->invocation.globalOptions.compileTestsOnly && TestEntryConstructor::IsTestRegistrationFunction(ma.target)) {
         /*
          * Allow loading not accessible test registration functions,
          * especially from other packages, to be able to execute tests from other packages
@@ -335,7 +317,17 @@ bool TypeChecker::TypeCheckerImpl::ChkRefExpr(ASTContext& ctx, Ty& target, NameR
     auto targets = GetFuncTargets(refNode);
     // None function target check.
     if (targets.empty()) {
-        return CheckNonFunctionReference(diag, typeManager, target, refNode);
+        auto refTarget = refNode.GetTarget();
+        if (refTarget && refTarget->TestAttr(Attribute::ENUM_CONSTRUCTOR) && IsEnumNeedSynthesis(refNode, *refTarget)) {
+            // Enum inference must run even when its provisional type is already a subtype.
+            return CheckInferrableEnumReference(diag, typeManager, refNode, target);
+        }
+        bool compatible = CheckCapabilitySubtype(refNode.GetTy(), &target, refNode);
+        if (!compatible) {
+            DiagMismatchedTypes(diag, refNode, target);
+            refNode.SetTy(TypeManager::GetInvalidTy());
+        }
+        return compatible;
     }
     // Overloading check.
     uint32_t matched = 0;
@@ -348,7 +340,7 @@ bool TypeChecker::TypeCheckerImpl::ChkRefExpr(ASTContext& ctx, Ty& target, NameR
     Ptr<FuncDecl> matchedFd = nullptr;
     Ptr<Ty> validCandidateTy = nullptr;
     for (auto [fd, fdTy, mapping] : candidates) {
-        if (!typeManager.IsSubtype(fdTy, &target)) {
+        if (!CheckCapabilitySubtype(fdTy, &target, refNode)) {
             if (!validCandidateTy && Ty::IsTyCorrect(fdTy) && !StaticCast<FuncTy>(fdTy)->retTy->IsQuest()) {
                 validCandidateTy = fdTy;
             }
@@ -398,6 +390,9 @@ bool TypeChecker::TypeCheckerImpl::ChkRefExpr(ASTContext& ctx, Ty& target, NameR
 bool TypeChecker::TypeCheckerImpl::SynTargetOnUsed(ASTContext& ctx, const NameReferenceExpr& nre, Decl& target)
 {
     // Type decls are no need to be checked again recursively, because the ty is already set at PreCheck stage.
+    if (auto fd = DynamicCast<FuncDecl*>(&target); fd && !CheckActiveContract(*fd, nre)) {
+        return false;
+    }
     if (NeedSynOnUsed(target)) {
         Ptr<Decl> declToSyn = &target;
         if (auto vd = DynamicCast<VarDecl*>(&target)) {
@@ -415,6 +410,10 @@ bool TypeChecker::TypeCheckerImpl::SynTargetOnUsed(ASTContext& ctx, const NameRe
 
 void TypeChecker::TypeCheckerImpl::InferRefExpr(ASTContext& ctx, RefExpr& re)
 {
+    if (re.ref.target && NeedSynOnUsed(*re.ref.target) && !SynTargetOnUsed(ctx, re, *re.ref.target)) {
+        re.SetTy(TypeManager::GetInvalidTy());
+        return;
+    }
     if (re.ref.target && Ty::IsTyCorrect(re.GetTy()) && !re.ref.target->GetTy()->IsPlaceholder()) {
         return; // If the target is already existed and type is valid, we can exit early.
     }
@@ -476,7 +475,8 @@ void TypeChecker::TypeCheckerImpl::InferRefExpr(ASTContext& ctx, RefExpr& re)
         re.SetTy(TypeManager::GetInvalidTy());
         return;
     }
-    re.SetTy(typeManager.SubstituteTypeAliasInTy(*re.ref.target->GetTy()));
+    re.SetTy(EffectiveUseType(*re.ref.target, typeManager.SubstituteTypeAliasInTy(*re.ref.target->GetTy()),
+        re.TestAttr(Attribute::LEFT_VALUE)));
     if (!decl->IsFunc() || re.isAlone) {
         // Only check non-function or non-call target. Functions will be check after function overload resolution.
         InstantiateReferenceType(ctx, re);
@@ -591,7 +591,8 @@ void TypeChecker::TypeCheckerImpl::InferMemberAccess(ASTContext& ctx, MemberAcce
         ma.SetTy(TypeManager::GetInvalidTy());
         return;
     }
-    ma.SetTy(typeManager.SubstituteTypeAliasInTy(*ma.target->GetTy()));
+    ma.SetTy(EffectiveUseType(
+        *ma.target, typeManager.SubstituteTypeAliasInTy(*ma.target->GetTy()), ma.TestAttr(Attribute::LEFT_VALUE)));
     // Only instantiate ty for non-function or non-call. Function's will be done after overload resolution.
     if (!ma.target->IsFunc() || ma.isAlone) {
         InstantiateReferenceType(ctx, ma);
@@ -660,11 +661,10 @@ void TypeChecker::TypeCheckerImpl::InferStaticAccess(const ASTContext& ctx, Memb
         if (auto ce = DynamicCast<CallExpr*>(ma.callOrPattern); ce && ce->callKind == CallKind::CALL_ANNOTATION) {
             isCustomAnnotation = true;
         }
-        if (!isCustomAnnotation && Is<PackageDecl>(targetOfBaseExpr) &&
-            !ma.TestAttr(Attribute::MACRO_INVOKE_BODY)) {
-            targets.erase(std::remove_if(targets.begin(), targets.end(), [](auto target) {
-                return target->TestAttr(Attribute::MACRO_FUNC);
-                }), targets.end());
+        if (!isCustomAnnotation && Is<PackageDecl>(targetOfBaseExpr) && !ma.TestAttr(Attribute::MACRO_INVOKE_BODY)) {
+            targets.erase(std::remove_if(targets.begin(), targets.end(),
+                              [](auto target) { return target->TestAttr(Attribute::MACRO_FUNC); }),
+                targets.end());
             if (!targets.empty()) {
                 hasRemovedMacros = false;
             }
@@ -672,8 +672,8 @@ void TypeChecker::TypeCheckerImpl::InferStaticAccess(const ASTContext& ctx, Memb
         if (targets.empty()) {
             if (targetOfBaseExpr.astKind == ASTKind::PACKAGE_DECL) {
                 if (hasRemovedMacros) {
-                    diag.DiagnoseRefactor(DiagKindRefactor::sema_undeclared_identifier, MakeRange(ma.field.Begin(),
-                        ma.field.End()), ma.field.Val());
+                    diag.DiagnoseRefactor(DiagKindRefactor::sema_undeclared_identifier,
+                        MakeRange(ma.field.Begin(), ma.field.End()), ma.field.Val());
                 } else {
                     DiagPackageMemberNotFound(diag, importManager, ma, StaticCast<PackageDecl&>(targetOfBaseExpr));
                 }
@@ -750,8 +750,8 @@ Ptr<Decl> TypeChecker::TypeCheckerImpl::CheckUpperBoundTargetsCaseFuncCall(
     }
 }
 
-Ptr<Decl> TypeChecker::TypeCheckerImpl::CheckUpperBoundTargetsCaseOthers(const ASTContext& ctx,
-    MemberAccess& ma, const std::unordered_map<Ptr<Ty>, std::vector<Ptr<Decl>>>& allTargets)
+Ptr<Decl> TypeChecker::TypeCheckerImpl::CheckUpperBoundTargetsCaseOthers(
+    const ASTContext& ctx, MemberAccess& ma, const std::unordered_map<Ptr<Ty>, std::vector<Ptr<Decl>>>& allTargets)
 {
     ma.foundUpperBoundMap = GetUpperBoundTargetsWithGivenKind(allTargets, {ASTKind::VAR_DECL, ASTKind::PROP_DECL});
     std::vector<Ptr<Decl>> tempTargets;
@@ -835,7 +835,7 @@ void TypeChecker::TypeCheckerImpl::FilterSumUpperbound(const ASTContext& ctx, AS
 bool TypeChecker::TypeCheckerImpl::FilterSumUpperbound(AST::MemberAccess& ma, AST::GenericsTy& tv, const AST::Decl& d)
 {
     CJC_ASSERT(tv.isPlaceholder);
-    auto hasMemOfTargetSig = [this, &ma, &d](Ptr<Ty> ty)->bool {
+    auto hasMemOfTargetSig = [this, &ma, &d](Ptr<Ty> ty) -> bool {
         for (auto& [d2, ub] : ma.foundUpperBoundMap) {
             if (ub.count(ty) > 0 && typeManager.IsTyEqual(d.GetTy(), d2->GetTy())) {
                 return true;
@@ -927,8 +927,7 @@ Ptr<Decl> TypeChecker::TypeCheckerImpl::GetMemberAccessExposedTarget(
         }
     }
     if (allTargets.empty()) {
-        isStaticAccess ? DiagForGenericParamMemberNotFound(diag, ma, *genericsTy.decl)
-                       : DiagMemberAccessNotFound(ma);
+        isStaticAccess ? DiagForGenericParamMemberNotFound(diag, ma, *genericsTy.decl) : DiagMemberAccessNotFound(ma);
         return nullptr;
     }
     // Since members of user defined type cannot have same name, the found targets must have same astKind.
@@ -969,13 +968,13 @@ Ptr<Decl> TypeChecker::TypeCheckerImpl::GetObjMemberAccessTarget(
             return FilterAndGetTargetsOfObjAccess(ctx, ma, targets);
         },
         [this, &ctx, &ma, searchExtend](const StructTy& structTy) {
-            auto targets = FieldLookup(
-                ctx, structTy.declPtr, ma.field, {.file = ma.curFile, .lookupExtend = searchExtend});
+            auto targets =
+                FieldLookup(ctx, structTy.declPtr, ma.field, {.file = ma.curFile, .lookupExtend = searchExtend});
             return FilterAndGetTargetsOfObjAccess(ctx, ma, targets);
         },
         [this, &ctx, &ma, searchExtend](const EnumTy& enumTy) {
-            auto targets = FieldLookup(
-                ctx, enumTy.declPtr, ma.field, {.file = ma.curFile, .lookupExtend = searchExtend});
+            auto targets =
+                FieldLookup(ctx, enumTy.declPtr, ma.field, {.file = ma.curFile, .lookupExtend = searchExtend});
             return FilterAndGetTargetsOfObjAccess(ctx, ma, targets);
         },
         [this, &ctx, &ma](ArrayTy& arrayTy) {

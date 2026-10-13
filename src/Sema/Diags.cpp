@@ -142,6 +142,36 @@ Range MakeRangeForDeclIdentifier(const Decl& decl)
     }
 }
 
+namespace {
+bool HasSourcePosition(const Decl& decl)
+{
+    auto range = MakeRangeForDeclIdentifier(decl);
+    return !range.begin.IsZero() && !range.end.IsZero();
+}
+} // namespace
+
+std::string GetDiagnosableDeclName(const Decl& decl)
+{
+    if (auto fd = DynamicCast<const FuncDecl*>(&decl); fd && fd->propDecl) {
+        return fd->propDecl->identifier;
+    }
+    return decl.identifier;
+}
+
+Ptr<const Decl> GetDiagnosableDecl(const Decl& decl)
+{
+    if (HasSourcePosition(decl)) {
+        return &decl;
+    }
+    if (auto fd = DynamicCast<const FuncDecl*>(&decl); fd && fd->propDecl && HasSourcePosition(*fd->propDecl)) {
+        return fd->propDecl;
+    }
+    if (decl.outerDecl && HasSourcePosition(*decl.outerDecl)) {
+        return decl.outerDecl;
+    }
+    return nullptr;
+}
+
 bool IsFeatureSupersetRelation(const Decl& left, const Decl& right)
 {
     std::set<std::string> leftFeatures = left.curFile->GetFeatures();

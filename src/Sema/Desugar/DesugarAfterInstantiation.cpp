@@ -221,6 +221,7 @@ void TypeChecker::TypeCheckerImpl::MarkUsedPackageInFile(Ptr<Package> pkg)
 
 void TypeChecker::TypeCheckerImpl::PerformDesugarAfterInstantiation([[maybe_unused]] ASTContext& ctx, Package& pkg)
 {
+    capabilityConsumer = &pkg;
     if (pkg.files.empty()) {
         return;
     }

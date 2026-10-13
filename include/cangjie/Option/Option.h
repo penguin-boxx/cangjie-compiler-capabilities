@@ -13,6 +13,8 @@
 #ifndef CANGJIE_OPTION_OPTION_H
 #define CANGJIE_OPTION_OPTION_H
 
+#include "cangjie/Basic/CheckingLevel.h"
+
 #include <climits>
 #include <cstdint>
 #include <functional>
@@ -592,6 +594,17 @@ public:
     bool exportForTest = false; /** Export some additional kinds of declaration specifically for using them in tests */
 
     bool enableEH = false; /** Whether support for effect handlers is enabled */
+
+    CheckingLevel exceptionsLevel{CheckingLevel::OFF};
+    CheckingLevel effectsLevel{CheckingLevel::OFF};
+    bool CheckingExceptions() const
+    {
+        return exceptionsLevel != CheckingLevel::OFF;
+    }
+    bool CheckingEffects() const
+    {
+        return effectsLevel != CheckingLevel::OFF;
+    }
 
     MockMode mock = MockMode::DEFAULT; /**< Whether enable mocking. */
 

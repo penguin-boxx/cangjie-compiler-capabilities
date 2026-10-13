@@ -28,8 +28,8 @@
 #include "cangjie/Basic/DiagnosticEngine.h"
 #include "cangjie/Frontend/CompilerInstance.h"
 #include "cangjie/Utils/CheckUtils.h"
-#include "cangjie/Utils/Utils.h"
 #include "cangjie/Utils/ProfileRecorder.h"
+#include "cangjie/Utils/Utils.h"
 
 using namespace Cangjie;
 using namespace TypeCheckUtil;
@@ -261,10 +261,11 @@ void TypeChecker::TypeCheckerImpl::CollectDeclMapAndCheckRedefinitionForOneSymbo
             sym.node->curFile != found.front()->curFile;
         bool oneIsFromCommonPart =
             sym.node->TestAttr(Attribute::FROM_COMMON_PART) != found.front()->TestAttr(Attribute::FROM_COMMON_PART);
-        bool multiPlat = oneIsFromCommonPart &&
-            sym.node->TestAttr(Cangjie::AST::Attribute::COMMON) && found.front()->TestAttr(Attribute::SPECIFIC);
-        multiPlat = multiPlat || (oneIsFromCommonPart &&
-          sym.node->TestAttr(Attribute::SPECIFIC) && found.front()->TestAttr(Attribute::COMMON));
+        bool multiPlat = oneIsFromCommonPart && sym.node->TestAttr(Cangjie::AST::Attribute::COMMON) &&
+            found.front()->TestAttr(Attribute::SPECIFIC);
+        multiPlat = multiPlat ||
+            (oneIsFromCommonPart && sym.node->TestAttr(Attribute::SPECIFIC) &&
+                found.front()->TestAttr(Attribute::COMMON));
         if (!privateGlobalInDifferentFile && !multiPlat) {
             DiagRedefinitionWithFoundNode(diag, StaticCast<Decl>(*sym.node), *found.front());
         }
@@ -321,8 +322,8 @@ void TypeChecker::TypeCheckerImpl::CheckConflictDeclWithSubPackage(const Package
     for (auto decl : toplevelDecls) {
         if (subPkgNames.count(decl->identifier) != 0) {
             auto fullSubName = pkg.fullPackageName + "." + decl->identifier;
-            diag.DiagnoseRefactor(DiagKindRefactor::sema_conflict_with_sub_package, *decl,
-                MakeRange(decl->identifier), decl->identifier.Val(), fullSubName);
+            diag.DiagnoseRefactor(DiagKindRefactor::sema_conflict_with_sub_package, *decl, MakeRange(decl->identifier),
+                decl->identifier.Val(), fullSubName);
         }
     }
 }
@@ -408,18 +409,17 @@ Ptr<Ty> TypeChecker::TypeCheckerImpl::GetTyFromASTType(ASTContext& ctx, RefType&
     // Remove all non-type decls.
     Utils::EraseIf(targets, [](Ptr<const Decl> d) { return !d || !d->IsTypeDecl(); });
 
-    std::sort(targets.begin(), targets.end(),
-        [](Ptr<const Decl> d1, Ptr<const Decl> d2) {
-            if (d1->scopeLevel > d2->scopeLevel) {
+    std::sort(targets.begin(), targets.end(), [](Ptr<const Decl> d1, Ptr<const Decl> d2) {
+        if (d1->scopeLevel > d2->scopeLevel) {
+            return true;
+        } else if (d1->scopeLevel == d2->scopeLevel) {
+            // Ranking overloads also by specific > common
+            if (d1->TestAttr(Attribute::SPECIFIC)) {
                 return true;
-            } else if (d1->scopeLevel == d2->scopeLevel) {
-                // Ranking overloads also by specific > common
-                if (d1->TestAttr(Attribute::SPECIFIC)) {
-                    return true;
-                }
             }
-            return false;
-        });
+        }
+        return false;
+    });
 
     Ptr<Decl> target{nullptr};
     if (targets.empty()) {
@@ -603,7 +603,27 @@ Ptr<Ty> TypeChecker::TypeCheckerImpl::GetTyFromASTType(ASTContext& ctx, FuncType
     if (!funcType.retType->GetTy()) {
         return TypeManager::GetInvalidTy();
     }
-    funcType.SetTy(typeManager.GetFunctionTy(paramTys, funcType.retType->GetTy(), {funcType.isC}));
+    // Checked exceptions: elaborate the 'throws' clause types into the functional type's capability
+    // list. CFunc types never carry capabilities (the clause is rejected during type check).
+    std::vector<Ptr<Ty>> capTys;
+    // Effects: 'performs' entries come first, then 'throws'.
+    for (auto clause : {funcType.performsClause.get(), funcType.throwsClause.get()}) {
+        if (clause == nullptr || funcType.isC) {
+            continue;
+        }
+        for (auto& capType : clause->capTypes) {
+            CJC_NULLPTR_CHECK(capType);
+            capType->SetTy(GetTyFromASTType(ctx, capType.get()));
+        }
+        // A tuple entry — written directly or reached through a type alias — is itself a
+        // capability list and is spliced into this one.
+        auto expanded = TypeCheckUtil::ExpandCapabilityList(clause->capTypes);
+        capTys.insert(capTys.end(), expanded.begin(), expanded.end());
+    }
+    // Checked exceptions: the elaborated list is canonicalized once, here, so the functional
+    // type has the semantic form's identity -- '(A, B)' with 'B <: A' IS '(A)'.
+    funcType.SetTy(typeManager.GetFunctionTy(
+        paramTys, funcType.retType->GetTy(), {funcType.isC}, typeManager.NormalizeCapTys(capTys)));
     return funcType.GetTy();
 }
 
@@ -925,6 +945,28 @@ void TypeChecker::TypeCheckerImpl::ResolveNames(ASTContext& ctx)
     for (auto sym : syms) {
         CJC_NULLPTR_CHECK(sym);
         Walker(sym->node, id, resolveSingleType).Walk();
+    }
+    // Checked exceptions: an '@AssumeThrows' annotation sits on an import, not on
+    // a top-level declaration, so its exception types are not reached by the walk above.
+    if (ctx.curPackage != nullptr) {
+        for (auto& file : ctx.curPackage->files) {
+            CJC_NULLPTR_CHECK(file);
+            for (auto& import : file->imports) {
+                for (auto& anno : import->annotations) {
+                    if (!anno || (!anno->assumeThrows && !anno->assumePerforms)) {
+                        continue;
+                    }
+                    for (auto clause : {anno->assumeThrows.get(), anno->assumePerforms.get()}) {
+                        if (!clause) {
+                            continue;
+                        }
+                        for (auto& capType : clause->capTypes) {
+                            Walker(capType.get(), id, resolveSingleType).Walk();
+                        }
+                    }
+                }
+            }
+        }
     }
     if (ci->invocation.globalOptions.enableMacroInLSP) {
         for (auto& file : ctx.curPackage->files) {
@@ -1425,9 +1467,9 @@ void TypeChecker::TypeCheckerImpl::AddAssumptionForExtendDecls(ASTContext& ctx)
     }
 }
 
-void TypeChecker::TypeCheckerImpl::AddUpperBoundOnTypeParameters(
-    ASTContext& ctx, const Generic& generic, const Decl& typeTarget, MultiTypeSubst& revTypeMapping,
-    TyVarUB& allAssumptionMap, const TypeSubst& typeArgAppliedMap)
+void TypeChecker::TypeCheckerImpl::AddUpperBoundOnTypeParameters(ASTContext& ctx, const Generic& generic,
+    const Decl& typeTarget, MultiTypeSubst& revTypeMapping, TyVarUB& allAssumptionMap,
+    const TypeSubst& typeArgAppliedMap)
 {
     for (auto& typeParameter : generic.typeParameters) {
         auto genericTy = DynamicCast<GenericsTy*>(typeParameter->GetTy());
@@ -1536,8 +1578,8 @@ void TypeChecker::TypeCheckerImpl::PreCheckFuncRedefinitionForEnum(const std::ve
         auto funcTy = DynamicCast<FuncTy*>(func->GetTy());
         auto paramTys = funcTy ? funcTy->paramTys : GetParamTys(*func);
         if (paramNum.find(paramTys.size()) != paramNum.end()) {
-            diag.Diagnose(*func, DiagKind::sema_duplicated_item_in_enum,
-                func->identifier.Val().c_str(), ed->identifier.Val().c_str());
+            diag.Diagnose(*func, DiagKind::sema_duplicated_item_in_enum, func->identifier.Val().c_str(),
+                ed->identifier.Val().c_str());
         } else {
             paramNum.insert(paramTys.size());
         }
@@ -1787,6 +1829,7 @@ void TypeChecker::TypeCheckerImpl::PreSetDeclType(const ASTContext& ctx)
             continue; // Do not replace valid ty.
         }
         auto paramTys = GetFuncBodyParamTys(*fd->funcBody);
+        auto capTys = EffectiveCaps(GetFuncBodyCapTys(*fd->funcBody));
         Ptr<Ty> retTy = TypeManager::GetQuestTy();
         if (fd->TestAttr(Attribute::CONSTRUCTOR)) {
             // Static init has return type of unit. Instance init has return type of current typeDecl.
@@ -1794,7 +1837,7 @@ void TypeChecker::TypeCheckerImpl::PreSetDeclType(const ASTContext& ctx)
                 ? TypeManager::GetPrimitiveTy(TypeKind::TYPE_UNIT)
                 : (fd->outerDecl && fd->outerDecl->IsNominalDecl() ? fd->outerDecl->GetTy()
                                                                    : TypeManager::GetInvalidTy());
-            fd->SetTy(typeManager.GetFunctionTy(paramTys, retTy));
+            fd->SetTy(typeManager.GetFunctionTy(paramTys, retTy, {}, capTys));
             continue;
         }
         if (fd->funcBody->retType) {
@@ -1806,7 +1849,7 @@ void TypeChecker::TypeCheckerImpl::PreSetDeclType(const ASTContext& ctx)
             fd->funcBody->TestAttr(Attribute::C) || (fd->TestAttr(Attribute::FOREIGN) && IsUnsafeBackend(backendType));
         bool hasVariableLenArg = fd->hasVariableLenArg ||
             (!fd->funcBody->paramLists.empty() && fd->funcBody->paramLists[0]->hasVariableLenArg);
-        fd->SetTy(typeManager.GetFunctionTy(paramTys, retTy, {isCFunc, false, hasVariableLenArg}));
+        fd->SetTy(typeManager.GetFunctionTy(paramTys, retTy, {isCFunc, false, hasVariableLenArg}, capTys));
         if (fd->TestAttr(Attribute::IS_CHECK_VISITED)) {
             fd->funcBody->SetTy(fd->GetTy());
         }
@@ -1836,6 +1879,14 @@ void TypeChecker::TypeCheckerImpl::PreCheckUsage(ASTContext& ctx, const Package&
     AddSuperInterfaceForClassLikeDecl(ctx);
     // Collector assumption collection of generic declaration.
     CollectAndCheckAssumption(ctx);
+    // All generic bounds are available now; finish open written types before API identity checks.
+    Walker(const_cast<Package*>(&pkg), [this](Ptr<Node> node) {
+        if (Ty::IsTyCorrect(node->GetTy())) {
+            node->SetTy(typeManager.MapCapabilityTypes(
+                node->GetTy(), [this](const auto& caps) { return EffectiveCaps(caps); }));
+        }
+        return VisitAction::WALK_CHILDREN;
+    }).Walk();
     // Check extend generic param & reset inheritance checking flag.
     CheckExtendRules(ctx);
     // Check Function Redefinition.
@@ -1913,9 +1964,7 @@ MemSig MemDecl2Sig(Decl& d)
 {
     if (auto fd = DynamicCast<FuncDecl*>(&d)) {
         auto generic = fd->GetGeneric();
-        return MemSig{fd->identifier,
-            false,
-            fd->funcBody->paramLists[0]->params.size(),
+        return MemSig{fd->identifier, false, fd->funcBody->paramLists[0]->params.size(),
             generic ? generic->typeParameters.size() : 0};
     } else {
         return MemSig{d.identifier, true};

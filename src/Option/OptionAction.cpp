@@ -1079,6 +1079,25 @@ std::unordered_map<Options::ID, std::function<bool(GlobalOptions&, OptionArgInst
 #ifndef DISABLE_EFFECT_HANDLERS
     {Options::ID::ENABLE_EFFECTS, OPTION_TRUE_ACTION(opts.enableEH = true) },
 #endif
+    {Options::ID::ENABLE_CHECKED_EXCEPTIONS, [](GlobalOptions& opts, const OptionArgInstance& arg) {
+        // '--enable-checked-exceptions' (alias '--enable-chexc') and '=error' report capability
+        // violations as errors; '=warn' downgrades them to warnings (warn group 'chexc').
+        if (!arg.value.empty() && arg.value != "error" && arg.value != "warn" && arg.value != "off") {
+            return false;
+        }
+        opts.exceptionsLevel = arg.value == "off" ? CheckingLevel::OFF :
+            arg.value == "warn" ? CheckingLevel::WARN : CheckingLevel::ERROR;
+        return true;
+    }},
+    {Options::ID::ENABLE_CHECKED_EFFECTS, [](GlobalOptions& opts, const OptionArgInstance& arg) {
+        // Checked effects use an explicit level; handler syntax is enabled independently.
+        if (arg.value != "error" && arg.value != "warn" && arg.value != "off") {
+            return false;
+        }
+        opts.effectsLevel = arg.value == "off" ? CheckingLevel::OFF :
+            arg.value == "warn" ? CheckingLevel::WARN : CheckingLevel::ERROR;
+        return true;
+    }},
 #endif // CANGJIE_CODEGEN_CJNATIVE_BACKEND
 };
 } // namespace

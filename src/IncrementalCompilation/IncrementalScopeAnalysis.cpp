@@ -6,13 +6,14 @@
 
 #include "cangjie/IncrementalCompilation/IncrementalScopeAnalysis.h"
 
+#include "CompilationCacheSerialization.h"
 #include "cangjie/AST/Node.h"
 #include "cangjie/AST/Utils.h"
 #include "cangjie/AST/Walker.h"
 #include "cangjie/IncrementalCompilation/ASTCacheCalculator.h"
-#include "CompilationCacheSerialization.h"
 #include "cangjie/IncrementalCompilation/IncrementalCompilationLogger.h"
 #include "cangjie/IncrementalCompilation/Utils.h"
+#include "cangjie/Modules/CapabilityCache.h"
 #include "cangjie/Parse/ASTHasher.h"
 
 #include "ASTDiff.h"
@@ -568,7 +569,9 @@ IncreResult Cangjie::IncrementalScopeAnalysis(IncrementalScopeAnalysisArgs&& arg
     }
 
     auto& prevCompilationCache = loadingRes.value();
-    bool compilationArgsChange = args.op.ToSerialized() != prevCompilationCache.compileArgs;
+    const auto options = args.op.ToSerialized();
+    bool compilationArgsChange = prevCompilationCache.compileArgs.size() < options.size() ||
+        !std::equal(options.begin(), options.end(), prevCompilationCache.compileArgs.begin());
     if (compilationArgsChange) {
         return TerminateAnalysisAndRollback(
             std::move(prevCompilationCache), std::move(args), "compile args changed, roll back to full compilation");
@@ -578,6 +581,11 @@ IncreResult Cangjie::IncrementalScopeAnalysis(IncrementalScopeAnalysisArgs&& arg
     if (specsChange) {
         return TerminateAnalysisAndRollback(std::move(prevCompilationCache), std::move(args),
             "package or import specs changed, roll back to full compilation");
+    }
+
+    if (CapabilityCacheKey(args.op, args.importer) != prevCompilationCache.compileArgs) {
+        return TerminateAnalysisAndRollback(std::move(prevCompilationCache), std::move(args),
+            "dependency capability metadata changed, roll back to full compilation");
     }
 
     auto [importedASTCache, importedMangled2Decl, sourcePopulations, importRelations] =

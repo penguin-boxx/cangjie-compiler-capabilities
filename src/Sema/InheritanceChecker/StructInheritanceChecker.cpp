@@ -30,14 +30,13 @@
 #include "cangjie/Modules/ModulesUtils.h"
 #include "cangjie/Sema/TestManager.h"
 #include "cangjie/Sema/TypeManager.h"
-#include "NativeFFI/Java/AfterTypeCheck/Utils.h"
 
+#include "CJMP/MPTypeCheckerImpl.h"
 #include "Diags.h"
-#include "TypeCheckUtil.h"
-#include "TypeCheckerImpl.h"
 #include "NativeFFI/Java/TypeCheck/InheritanceChecker.h"
 #include "NativeFFI/ObjC/Utils/OCStructInheritanceCheckerImpl.h"
-#include "CJMP/MPTypeCheckerImpl.h"
+#include "TypeCheckUtil.h"
+#include "TypeCheckerImpl.h"
 
 using namespace Cangjie;
 using namespace AST;
@@ -288,8 +287,7 @@ void TypeChecker::TypeCheckerImpl::CheckInheritance(Package& pkg)
 
     auto movedMembers = checker.MoveStructInheritedMembers();
     // Ensure javaCache is empty before moving in (it should be if called at the correct point in pipeline).
-    CJC_ASSERT_WITH_MSG(this->structMemberMap.empty(),
-        "structMemberMap should be empty when moving inherited members");
+    CJC_ASSERT_WITH_MSG(this->structMemberMap.empty(), "structMemberMap should be empty when moving inherited members");
 
     this->structMemberMap = std::move(movedMembers);
 }
@@ -1331,6 +1329,32 @@ void StructInheritanceChecker::CheckPropertyInheritance(const MemberSignature& p
             DiagKindRefactor::sema_property_must_implement_both, *childProp, childProp->identifier.Val());
     }
     CheckAccessVisibility(*parentDecl, child, child);
+    CheckPropertyThrowsClauses(*parentProp, *childProp);
+}
+
+/**
+ * The override rule covers property accessors as well as methods, but accessors are not member
+ * signatures of their own, so they never reach the method override path. Pair them up here.
+ */
+void StructInheritanceChecker::CheckPropertyThrowsClauses(const PropDecl& parentProp, const PropDecl& childProp) const
+{
+    auto check = [this](const OwnedPtr<FuncDecl>& parentAccessor, const OwnedPtr<FuncDecl>& childAccessor) {
+        if (!parentAccessor || !childAccessor) {
+            return;
+        }
+        auto parentTy = DynamicCast<FuncTy*>(parentAccessor->GetTy());
+        auto childTy = DynamicCast<FuncTy*>(childAccessor->GetTy());
+        if (!parentTy || !childTy) {
+            return;
+        }
+        CheckThrowsClauseCompatible(*parentAccessor, *childAccessor, *parentTy, *childTy);
+    };
+    if (!parentProp.getters.empty() && !childProp.getters.empty()) {
+        check(parentProp.getters.front(), childProp.getters.front());
+    }
+    if (!parentProp.setters.empty() && !childProp.setters.empty()) {
+        check(parentProp.setters.front(), childProp.setters.front());
+    }
 }
 
 bool StructInheritanceChecker::CheckReturnOverrideByGeneric(const FuncTy& parentTy, const FuncTy& childTy) const
@@ -1353,6 +1377,21 @@ bool StructInheritanceChecker::CheckReturnOverrideByGeneric(const FuncTy& parent
         }
     }
     return false;
+}
+
+void StructInheritanceChecker::CheckThrowsClauseCompatible(
+    const AST::FuncDecl& parentFunc, const AST::FuncDecl& childFunc, const FuncTy&, const FuncTy&) const
+{
+    // Checked exceptions: the override's (redefinition's) capability list must be
+    // pointwise subsumed by the original's -- every exception type in the override's 'throws' list
+    // must be a subtype of some exception type in the original's list. Constructors are exempt
+    // (they are new declarations, never overridden).
+    if (parentFunc.TestAttr(Attribute::CONSTRUCTOR) || childFunc.TestAttr(Attribute::CONSTRUCTOR)) {
+        return;
+    }
+    // The pair is remembered for the capability pass: a list this declaration only acquires by
+    // inference is compared against the overridden one there, since inference runs later.
+    typeManager.RecordOverride(childFunc, parentFunc);
 }
 
 bool StructInheritanceChecker::CheckImplementationRelation(
@@ -1389,6 +1428,7 @@ bool StructInheritanceChecker::CheckImplementationRelation(
             const Decl& diagNode = childFunc->outerDecl == checkingDecls.front() ? *childFunc : *checkingDecls.front();
             CheckAccessVisibility(*parentFunc, *childFunc, diagNode);
             CheckGenericTypeArgInfo(parent, child);
+            CheckThrowsClauseCompatible(*parentFunc, *childFunc, *parentFuncTy, *childFuncTy);
         } else if (inheritedByExtension || !CheckReturnOverrideByGeneric(*parentFuncTy, *childFuncTy)) {
             // A type that does not meet the type variance relationship cannot be used as the basis for subtypes when
             // override occurs.

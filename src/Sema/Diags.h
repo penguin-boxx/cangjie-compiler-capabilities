@@ -39,6 +39,19 @@ inline bool IsSameDeserializedFunction(const Decl& left, const Decl& right)
 }
 
 Range MakeRangeForDeclIdentifier(const AST::Decl& decl);
+/**
+ * The declaration a diagnostic about @p decl can be attached to. A property accessor has no
+ * identifier of its own in source -- the property is what the author wrote -- and a
+ * compiler-generated one has no position at all, as does any declaration rebuilt from a '.cjo'.
+ * Falls back to the property, then to the enclosing declaration. Null when nothing in source
+ * corresponds, in which case the diagnostic has to be dropped rather than emitted at position zero.
+ */
+Ptr<const AST::Decl> GetDiagnosableDecl(const AST::Decl& decl);
+/**
+ * The name of @p decl as the author wrote it. A property accessor's own identifier is synthesized
+ * ('$valueget'); the property's name is what a message can use.
+ */
+std::string GetDiagnosableDeclName(const AST::Decl& decl);
 void DiagRedefinitionWithFoundNode(DiagnosticEngine& diag, const Decl& current, const Decl& previous);
 void DiagOverloadConflict(DiagnosticEngine& diag, const std::vector<Ptr<FuncDecl>>& sameSigFuncs);
 void DiagMismatchedTypesWithFoundTy(DiagnosticEngine& diag, const Node& node, const std::string& expected,

@@ -269,6 +269,12 @@ OwnedPtr<Decl> PartialInstantiation::InstantiatePrimaryCtorDecl(const PrimaryCto
 OwnedPtr<Decl> PartialInstantiation::InstantiatePropDecl(const PropDecl& pd, const VisitFunc& visitor)
 {
     auto ret = MakeOwned<PropDecl>();
+    if (pd.throwsClause) {
+        ret->throwsClause = InstantiateThrowsClause(*pd.throwsClause, visitor);
+    }
+    if (pd.performsClause) {
+        ret->performsClause = InstantiateThrowsClause(*pd.performsClause, visitor);
+    }
     ret->type = InstantiateType(pd.type.get(), visitor);
     ret->colonPos = pd.colonPos;
     ret->leftCurlPos = pd.leftCurlPos;
@@ -348,6 +354,9 @@ OwnedPtr<Decl> PartialInstantiation::InstantiateStructDecl(const StructDecl& sd,
     for (auto& it : sd.inheritedTypes) {
         ret->inheritedTypes.push_back(InstantiateType(it.get(), visitor));
     }
+    if (sd.capturesClause) {
+        ret->capturesClause = InstantiateThrowsClause(*sd.capturesClause, visitor);
+    }
     ret->body = InstantiateNode(sd.body.get(), visitor);
     if (sd.generic) {
         ret->generic = InstantiateGeneric(*sd.generic, visitor);
@@ -362,6 +371,9 @@ OwnedPtr<Decl> PartialInstantiation::InstantiateClassDecl(const ClassDecl& cd, c
     auto ret = MakeOwned<ClassDecl>();
     for (auto& it : cd.inheritedTypes) {
         ret->inheritedTypes.push_back(InstantiateType(it.get(), visitor));
+    }
+    if (cd.capturesClause) {
+        ret->capturesClause = InstantiateThrowsClause(*cd.capturesClause, visitor);
     }
     ret->body = InstantiateNode(cd.body.get(), visitor);
     if (cd.generic) {
@@ -467,11 +479,32 @@ OwnedPtr<OptionType> PartialInstantiation::InstantiateOptionType(const OptionTyp
     return ret;
 }
 
+OwnedPtr<ThrowsClause> PartialInstantiation::InstantiateThrowsClause(const ThrowsClause& node, const VisitFunc& visitor)
+{
+    auto ret = MakeOwned<ThrowsClause>();
+    CopyNodeField(ret.get(), node);
+    ret->throwsPos = node.throwsPos;
+    ret->leftParenPos = node.leftParenPos;
+    ret->rightParenPos = node.rightParenPos;
+    ret->commaPosVector = node.commaPosVector;
+    ret->hasEllipsis = node.hasEllipsis;
+    for (auto& capType : node.capTypes) {
+        ret->capTypes.emplace_back(InstantiateType(capType.get(), visitor));
+    }
+    return ret;
+}
+
 OwnedPtr<FuncType> PartialInstantiation::InstantiateFuncType(const FuncType& node, const VisitFunc& visitor)
 {
     auto ret = MakeOwned<FuncType>();
     for (auto& paramType : node.paramTypes) {
         ret->paramTypes.emplace_back(InstantiateType(paramType.get(), visitor));
+    }
+    if (node.performsClause) {
+        ret->performsClause = InstantiateThrowsClause(*node.performsClause, visitor);
+    }
+    if (node.throwsClause) {
+        ret->throwsClause = InstantiateThrowsClause(*node.throwsClause, visitor);
     }
     ret->retType = InstantiateType(node.retType.get(), visitor);
     ret->isC = node.isC;
@@ -1422,6 +1455,12 @@ OwnedPtr<FuncBody> PartialInstantiation::InstantiateFuncBody(const FuncBody& fb,
     ret->doubleArrowPos = fb.doubleArrowPos;
     ret->colonPos = fb.colonPos;
     ret->retType = InstantiateType(fb.retType.get(), visitor);
+    if (fb.performsClause) {
+        ret->performsClause = InstantiateThrowsClause(*fb.performsClause, visitor);
+    }
+    if (fb.throwsClause) {
+        ret->throwsClause = InstantiateThrowsClause(*fb.throwsClause, visitor);
+    }
     ret->body = InstantiateExpr(fb.body.get(), visitor);
     if (fb.generic) {
         ret->generic = InstantiateGeneric(*fb.generic, visitor);
@@ -1502,8 +1541,8 @@ OwnedPtr<ImportSpec> PartialInstantiation::InstantiateImportSpec(const ImportSpe
         CopyNodeField(ret->modifier.get(), *is.modifier);
         ret->modifier->isExplicit = is.modifier->isExplicit;
     }
-    std::function<void(const ImportContent&, ImportContent&)> cloneContent
-        = [&cloneContent](const ImportContent& src, ImportContent& dst) {
+    std::function<void(const ImportContent&, ImportContent&)> cloneContent = [&cloneContent](const ImportContent& src,
+                                                                                 ImportContent& dst) {
         CopyNodeField(&dst, src);
         dst.kind = src.kind;
         dst.prefixPaths = src.prefixPaths;
@@ -1577,6 +1616,7 @@ OwnedPtr<NodeT> PartialInstantiation::InstantiateNode(Ptr<NodeT> node, const Vis
         [&visitor](const StructBody& rb) { return OwnedPtr<Node>(InstantiateStructBody(rb, visitor)); },
         [&visitor](const InterfaceBody& ib) { return OwnedPtr<Node>(InstantiateInterfaceBody(ib, visitor)); },
         [&visitor](const GenericConstraint& gc) { return OwnedPtr<Node>(InstantiateGenericConstraint(gc, visitor)); },
+        [&visitor](const ThrowsClause& tc) { return OwnedPtr<Node>(InstantiateThrowsClause(tc, visitor)); },
         [&visitor](const FuncBody& fb) { return OwnedPtr<Node>(InstantiateFuncBody(fb, visitor)); },
         [&visitor](const FuncParamList& fpl) { return OwnedPtr<Node>(InstantiateFuncParamList(fpl, visitor)); },
         [&visitor](const FuncArg& fa) { return OwnedPtr<Node>(InstantiateFuncArg(fa, visitor)); },
@@ -1779,8 +1819,13 @@ Ptr<Ty> TyGeneralizer::Generalize(Ty& ty)
                 paramTys.push_back(Generalize(it));
             }
             auto retType = Generalize(funcTy.retTy);
+            // Capability lists are generalized with the rest of the type.
+            std::vector<Ptr<Ty>> capTys;
+            for (auto& it : funcTy.capTys) {
+                capTys.push_back(Generalize(it));
+            }
             Ptr<Ty> ret = tyMgr.GetFunctionTy(
-                paramTys, retType, {funcTy.IsCFunc(), funcTy.isClosureTy, funcTy.hasVariableLenArg});
+                paramTys, retType, {funcTy.IsCFunc(), funcTy.isClosureTy, funcTy.hasVariableLenArg}, capTys);
             return ret;
         }
         case TypeKind::TYPE_TUPLE: {

@@ -184,7 +184,16 @@ Ptr<Ty> GetOriginalTy(Ty& ty, const TypeSubst& g2gTyMap, TypeManager& typeManage
     for (auto paramTy : funcTy.paramTys) {
         paramTys.emplace_back(GetOriginalTy(*paramTy, g2gTyMap, typeManager));
     }
-    return typeManager.GetFunctionTy(paramTys, GetOriginalTy(*funcTy.retTy, g2gTyMap, typeManager));
+    // Checked exceptions: the capability list is part of the type and is mapped like every other
+    // component; dropping it here is the reconstruction defect class (a rebuilt type silently
+    // loses the clause). The config flags travel too.
+    std::vector<Ptr<Ty>> capTys;
+    capTys.reserve(funcTy.capTys.size());
+    for (auto capTy : funcTy.capTys) {
+        capTys.emplace_back(GetOriginalTy(*capTy, g2gTyMap, typeManager));
+    }
+    return typeManager.GetFunctionTy(paramTys, GetOriginalTy(*funcTy.retTy, g2gTyMap, typeManager),
+        {funcTy.isC, funcTy.isClosureTy, funcTy.hasVariableLenArg, funcTy.noCast}, capTys);
 }
 
 inline bool IsGenericFuncWithDefaultParam(const Decl& decl)
@@ -460,7 +469,17 @@ GenericInfo GIM::GenericInstantiationManagerImpl::ConstructGenericInfo(
     Decl& decl, const std::vector<Ptr<Ty>>& instTys) const
 {
     CJC_ASSERT(decl.TestAttr(Attribute::GENERIC));
-    TypeSubst gTyToTyMap = GenerateTypeMapping(decl, instTys);
+    // Checked exceptions: capability lists are erased at run time ("Runtime ABI"), so two type
+    // arguments that differ only in them -- 'Box<() throws E -> Unit>' and 'Box<() -> Unit>' -- have
+    // one runtime shape and one mangled name, and must share one instantiation. Two would be two
+    // declarations under one symbol, which the back end cannot tell apart. The key, and hence the
+    // instantiated body, is taken at the erased types; checking is over by the time this runs.
+    std::vector<Ptr<Ty>> erasedTys;
+    erasedTys.reserve(instTys.size());
+    for (auto ty : instTys) {
+        erasedTys.emplace_back(typeManager.EraseCapTys(ty));
+    }
+    TypeSubst gTyToTyMap = GenerateTypeMapping(decl, erasedTys);
     CJC_ASSERT(!gTyToTyMap.empty());
     GenericInfo genericInfo(&decl, gTyToTyMap);
     return genericInfo;

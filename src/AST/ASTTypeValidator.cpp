@@ -146,6 +146,9 @@ private:
         ASTKind::RETURN_EXPR,
         ASTKind::LET_PATTERN_DESTRUCTOR,
         ASTKind::FUNC_PARAM_LIST,
+        // Checked exceptions (experimental): the clause node itself carries no sema ty, while its
+        // capability types are elaborated during PreCheck and validated like any other type node.
+        ASTKind::THROWS_CLAUSE,
     };
 };
 

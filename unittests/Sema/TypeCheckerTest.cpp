@@ -4,16 +4,22 @@
 //
 // See https://cangjie-lang.cn/pages/LICENSE for license information.
 
-#include <cstdlib>
-#include <string>
-#include <unordered_map>
-#include <vector>
-#include "gtest/gtest.h"
+#include "cangjie/Sema/TypeChecker.h"
 #include "TestCompilerInstance.h"
 #include "cangjie/AST/Match.h"
 #include "cangjie/AST/PrintNode.h"
 #include "cangjie/AST/Walker.h"
 #include "cangjie/Basic/Match.h"
+#include "cangjie/Sema/CapabilityCheck.h"
+#include "cangjie/Sema/TypeManager.h"
+#include "cangjie/Utils/FileUtil.h"
+#include "gtest/gtest.h"
+#include <cstdlib>
+#include <map>
+#include <set>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -33,7 +39,7 @@ namespace {
 std::unordered_map<std::string, std::string> GetEnvironmentVars()
 {
     std::unordered_map<std::string, std::string> envVars;
-    char **env = CJ_ENVIRON;
+    char** env = CJ_ENVIRON;
     while (env && *env) {
         std::string entry(*env);
         size_t pos = entry.find('=');
@@ -46,7 +52,7 @@ std::unordered_map<std::string, std::string> GetEnvironmentVars()
     }
     return envVars;
 }
-}
+} // namespace
 
 class TypeCheckerTest : public testing::Test {
 protected:
@@ -81,20 +87,23 @@ protected:
         // (GetCangjieLibTargetPathName returns "<os>_<arch>_cjnative") instead
         // of hard-coding "darwin_arm64"/"darwin_aarch64", which must otherwise
         // be kept in sync with the actual output directory name.
-        std::string cangjiePath =
-            cangjieHome + "/modules/" + invocation.globalOptions.GetCangjieLibTargetPathName();
+        std::string cangjiePath = cangjieHome + "/modules/" + invocation.globalOptions.GetCangjieLibTargetPathName();
 #ifdef _WIN32
         char* oldHome = getenv("CANGJIE_HOME");
         char* oldPath = getenv("CANGJIE_PATH");
-        if (oldHome) savedCangjieHome = oldHome;
-        if (oldPath) savedCangjiePath = oldPath;
+        if (oldHome)
+            savedCangjieHome = oldHome;
+        if (oldPath)
+            savedCangjiePath = oldPath;
         _putenv_s("CANGJIE_HOME", cangjieHome.c_str());
         _putenv_s("CANGJIE_PATH", cangjiePath.c_str());
 #else
         char* oldHome = getenv("CANGJIE_HOME");
         char* oldPath = getenv("CANGJIE_PATH");
-        if (oldHome) savedCangjieHome = oldHome;
-        if (oldPath) savedCangjiePath = oldPath;
+        if (oldHome)
+            savedCangjieHome = oldHome;
+        if (oldPath)
+            savedCangjiePath = oldPath;
         setenv("CANGJIE_HOME", cangjieHome.c_str(), 1);
         setenv("CANGJIE_PATH", cangjiePath.c_str(), 1);
 #endif
@@ -227,7 +236,8 @@ class H {
     func f(...x: Int64): Unit
 }
 main() { H().f(1) }
-    )", false);
+    )",
+        false);
 }
 
 TEST_F(TypeCheckerTest, InvalidVariadicAfterValidOverloadDoesNotAffectCallTarget)
@@ -238,7 +248,8 @@ class H {
     func f(...x: Int64): Unit
 }
 main() { H().f(1) }
-    )", true);
+    )",
+        true);
 }
 
 TEST_F(TypeCheckerTest, InvalidVariadicBeforeValidOverloadDoesNotAffectCallTarget)
@@ -249,7 +260,8 @@ class H {
     func f(x: Int64): Unit
 }
 main() { H().f(1) }
-    )", true);
+    )",
+        true);
 }
 
 TEST_F(TypeCheckerTest, InvalidVariadicAfterValidOverloadDoesNotAffectFunctionReference)
@@ -285,7 +297,8 @@ class H <: I {
     func f(...x: Int64): Unit
 }
 main() { H().f(1) }
-    )", true);
+    )",
+        true);
 }
 
 TEST_F(TypeCheckerTest, InvalidVariadicBeforeValidImplementationDoesNotAffectInterfaceConformance)
@@ -299,7 +312,8 @@ class H <: I {
     func f(x: Int64): Unit {}
 }
 main() { H().f(1) }
-    )", true);
+    )",
+        true);
 }
 
 TEST_F(TypeCheckerTest, MacroDeclTest)
@@ -651,10 +665,10 @@ TEST_F(TypeCheckerTest, OrderOfInitializationCheck)
     instance->invocation.globalOptions.implicitPrelude = true;
     instance->invocation.globalOptions.outputMode = GlobalOptions::OutputMode::STATIC_LIB;
     instance->loadSrcFilesFromCache = true;
-    instance->bufferCache[fileB] = CompilerInstance::SrcCodeCacheInfo(
-        CompilerInstance::SrcCodeChangeState::ADDED, contentB.value());
-    instance->bufferCache[fileA] = CompilerInstance::SrcCodeCacheInfo(
-        CompilerInstance::SrcCodeChangeState::ADDED, contentA.value());
+    instance->bufferCache[fileB] =
+        CompilerInstance::SrcCodeCacheInfo(CompilerInstance::SrcCodeChangeState::ADDED, contentB.value());
+    instance->bufferCache[fileA] =
+        CompilerInstance::SrcCodeCacheInfo(CompilerInstance::SrcCodeChangeState::ADDED, contentA.value());
 
     // The bufferCache is an unordered_map whose iteration order is unspecified, so the fileID assigned
     // during the cache iteration is not guaranteed by insertion order. Pre-register b.cj before a.cj in
@@ -783,7 +797,7 @@ main(): Int64 {
     ASSERT_EQ(diag.GetErrorCount(), 0) << "interpolation desugar should not produce errors";
 
     // Locate the desugared interpolation literal and walk its synthesized sub-tree.
-    Ptr<Expr> desugarRoot {nullptr};
+    Ptr<Expr> desugarRoot{nullptr};
     Walker finder(instance->GetSourcePackages()[0]->files[0].get(), [&desugarRoot](Ptr<Node> node) -> VisitAction {
         if (auto lce = DynamicCast<LitConstExpr>(node); lce && lce->siExpr && lce->desugarExpr) {
             desugarRoot = lce->desugarExpr.get();
@@ -804,11 +818,473 @@ main(): Int64 {
         if (!node->TestAttr(Attribute::COMPILER_ADD)) {
             return VisitAction::WALK_CHILDREN;
         }
-        EXPECT_FALSE(node->begin.IsZero())
-            << "synthesized interpolation desugar node has zero begin position";
-        EXPECT_FALSE(node->end.IsZero())
-            << "synthesized interpolation desugar node has zero end position";
+        EXPECT_FALSE(node->begin.IsZero()) << "synthesized interpolation desugar node has zero begin position";
+        EXPECT_FALSE(node->end.IsZero()) << "synthesized interpolation desugar node has zero end position";
         return VisitAction::WALK_CHILDREN;
     });
     checker.Walk();
+}
+
+TEST(CapabilityResolution, InnermostOwnerSurvivesNormalization)
+{
+    Cangjie::TypeManager types;
+    Cangjie::AST::ClassDecl exception;
+    auto ty = types.GetClassTy(exception, {});
+    Cangjie::AST::FuncDecl outer;
+    Cangjie::AST::LambdaExpr literal;
+    Cangjie::AST::TryExpr handler;
+    Cangjie::Sema::CapabilityDemand demand{ty, &literal, "test demand", false};
+    Cangjie::Sema::CapabilityContext context;
+    context.scopes.push_back({{ty}, &outer});
+    context.scopes.push_back({types.NormalizeCapTys({ty, ty}), &literal});
+    auto result = Cangjie::Sema::ResolveCapability(types, context, demand);
+    EXPECT_EQ(result.kind, Cangjie::Sema::CapabilityResolutionKind::SUPPLIED);
+    EXPECT_EQ(result.owner, &literal);
+    EXPECT_EQ(result.supplyingType, ty);
+    context.scopes.push_back({{ty}, &handler});
+    result = Cangjie::Sema::ResolveCapability(types, context, demand);
+    EXPECT_EQ(result.owner, &handler);
+    context.scopes.pop_back();
+    context.scopes.pop_back();
+    EXPECT_EQ(Cangjie::Sema::ResolveCapability(types, context, demand).owner, &outer);
+}
+
+TEST(CapabilityResolution, ResidualOwnershipAndIndependentContexts)
+{
+    Cangjie::TypeManager types;
+    Cangjie::AST::ClassDecl exception;
+    auto ty = types.GetClassTy(exception, {});
+    Cangjie::AST::FuncDecl outer;
+    Cangjie::AST::ThrowExpr site;
+    Cangjie::Sema::CapabilityDemand demand{ty, &site, "test demand", false};
+    Cangjie::Sema::CapabilityContext context;
+    context.inferenceOwner = &outer;
+    auto result = Cangjie::Sema::ResolveCapability(types, context, demand);
+    EXPECT_EQ(result.kind, Cangjie::Sema::CapabilityResolutionKind::RESIDUAL);
+    EXPECT_EQ(result.owner, &outer);
+    auto discarded = context;
+    discarded.scopes.push_back({{ty}, &site});
+    EXPECT_EQ(Cangjie::Sema::ResolveCapability(types, discarded, demand).kind,
+        Cangjie::Sema::CapabilityResolutionKind::SUPPLIED);
+    EXPECT_EQ(Cangjie::Sema::ResolveCapability(types, context, demand).kind,
+        Cangjie::Sema::CapabilityResolutionKind::RESIDUAL);
+    demand.isEffect = true;
+    result = Cangjie::Sema::ResolveCapability(types, context, demand);
+    EXPECT_EQ(result.kind, Cangjie::Sema::CapabilityResolutionKind::MISSING);
+    EXPECT_EQ(result.demand.demandSite, &site);
+    context.inferenceOwner = nullptr;
+    demand.isEffect = false;
+    EXPECT_EQ(Cangjie::Sema::ResolveCapability(types, context, demand).kind,
+        Cangjie::Sema::CapabilityResolutionKind::MISSING);
+}
+
+TEST(CapabilityResolution, SelectedOriginIsStableAndNeverRetriesOuterSupply)
+{
+    using namespace Cangjie::Sema;
+    TypeManager types;
+    TryExpr outer;
+    TryExpr inner;
+    RefExpr site;
+    auto ty = TypeManager::GetPrimitiveTy(TypeKind::TYPE_INT64);
+    CapabilityContext context;
+    context.scopes = {
+        {{ty}, &outer, CapabilitySupplyKind::PROTECTED_BODY}, {{ty}, &inner, CapabilitySupplyKind::PROTECTED_BODY}};
+    auto result = ResolveCapability(types, context, {ty, &site, "test", false});
+    EXPECT_EQ(result.origin.boundary, &inner);
+    EXPECT_EQ(result.origin.type, ty);
+    EXPECT_EQ(result.origin.kind, CapabilityKind::EXCEPTION);
+    context.scopes.back().supplyKind = CapabilitySupplyKind::CLAUSE_PARAMETER;
+    result = ResolveCapability(types, context, {ty, &site, "test", false});
+    EXPECT_EQ(result.origin.owner, &inner);
+    EXPECT_EQ(result.origin.boundary, nullptr);
+}
+
+TEST_F(TypeCheckerTest, AcceptedBodyObserverDistinguishesSuppliesWithoutChangingTypes)
+{
+    using namespace Cangjie::Sema;
+    instance->cangjieHome = projectPath + "/output";
+    invocation.globalOptions.exceptionsLevel = CheckingLevel::ERROR;
+    instance->code = R"(
+class Checked <: Exception {}
+class Box captures Checked {
+    init() {}
+    func use(): Unit throws () { throw Checked() }
+}
+func test(): Unit throws Checked {
+    try {
+        let box = Box()
+        box.use()
+        let callback = { => throw Checked() }
+        callback()
+    } catch (_: Checked) {}
+    throw Checked()
+}
+main(): Int64 { 0 }
+)";
+    ASSERT_TRUE(instance->Compile(CompileStage::SEMA));
+    ASSERT_EQ(diag.GetErrorCount(), 0);
+    std::map<const Node*, Ptr<Ty>> originalTypes;
+    auto package = instance->GetSourcePackages()[0];
+    Walker(package, [&](Ptr<Node> node) {
+        originalTypes[node] = node->GetTy();
+        return VisitAction::WALK_CHILDREN;
+    }).Walk();
+    std::set<CapabilitySupplyKind> supplies;
+    ReportCapabilityMissHandler misses(diag, CheckingLevel::ERROR, CheckingLevel::OFF);
+    CheckCapabilities(*instance->typeManager, *instance->importManager, *package, misses, diag, {},
+        [&](const CapabilityResolution& resolution) {
+            EXPECT_EQ(resolution.kind, CapabilityResolutionKind::SUPPLIED);
+            supplies.insert(resolution.origin.supplyKind);
+            EXPECT_EQ(resolution.origin.owner, resolution.owner);
+            EXPECT_EQ(resolution.origin.type, resolution.supplyingType);
+        });
+    EXPECT_EQ(supplies.count(CapabilitySupplyKind::PROTECTED_BODY), 1);
+    EXPECT_EQ(supplies.count(CapabilitySupplyKind::RECEIVER_CAPTURE), 1);
+    EXPECT_EQ(supplies.count(CapabilitySupplyKind::CLAUSE_PARAMETER), 1);
+    EXPECT_EQ(diag.GetErrorCount(), 0);
+    for (auto& [node, type] : originalTypes) {
+        EXPECT_EQ(node->GetTy(), type);
+    }
+}
+
+TEST_F(TypeCheckerTest, CapabilityContractsCompleteDuringSema)
+{
+    instance->cangjieHome = projectPath + "/output";
+    invocation.globalOptions.exceptionsLevel = CheckingLevel::ERROR;
+    instance->code = R"(
+class Checked <: Exception {}
+func identity<T>(value: T): T { value }
+func caller(): Unit { leaf() }
+func factory() { identity(leaf) }
+func leaf(): Unit { throw Checked() }
+main(): Int64 { 0 }
+)";
+    instance->Compile(CompileStage::SEMA);
+    ASSERT_EQ(diag.GetErrorCount(), 0);
+    size_t checked = 0;
+    Walker(instance->GetSourcePackages()[0].get(), [&](Ptr<Node> node) {
+        auto fd = DynamicCast<FuncDecl*>(node);
+        if (!fd || (fd->identifier != "caller" && fd->identifier != "leaf" && fd->identifier != "factory")) {
+            return VisitAction::WALK_CHILDREN;
+        }
+        auto ty = DynamicCast<FuncTy*>(fd->GetTy());
+        EXPECT_NE(ty, nullptr);
+        if (ty) {
+            EXPECT_EQ(fd->GetTy(), fd->funcBody->GetTy());
+            if (fd->identifier == "factory") {
+                EXPECT_TRUE(ty->capTys.empty());
+                auto returned = DynamicCast<FuncTy*>(ty->retTy);
+                EXPECT_NE(returned, nullptr);
+                if (returned) {
+                    EXPECT_EQ(returned->capTys.size(), 1);
+                }
+            } else {
+                EXPECT_EQ(ty->capTys.size(), 1);
+            }
+            ++checked;
+        }
+        return VisitAction::WALK_CHILDREN;
+    }).Walk();
+    EXPECT_EQ(checked, 3);
+}
+
+TEST_F(TypeCheckerTest, CapabilityCycleIsFatalAtWarningLevelDuringSema)
+{
+    instance->cangjieHome = projectPath + "/output";
+    invocation.globalOptions.exceptionsLevel = CheckingLevel::ERROR;
+    invocation.globalOptions.exceptionsLevel = CheckingLevel::WARN;
+    instance->code = R"(
+func first(): Unit { second() }
+func second(): Unit { first() }
+main(): Int64 { 0 }
+)";
+    instance->Compile(CompileStage::SEMA);
+    EXPECT_GT(diag.GetErrorCount(), 0);
+}
+
+TEST_F(TypeCheckerTest, CompleteLocalSignaturePermitsRecursionDuringSema)
+{
+    instance->cangjieHome = projectPath + "/output";
+    invocation.globalOptions.exceptionsLevel = CheckingLevel::ERROR;
+    instance->code = R"(
+func enclosing(): Unit {
+    func recursive(n: Int64): Unit {
+        if (n > 0) { recursive(n - 1) }
+    }
+    recursive(2)
+}
+main(): Int64 { 0 }
+)";
+    instance->Compile(CompileStage::SEMA);
+    EXPECT_EQ(diag.GetErrorCount(), 0);
+}
+
+TEST_F(TypeCheckerTest, CapabilityContractsAreCompleteForCjd)
+{
+    instance->cangjieHome = projectPath + "/output";
+    invocation.globalOptions.exceptionsLevel = CheckingLevel::ERROR;
+    invocation.globalOptions.compileCjd = true;
+    instance->code = R"(
+class Checked <: Exception {}
+func caller(): Unit { leaf() }
+func leaf(): Unit { throw Checked() }
+)";
+    ASSERT_TRUE(instance->Compile(CompileStage::SEMA));
+    ASSERT_EQ(diag.GetErrorCount(), 0);
+    size_t checked = 0;
+    Walker(instance->GetSourcePackages()[0].get(), [&](Ptr<Node> node) {
+        if (auto fd = DynamicCast<FuncDecl*>(node); fd && (fd->identifier == "leaf" || fd->identifier == "caller")) {
+            auto ty = DynamicCast<FuncTy*>(fd->GetTy());
+            EXPECT_NE(ty, nullptr);
+            if (ty) {
+                EXPECT_EQ(ty->capTys.size(), 1);
+            }
+            ++checked;
+        }
+        return VisitAction::WALK_CHILDREN;
+    }).Walk();
+    EXPECT_EQ(checked, 2);
+}
+
+TEST_F(TypeCheckerTest, CapabilityContractsAreCompleteForLsp)
+{
+    instance->cangjieHome = projectPath + "/output";
+    invocation.globalOptions.exceptionsLevel = CheckingLevel::ERROR;
+    invocation.globalOptions.enableMacroInLSP = true;
+    instance->code = R"(
+class Checked <: Exception {}
+func factory() { leaf }
+func leaf(): Unit { throw Checked() }
+main(): Int64 { 0 }
+)";
+    ASSERT_TRUE(instance->Compile(CompileStage::SEMA));
+    ASSERT_EQ(diag.GetErrorCount(), 0);
+    size_t checked = 0;
+    Walker(instance->GetSourcePackages()[0].get(), [&](Ptr<Node> node) {
+        if (auto fd = DynamicCast<FuncDecl*>(node); fd && fd->identifier == "factory") {
+            auto ty = DynamicCast<FuncTy*>(fd->GetTy());
+            EXPECT_NE(ty, nullptr);
+            if (ty) {
+                auto result = DynamicCast<FuncTy*>(ty->retTy);
+                EXPECT_NE(result, nullptr);
+                if (result) {
+                    EXPECT_EQ(result->capTys.size(), 1);
+                }
+            }
+            ++checked;
+        }
+        return VisitAction::WALK_CHILDREN;
+    }).Walk();
+    EXPECT_EQ(checked, 1);
+}
+
+TEST(CapabilityPolicy, IndependentProjectionPreservesCanonicalTypes)
+{
+    TypeManager types;
+    ClassDecl exception;
+    exception.identifier = "Exception";
+    exception.fullPackageName = "std.core";
+    ClassDecl command;
+    command.identifier = "Command";
+    command.fullPackageName = "stdx.effect";
+    auto e = types.GetClassTy(exception, {});
+    auto c = types.GetClassTy(command, {});
+    auto callback = types.GetFunctionTy({}, TypeManager::GetNothingTy(), {}, {e, c});
+    auto original = types.GetFunctionTy({callback}, types.GetTupleTy({callback}), {}, {e, c});
+    auto project = [&](CheckingLevel exceptions, CheckingLevel effects) {
+        return DynamicCast<FuncTy*>(types.MapCapabilityTypes(
+            original, [&](const auto& caps) { return Sema::FilterCapabilityKinds(types, caps, exceptions, effects); }));
+    };
+    auto exceptionOnly = project(CheckingLevel::WARN, CheckingLevel::OFF);
+    ASSERT_NE(exceptionOnly, nullptr);
+    ASSERT_EQ(exceptionOnly->capTys.size(), 1);
+    EXPECT_EQ(exceptionOnly->capTys.front(), e);
+    auto effectOnly = project(CheckingLevel::OFF, CheckingLevel::ERROR);
+    ASSERT_NE(effectOnly, nullptr);
+    ASSERT_EQ(effectOnly->capTys.size(), 1);
+    EXPECT_EQ(effectOnly->capTys.front(), c);
+    auto off = project(CheckingLevel::OFF, CheckingLevel::OFF);
+    ASSERT_NE(off, nullptr);
+    EXPECT_TRUE(off->capTys.empty());
+    EXPECT_TRUE(DynamicCast<FuncTy*>(off->paramTys.front())->capTys.empty());
+    EXPECT_TRUE(DynamicCast<FuncTy*>(off->retTy->typeArgs.front())->capTys.empty());
+    EXPECT_EQ(original->capTys.size(), 2);
+    EXPECT_EQ(callback->capTys.size(), 2);
+    EXPECT_EQ(project(CheckingLevel::ERROR, CheckingLevel::ERROR), original);
+}
+
+TEST(CapabilityPolicy, CommandSubclassBoundsRetainEffectIdentity)
+{
+    TypeManager types;
+    ClassDecl command;
+    command.identifier = "Command";
+    command.fullPackageName = "stdx.effect";
+    auto commandTy = types.GetClassTy(command, {});
+    command.SetTy(commandTy);
+    ClassDecl ask;
+    ask.identifier = "Ask";
+    ask.fullPackageName = "bounds";
+    auto inherited = MakeOwned<RefType>();
+    inherited->SetTy(commandTy);
+    ask.inheritedTypes.emplace_back(std::move(inherited));
+    auto askTy = types.GetClassTy(ask, {});
+    ask.SetTy(askTy);
+    GenericParamDecl param;
+    param.identifier = "C";
+    auto generic = types.GetGenericsTy(param);
+    generic->upperBounds.emplace(askTy);
+    auto effects = Sema::FilterCapabilityKinds(types, {generic}, CheckingLevel::OFF, CheckingLevel::ERROR);
+    ASSERT_EQ(effects.size(), 1);
+    EXPECT_EQ(effects.front(), generic);
+    EXPECT_TRUE(Sema::FilterCapabilityKinds(types, {generic}, CheckingLevel::WARN, CheckingLevel::OFF).empty());
+    EXPECT_EQ(generic->upperBounds.size(), 1);
+}
+
+TEST(CapabilityPolicy, LegacyMetadataDefaultsAreUnchecked)
+{
+    PackageCapabilityInfo legacy;
+    EXPECT_EQ(legacy.level, CheckingLevel::OFF);
+    EXPECT_EQ(legacy.effectsLevel, CheckingLevel::OFF);
+    EXPECT_FALSE(legacy.modalEnabled);
+    legacy.effectsEnabled = true;
+    EXPECT_EQ(legacy.effectsLevel, CheckingLevel::OFF);
+}
+
+TEST_F(TypeCheckerTest, AssumedImportViewsDoNotMutateProducerTypes)
+{
+    instance->cangjieHome = projectPath + "/output";
+    invocation.globalOptions.outputMode = GlobalOptions::OutputMode::STATIC_LIB;
+    instance->code = R"(
+package semaview
+public class E <: Exception {}
+public func read(): () -> Unit { { => () } }
+)";
+    ASSERT_TRUE(instance->Compile(CompileStage::SEMA));
+    ASSERT_EQ(diag.GetErrorCount(), 0);
+    std::vector<uint8_t> data;
+    instance->importManager->ExportAST(false, data, *instance->GetSourcePackages().front());
+    const auto file = FileUtil::JoinPath(projectPath, "build/build/semaview.cjo");
+    FileUtil::WriteBufferToASTFile(file, data);
+    invocation.globalOptions.exceptionsLevel = CheckingLevel::ERROR;
+    invocation.globalOptions.importPaths.push_back(projectPath + "/build/build");
+    struct ViewCompilerInstance : TestCompilerInstance {
+        using CompilerInstance::typeChecker;
+        using TestCompilerInstance::TestCompilerInstance;
+    };
+    auto consumer = std::make_unique<ViewCompilerInstance>(invocation, diag);
+    auto consumerInstance = consumer.get();
+    instance = std::move(consumer);
+    instance->cangjieHome = projectPath + "/output";
+    instance->code = R"(
+@AssumeThrows[v.E]
+import semaview as v
+main(): Int64 {
+    let reference = v.read
+    let result = v.read()
+    0
+}
+)";
+    ASSERT_TRUE(instance->Compile(CompileStage::SEMA));
+    ASSERT_EQ(diag.GetErrorCount(), 0);
+    auto decl = instance->importManager->GetImportedDecl("semaview", "read");
+    ASSERT_NE(decl, nullptr);
+    auto producer = DynamicCast<FuncTy*>(decl->GetTy());
+    ASSERT_NE(producer, nullptr);
+    EXPECT_TRUE(producer->capTys.empty());
+    auto producerResult = DynamicCast<FuncTy*>(producer->retTy);
+    ASSERT_NE(producerResult, nullptr);
+    EXPECT_TRUE(producerResult->capTys.empty());
+    size_t checked = 0;
+    Walker(instance->GetSourcePackages().front(), [&](Ptr<Node> node) {
+        auto var = DynamicCast<VarDecl*>(node);
+        if (!var || (var->identifier != "reference" && var->identifier != "result")) {
+            return VisitAction::WALK_CHILDREN;
+        }
+        auto view = DynamicCast<FuncTy*>(var->GetTy());
+        EXPECT_NE(view, nullptr);
+        if (view) {
+            EXPECT_EQ(view->capTys.size(), 1);
+            if (var->identifier == "reference") {
+                auto returned = DynamicCast<FuncTy*>(view->retTy);
+                EXPECT_NE(returned, nullptr);
+                if (returned) {
+                    EXPECT_EQ(returned->capTys.size(), 1);
+                }
+                EXPECT_NE(view, producer);
+            } else {
+                EXPECT_NE(view, producerResult);
+            }
+            ++checked;
+        }
+        return VisitAction::WALK_CHILDREN;
+    }).Walk();
+    EXPECT_EQ(checked, 2);
+    Package otherConsumer;
+    auto otherView =
+        DynamicCast<FuncTy*>(consumerInstance->typeChecker->EffectiveUseType(*decl, producer, false, &otherConsumer));
+    ASSERT_NE(otherView, nullptr);
+    EXPECT_TRUE(otherView->capTys.empty());
+    EXPECT_TRUE(DynamicCast<FuncTy*>(otherView->retTy)->capTys.empty());
+    EXPECT_TRUE(producer->capTys.empty());
+    EXPECT_TRUE(producerResult->capTys.empty());
+    FileUtil::Remove(file);
+}
+
+TEST_F(TypeCheckerTest, AssumptionsFollowOnUseDeclarationContext)
+{
+    instance->cangjieHome = projectPath + "/output";
+    invocation.globalOptions.outputMode = GlobalOptions::OutputMode::STATIC_LIB;
+    instance->code = R"(
+package contextlegacy
+public class E <: Exception {}
+public func read(): () -> Unit { { => () } }
+)";
+    ASSERT_TRUE(instance->Compile(CompileStage::SEMA));
+    std::vector<uint8_t> data;
+    instance->importManager->ExportAST(false, data, *instance->GetSourcePackages().front());
+    const auto file = FileUtil::JoinPath(projectPath, "build/build/contextlegacy.cjo");
+    FileUtil::WriteBufferToASTFile(file, data);
+    invocation.globalOptions.exceptionsLevel = CheckingLevel::ERROR;
+    invocation.globalOptions.importPaths.push_back(projectPath + "/build/build");
+    instance = std::make_unique<TestCompilerInstance>(invocation, diag);
+    instance->cangjieHome = projectPath + "/output";
+    instance->code = R"(
+package contextcaller
+import contextfactory.*
+import contextlegacy as v
+public func caller() { factory() }
+public func raw() { v.read }
+)";
+    ASSERT_TRUE(instance->Compile(CompileStage::PARSE));
+    instance->code = R"(
+package contextfactory
+@AssumeThrows[v.E]
+import contextlegacy as v
+public func factory() { v.read }
+)";
+    ASSERT_TRUE(instance->Compile(CompileStage::SEMA));
+    ASSERT_EQ(diag.GetErrorCount(), 0);
+    size_t checked = 0;
+    for (auto pkg : instance->GetSourcePackages()) {
+        Walker(pkg, [&](Ptr<Node> node) {
+            auto fd = DynamicCast<FuncDecl*>(node);
+            if (!fd || (fd->identifier != "caller" && fd->identifier != "factory" && fd->identifier != "raw")) {
+                return VisitAction::WALK_CHILDREN;
+            }
+            auto signature = DynamicCast<FuncTy*>(fd->GetTy());
+            EXPECT_NE(signature, nullptr);
+            if (signature) {
+                EXPECT_TRUE(signature->capTys.empty());
+                auto returned = DynamicCast<FuncTy*>(signature->retTy);
+                EXPECT_NE(returned, nullptr);
+                if (returned) {
+                    EXPECT_EQ(returned->capTys.size(), fd->identifier == "raw" ? 0 : 1);
+                    ++checked;
+                }
+            }
+            return VisitAction::WALK_CHILDREN;
+        }).Walk();
+    }
+    EXPECT_EQ(checked, 3);
+    FileUtil::Remove(file);
 }

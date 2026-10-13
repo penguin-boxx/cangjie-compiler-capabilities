@@ -254,6 +254,11 @@ bool GlobalOptions::SetOptimizationLevel(OptimizationLevel level)
 
 bool GlobalOptions::PerformPostActions()
 {
+    if (CheckingEffects() && !enableEH) {
+        WriteError(diagFormat == DiagFormat::NO_COLOR ? "error: " : RED_ERROR_MARK,
+            "--enable-checked-effects requires --enable-eh\n");
+        return false;
+    }
     SetupChirOptions();
     SetupCompileTargetOptions();
     bool success = SetupConditionalCompilationCfg();
@@ -1002,6 +1007,13 @@ bool GlobalOptions::ParseFromArgs(ArgList& argList)
         }
     }
 
+    if (!enableEH && std::any_of(optArgs.begin(), optArgs.end(), [](const auto& arg) {
+            return arg.info.GetID() == Options::ID::ENABLE_CHECKED_EFFECTS;
+        })) {
+        WriteError(diagFormat == DiagFormat::NO_COLOR ? "error: " : RED_ERROR_MARK,
+            "--enable-checked-effects requires --enable-eh\n");
+        return false;
+    }
     if (!ProcessInputs(argList.GetInputs())) {
         return false;
     }
@@ -1669,6 +1681,9 @@ std::vector<std::string> GlobalOptions::ToSerialized() const
     result.emplace_back(BoolToSerializedString(enableCoverage));
     result.emplace_back(SanitizerTypeToSerializedString());
     result.emplace_back(BoolToSerializedString(experimentalMode));
+    result.emplace_back(std::to_string(static_cast<uint8_t>(exceptionsLevel)));
+    result.emplace_back(std::to_string(static_cast<uint8_t>(effectsLevel)));
+    result.emplace_back(BoolToSerializedString(enableEH));
     result.emplace_back(OverflowStrategyToSerializedString());
     (void)result.emplace_back(BoolToSerializedString(interpreter));
     (void)result.emplace_back(VectorStrToSerializedString(interpreterSearchPaths, ":"));

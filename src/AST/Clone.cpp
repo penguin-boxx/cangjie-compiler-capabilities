@@ -138,8 +138,8 @@ OwnedPtr<Decl> ASTCloner::CloneVarWithPatternDecl(const VarWithPatternDecl& vwpd
 
 OwnedPtr<Decl> ASTCloner::CloneVarDecl(const VarDecl& vd, const VisitFunc& visitor)
 {
-    auto ret = match(vd)([&visitor](const FuncParam& e) { return CloneFuncParam(e, visitor); },
-        []() { return MakeOwned<VarDecl>(); });
+    auto ret = match(vd)(
+        [&visitor](const FuncParam& e) { return CloneFuncParam(e, visitor); }, []() { return MakeOwned<VarDecl>(); });
     // Clone field in VarDecl.
     ret->type = CloneType(vd.type.get(), visitor);
     ret->colonPos = vd.colonPos;
@@ -194,6 +194,12 @@ OwnedPtr<Decl> ASTCloner::ClonePrimaryCtorDecl(const PrimaryCtorDecl& pcd, const
 OwnedPtr<Decl> ASTCloner::ClonePropDecl(const PropDecl& pd, const VisitFunc& visitor)
 {
     auto ret = MakeOwned<PropDecl>();
+    if (pd.throwsClause) {
+        ret->throwsClause = CloneThrowsClause(*pd.throwsClause, visitor);
+    }
+    if (pd.performsClause) {
+        ret->performsClause = CloneThrowsClause(*pd.performsClause, visitor);
+    }
     ret->type = CloneType(pd.type.get(), visitor);
     ret->colonPos = pd.colonPos;
     ret->leftCurlPos = pd.leftCurlPos;
@@ -271,6 +277,9 @@ OwnedPtr<Decl> ASTCloner::CloneStructDecl(const StructDecl& sd, const VisitFunc&
     for (auto& it : sd.inheritedTypes) {
         ret->inheritedTypes.push_back(CloneType(it.get(), visitor));
     }
+    if (sd.capturesClause) {
+        ret->capturesClause = CloneThrowsClause(*sd.capturesClause, visitor);
+    }
     ret->body = CloneNode(sd.body.get(), visitor);
     if (sd.generic) {
         ret->generic = CloneGeneric(*sd.generic, visitor);
@@ -285,6 +294,9 @@ OwnedPtr<Decl> ASTCloner::CloneClassDecl(const ClassDecl& cd, const VisitFunc& v
     auto ret = MakeOwned<ClassDecl>();
     for (auto& it : cd.inheritedTypes) {
         ret->inheritedTypes.push_back(CloneType(it.get(), visitor));
+    }
+    if (cd.capturesClause) {
+        ret->capturesClause = CloneThrowsClause(*cd.capturesClause, visitor);
     }
     ret->body = CloneNode(cd.body.get(), visitor);
     if (cd.generic) {
@@ -385,11 +397,35 @@ OwnedPtr<OptionType> ASTCloner::CloneOptionType(const OptionType& node, const Vi
     return ret;
 }
 
+OwnedPtr<ThrowsClause> ASTCloner::CloneThrowsClause(const ThrowsClause& node, const VisitFunc& visitor)
+{
+    auto ret = MakeOwned<ThrowsClause>();
+    CopyNodeField(ret.get(), node);
+    ret->throwsPos = node.throwsPos;
+    ret->leftParenPos = node.leftParenPos;
+    ret->rightParenPos = node.rightParenPos;
+    ret->commaPosVector = node.commaPosVector;
+    // The `...` marker decides whether inference stays enabled for the declaration
+    //; it is a plain member, not a Node-level field, so CopyNodeField
+    // does not carry it.
+    ret->hasEllipsis = node.hasEllipsis;
+    for (auto& capType : node.capTypes) {
+        ret->capTypes.emplace_back(CloneType(capType.get(), visitor));
+    }
+    return ret;
+}
+
 OwnedPtr<FuncType> ASTCloner::CloneFuncType(const FuncType& node, const VisitFunc& visitor)
 {
     auto ret = MakeOwned<FuncType>();
     for (auto& paramType : node.paramTypes) {
         ret->paramTypes.emplace_back(CloneType(paramType.get(), visitor));
+    }
+    if (node.performsClause) {
+        ret->performsClause = CloneThrowsClause(*node.performsClause, visitor);
+    }
+    if (node.throwsClause) {
+        ret->throwsClause = CloneThrowsClause(*node.throwsClause, visitor);
     }
     ret->retType = CloneType(node.retType.get(), visitor);
     ret->isC = node.isC;
@@ -776,8 +812,7 @@ OwnedPtr<LitConstExpr> ASTCloner::CloneLitConstExpr(const LitConstExpr& lce, con
     return expr;
 }
 
-OwnedPtr<InterpolationExpr> ASTCloner::CloneInterpolationExpr(
-    const InterpolationExpr& ie, const VisitFunc& visitor)
+OwnedPtr<InterpolationExpr> ASTCloner::CloneInterpolationExpr(const InterpolationExpr& ie, const VisitFunc& visitor)
 {
     auto expr = MakeOwned<InterpolationExpr>();
     expr->rawString = ie.rawString;
@@ -1224,8 +1259,7 @@ OwnedPtr<EnumPattern> ASTCloner::CloneEnumPattern(const EnumPattern& ep, const V
     return ret;
 }
 
-OwnedPtr<ExceptTypePattern> ASTCloner::CloneExceptTypePattern(
-    const ExceptTypePattern& etp, const VisitFunc& visitor)
+OwnedPtr<ExceptTypePattern> ASTCloner::CloneExceptTypePattern(const ExceptTypePattern& etp, const VisitFunc& visitor)
 {
     auto ret = MakeOwned<ExceptTypePattern>();
     ret->pattern = ClonePattern(etp.pattern.get(), visitor);
@@ -1238,8 +1272,7 @@ OwnedPtr<ExceptTypePattern> ASTCloner::CloneExceptTypePattern(
     return ret;
 }
 
-OwnedPtr<CommandTypePattern> ASTCloner::CloneCommandTypePattern(
-    const CommandTypePattern& ctp, const VisitFunc& visitor)
+OwnedPtr<CommandTypePattern> ASTCloner::CloneCommandTypePattern(const CommandTypePattern& ctp, const VisitFunc& visitor)
 {
     auto ret = MakeOwned<CommandTypePattern>();
     ret->pattern = ClonePattern(ctp.pattern.get(), visitor);
@@ -1252,8 +1285,7 @@ OwnedPtr<CommandTypePattern> ASTCloner::CloneCommandTypePattern(
     return ret;
 }
 
-OwnedPtr<VarOrEnumPattern> ASTCloner::CloneVarOrEnumPattern(
-    const VarOrEnumPattern& vep, const VisitFunc& visitor)
+OwnedPtr<VarOrEnumPattern> ASTCloner::CloneVarOrEnumPattern(const VarOrEnumPattern& vep, const VisitFunc& visitor)
 {
     auto ret = MakeOwned<VarOrEnumPattern>(vep.identifier);
     if (vep.pattern) {
@@ -1270,18 +1302,18 @@ OwnedPtr<Pattern> ASTCloner::ClonePattern(Ptr<Pattern> pattern, const VisitFunc&
     if (!pattern) {
         return OwnedPtr<Pattern>();
     }
-    auto ret = match(*pattern)(
-        [&visitor](const ConstPattern& e) { return OwnedPtr<Pattern>(CloneConstPattern(e, visitor)); },
-        [](const WildcardPattern& e) { return OwnedPtr<Pattern>(MakeOwned<WildcardPattern>(e)); },
-        [&visitor](const VarPattern& e) { return OwnedPtr<Pattern>(CloneVarPattern(e, visitor)); },
-        [&visitor](const TuplePattern& e) { return OwnedPtr<Pattern>(CloneTuplePattern(e, visitor)); },
-        [&visitor](const TypePattern& e) { return OwnedPtr<Pattern>(CloneTypePattern(e, visitor)); },
-        [&visitor](const EnumPattern& e) { return OwnedPtr<Pattern>(CloneEnumPattern(e, visitor)); },
-        [&visitor](const ExceptTypePattern& e) { return OwnedPtr<Pattern>(CloneExceptTypePattern(e, visitor)); },
-        [&visitor](const CommandTypePattern& e) { return OwnedPtr<Pattern>(CloneCommandTypePattern(e, visitor)); },
-        [&visitor](const VarOrEnumPattern& e) { return OwnedPtr<Pattern>(CloneVarOrEnumPattern(e, visitor)); },
-        [](const InvalidPattern& e) { return OwnedPtr<Pattern>(MakeOwned<InvalidPattern>(e)); },
-        []() { return OwnedPtr<Pattern>(MakeOwned<InvalidPattern>()); });
+    auto ret =
+        match(*pattern)([&visitor](const ConstPattern& e) { return OwnedPtr<Pattern>(CloneConstPattern(e, visitor)); },
+            [](const WildcardPattern& e) { return OwnedPtr<Pattern>(MakeOwned<WildcardPattern>(e)); },
+            [&visitor](const VarPattern& e) { return OwnedPtr<Pattern>(CloneVarPattern(e, visitor)); },
+            [&visitor](const TuplePattern& e) { return OwnedPtr<Pattern>(CloneTuplePattern(e, visitor)); },
+            [&visitor](const TypePattern& e) { return OwnedPtr<Pattern>(CloneTypePattern(e, visitor)); },
+            [&visitor](const EnumPattern& e) { return OwnedPtr<Pattern>(CloneEnumPattern(e, visitor)); },
+            [&visitor](const ExceptTypePattern& e) { return OwnedPtr<Pattern>(CloneExceptTypePattern(e, visitor)); },
+            [&visitor](const CommandTypePattern& e) { return OwnedPtr<Pattern>(CloneCommandTypePattern(e, visitor)); },
+            [&visitor](const VarOrEnumPattern& e) { return OwnedPtr<Pattern>(CloneVarOrEnumPattern(e, visitor)); },
+            [](const InvalidPattern& e) { return OwnedPtr<Pattern>(MakeOwned<InvalidPattern>(e)); },
+            []() { return OwnedPtr<Pattern>(MakeOwned<InvalidPattern>()); });
     CJC_ASSERT(ret && ret->astKind == pattern->astKind);
     CopyNodeField(ret.get(), *pattern);
     // Clone field in Pattern.
@@ -1347,8 +1379,7 @@ OwnedPtr<InterfaceBody> ASTCloner::CloneInterfaceBody(const InterfaceBody& ib, c
     return ret;
 }
 
-OwnedPtr<GenericConstraint> ASTCloner::CloneGenericConstraint(
-    const GenericConstraint& gc, const VisitFunc& visitor)
+OwnedPtr<GenericConstraint> ASTCloner::CloneGenericConstraint(const GenericConstraint& gc, const VisitFunc& visitor)
 {
     auto ret = MakeOwned<GenericConstraint>();
     CopyNodeField(ret.get(), gc);
@@ -1377,6 +1408,12 @@ OwnedPtr<FuncBody> ASTCloner::CloneFuncBody(const FuncBody& fb, const VisitFunc&
     ret->doubleArrowPos = fb.doubleArrowPos;
     ret->colonPos = fb.colonPos;
     ret->retType = CloneType(fb.retType.get(), visitor);
+    if (fb.performsClause) {
+        ret->performsClause = CloneThrowsClause(*fb.performsClause, visitor);
+    }
+    if (fb.throwsClause) {
+        ret->throwsClause = CloneThrowsClause(*fb.throwsClause, visitor);
+    }
     ret->body = CloneExpr(fb.body.get(), visitor);
     if (fb.generic) {
         ret->generic = CloneGeneric(*fb.generic, visitor);
@@ -1438,6 +1475,12 @@ OwnedPtr<Annotation> ASTCloner::CloneAnnotation(const Annotation& annotation, co
     ret->attrCommas = annotation.attrCommas;
     ret->rsquarePos = annotation.rsquarePos;
     ret->lsquarePos = annotation.lsquarePos;
+    if (annotation.assumeThrows) {
+        ret->assumeThrows = CloneThrowsClause(*annotation.assumeThrows, visitor);
+    }
+    if (annotation.assumePerforms) {
+        ret->assumePerforms = CloneThrowsClause(*annotation.assumePerforms, visitor);
+    }
     for (auto& arg : annotation.args) {
         ret->args.emplace_back(CloneNode(arg.get(), visitor));
     }
@@ -1456,8 +1499,8 @@ OwnedPtr<ImportSpec> ASTCloner::CloneImportSpec(const ImportSpec& is, const Visi
         CopyNodeField(ret->modifier.get(), *is.modifier);
         ret->modifier->isExplicit = is.modifier->isExplicit;
     }
-    std::function<void(const ImportContent&, ImportContent&)> cloneContent
-        = [&cloneContent](const ImportContent& src, ImportContent& dst) {
+    std::function<void(const ImportContent&, ImportContent&)> cloneContent = [&cloneContent](const ImportContent& src,
+                                                                                 ImportContent& dst) {
         CopyNodeField(&dst, src);
         dst.kind = src.kind;
         dst.prefixPaths = src.prefixPaths;
@@ -1529,6 +1572,7 @@ template <typename NodeT> OwnedPtr<NodeT> ASTCloner::CloneNode(Ptr<NodeT> node, 
         [&visitor](const StructBody& rb) { return OwnedPtr<Node>(CloneStructBody(rb, visitor)); },
         [&visitor](const InterfaceBody& ib) { return OwnedPtr<Node>(CloneInterfaceBody(ib, visitor)); },
         [&visitor](const GenericConstraint& gc) { return OwnedPtr<Node>(CloneGenericConstraint(gc, visitor)); },
+        [&visitor](const ThrowsClause& tc) { return OwnedPtr<Node>(CloneThrowsClause(tc, visitor)); },
         [&visitor](const FuncBody& fb) { return OwnedPtr<Node>(CloneFuncBody(fb, visitor)); },
         [&visitor](const FuncParamList& fpl) { return OwnedPtr<Node>(CloneFuncParamList(fpl, visitor)); },
         [&visitor](const FuncArg& fa) { return OwnedPtr<Node>(CloneFuncArg(fa, visitor)); },

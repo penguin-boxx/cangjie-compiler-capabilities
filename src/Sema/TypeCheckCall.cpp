@@ -18,10 +18,10 @@
 #include "Desugar/DesugarInTypeCheck.h"
 #include "DiagSuppressor.h"
 #include "Diags.h"
+#include "ExtraScopes.h"
 #include "JoinAndMeet.h"
 #include "LocalTypeArgumentSynthesis.h"
 #include "TypeCheckUtil.h"
-#include "ExtraScopes.h"
 
 #include "cangjie/AST/Clone.h"
 #include "cangjie/AST/Create.h"
@@ -31,6 +31,7 @@
 #include "cangjie/Basic/DiagnosticEngine.h"
 #include "cangjie/Basic/Match.h"
 #include "cangjie/Frontend/CompilerInstance.h"
+#include "cangjie/Sema/CapabilityCheck.h"
 #include "cangjie/Utils/CheckUtils.h"
 #include "cangjie/Utils/Macros.h"
 #include "cangjie/Utils/Utils.h"
@@ -408,8 +409,8 @@ bool HasSamePositionalArgsSize(const FuncDecl& fd, const CallExpr& ce)
     size_t positionalParamSize = GetPositionalParamSize(fd);
     size_t positionalArgSize = GetPositionalArgSize(ce);
     if (!ce.args.empty() && ce.args.back()->TestAttr(Attribute::IMPLICIT_ADD) &&
-        !fd.funcBody->paramLists[0]->params.empty() &&
-        fd.funcBody->paramLists[0]->params.back()->isNamedParam && positionalArgSize == ce.args.size()) {
+        !fd.funcBody->paramLists[0]->params.empty() && fd.funcBody->paramLists[0]->params.back()->isNamedParam &&
+        positionalArgSize == ce.args.size()) {
         // For trailing closure argument, if the original func param is named and no other named argument existed,
         // it should be treated as named argument.
         --positionalArgSize;
@@ -503,9 +504,8 @@ std::vector<Ptr<FuncDecl>> SyntaxFilterCandidates(const CallExpr& ce, const std:
                 mismatch = true;
             }
         }
-        definitelyMismatch
-            ? definitelyMismatched.emplace_back(fd)
-            : (mismatch ? mismatched.emplace_back(fd) : matched.emplace_back(fd));
+        definitelyMismatch ? definitelyMismatched.emplace_back(fd)
+                           : (mismatch ? mismatched.emplace_back(fd) : matched.emplace_back(fd));
     }
     // Should not return empty vector for future diagnoses.
     return matched.empty() ? (mismatched.empty() ? definitelyMismatched : mismatched) : matched;
@@ -614,8 +614,8 @@ bool CheckUseTrailingClosureWithFunctionType(
     arg.expr->SetTy(TypeManager::GetInvalidTy());
     std::string message =
         originalTy.IsGeneric() ? "generic type without upper bound of function type" : "non-function type";
-    auto diagBuilder = diag.DiagnoseRefactor(
-        DiagKindRefactor::sema_trailing_lambda_cannot_used_for_non_function, arg, message);
+    auto diagBuilder =
+        diag.DiagnoseRefactor(DiagKindRefactor::sema_trailing_lambda_cannot_used_for_non_function, arg, message);
     diagBuilder.AddMainHintArguments(originalTy.String());
     diagBuilder.AddNote(candidate, MakeRangeForDeclIdentifier(candidate), "found candidate");
     return false;
@@ -783,8 +783,7 @@ bool TypeChecker::TypeCheckerImpl::CompareFuncCandidates(
         ic.SetRefDeclSimple(j.fd, ce);
         ArgumentTypeUnit atu(i.tysInArgOrder, j.tysInArgOrder, {});
         ProcessParamToArg(typeManager, atu);
-        auto argPack = LocTyArgSynArgPack{GetTyVarsToSolve(typeManager.GetInstMapping()),
-            atu.argTys, atu.tysInArgOrder,
+        auto argPack = LocTyArgSynArgPack{GetTyVarsToSolve(typeManager.GetInstMapping()), atu.argTys, atu.tysInArgOrder,
             {}, TypeManager::GetInvalidTy(), TypeManager::GetInvalidTy(), {}};
         auto optSubst = LocalTypeArgumentSynthesis(typeManager, argPack, {}).SynthesizeTypeArguments();
         if (!optSubst.has_value()) {
@@ -992,7 +991,7 @@ void FilterAndReduceSubstPacks(std::vector<SubstPack>& mapsList, TypeManager& ty
     }
     mapsList = filtered;
 }
-}
+} // namespace
 
 void TypeChecker::TypeCheckerImpl::FilterTypeMappings(
     const Expr& expr, FuncDecl& fd, std::vector<MultiTypeSubst>& typeMappings)
@@ -1065,7 +1064,7 @@ bool TypeChecker::TypeCheckerImpl::CheckGenericCallCompatible(
     }
     CJC_ASSERT(ce.baseFunc);
     // After generating type mapping, check the compatibility of arguments and parameters.
-    std::vector<Ptr<Ty>> paramTysInArgOrder = GetParamTysInArgsOrder(typeManager, ce, fd);
+    std::vector<Ptr<Ty>> paramTysInArgOrder = EffectiveParamTys(ce, fd);
     if (paramTysInArgOrder.size() != ce.args.size()) {
         return false;
     }
@@ -1217,7 +1216,7 @@ bool TypeChecker::TypeCheckerImpl::CheckCallCompatible(ASTContext& ctx, Function
 {
     auto& ce = candidate.ce;
     auto& fd = candidate.fd;
-    std::vector<Ptr<Ty>> paramTysInArgsOrder = GetParamTysInArgsOrder(typeManager, ce, fd);
+    std::vector<Ptr<Ty>> paramTysInArgsOrder = EffectiveParamTys(ce, fd);
     if (paramTysInArgsOrder.size() != ce.args.size()) {
         return false;
     }
@@ -1363,7 +1362,7 @@ void TypeChecker::TypeCheckerImpl::FillTypeArgumentsTy(const FuncDecl& fd, const
 std::vector<Ptr<FuncDecl>> TypeChecker::TypeCheckerImpl::UpdateFuncGenericType(
     ASTContext& ctx, FunctionMatchingUnit& fmu, CallExpr& ce)
 {
-    auto funcTy = RawStaticCast<FuncTy*>(fmu.fd.GetTy());
+    auto funcTy = RawStaticCast<FuncTy*>(EffectiveUseType(fmu.fd, fmu.fd.GetTy()));
     ReplaceIdealTypeInSubstPack(fmu.typeMapping);
     // Caller guarantees 'desugarArgs' has value.
     if (!ce.desugarArgs.has_value()) {
@@ -1424,8 +1423,55 @@ OwnedPtr<FunctionMatchingUnit> TypeChecker::TypeCheckerImpl::CheckCandidate(
         return nullptr;
     }
     candidate.stat.argNameValid = CheckArgsWithParamName(ce, fd);
-    std::vector<Ptr<Ty>> paramTyInArgOrder = GetParamTysInArgsOrder(typeManager, ce, fd);
+    std::vector<Ptr<Ty>> paramTyInArgOrder = EffectiveParamTys(ce, fd);
     if (paramTyInArgOrder.size() != ce.args.size()) {
+        return nullptr;
+    }
+    // Written parameter types are available before the inferred result and capability list.
+    // Reject ordinary argument mismatches before requesting a candidate's body: an overload
+    // with the wrong parameter types is not a recursive contract dependency.
+    if (ci->invocation.globalOptions.CheckingExceptions() && Sema::IsInferenceEligible(fd) &&
+        TypeCheckUtil::NeedSynOnUsed(fd)) {
+        for (size_t i = 0; i < paramTyInArgOrder.size(); ++i) {
+            auto paramTy = paramTyInArgOrder[i];
+            if (Ty::IsTyCorrect(paramTy) && !paramTy->HasGeneric() && !CheckWithCache(ctx, paramTy, ce.args[i].get())) {
+                return nullptr;
+            }
+            // Ground bounds can also exclude a generic overload before its contract is needed.
+            // In particular, a call to a non-generic overload from a generic sibling must not
+            // re-enter the sibling merely because its parameter is an unconstrained candidate.
+            auto generic = DynamicCast<GenericsTy*>(paramTy);
+            auto argTy =
+                candidate.argCombinations.size() == 1 ? candidate.argCombinations[0][i] : ce.args[i]->expr->GetTy();
+            if (Ty::IsTyCorrect(paramTy) && paramTy->HasGeneric() &&
+                (paramTy->IsClassLike() || paramTy->IsStruct() || paramTy->IsEnum())) {
+                // Nominal shape does not depend on the generic arguments or inferred result.
+                // Try context-free argument typing; literals needing an expected type stay for
+                // the normal contextual check, and failed speculation contributes no diagnostic.
+                if (!Ty::IsTyCorrect(argTy) && ce.args[i]->expr->astKind != ASTKind::LAMBDA_EXPR) {
+                    auto suppress = DiagSuppressor(diag);
+                    argTy = SynthesizeWithCache({ctx, SynPos::EXPR_ARG}, ce.args[i].get());
+                }
+                if (Ty::IsTyCorrect(argTy) && !argTy->HasQuestTy() && !argTy->IsPlaceholder() &&
+                    promotion.Promote(*typeManager.EraseCapTys(argTy), *typeManager.EraseCapTys(paramTy)).empty()) {
+                    return nullptr;
+                }
+            }
+            if (generic && Ty::IsTyCorrect(argTy) && !argTy->HasGeneric() && !argTy->HasIdealTy()) {
+                for (auto bound : generic->upperBounds) {
+                    if (Ty::IsTyCorrect(bound) && !bound->HasGeneric() && !typeManager.IsSubtype(argTy, bound) &&
+                        !CheckWithCache(ctx, bound, ce.args[i].get())) {
+                        return nullptr;
+                    }
+                }
+            }
+        }
+    }
+    // Call applicability consumes the ordinary signature, not the callee's own list.
+    // Complete inferred ordinary results now; otherwise defer the top-level list until an
+    // overload is selected, so discarded but applicable overloads do not create false cycles.
+    if (ci->invocation.globalOptions.CheckingExceptions() && TypeCheckUtil::NeedSynOnUsed(fd) &&
+        !EnsureContract(ctx, fd, ce)) {
         return nullptr;
     }
     // Check whether the target function's params type is compatible with arguments.
@@ -1436,8 +1482,8 @@ OwnedPtr<FunctionMatchingUnit> TypeChecker::TypeCheckerImpl::CheckCandidate(
     } else if (!CheckCallCompatible(ctx, candidate)) {
         return nullptr;
     }
-    if (NeedSynOnUsed(fd)) {
-        Synthesize({ctx, SynPos::NONE}, &fd);
+    if (TypeCheckUtil::NeedSynOnUsed(fd) && !EnsureContract(ctx, fd, ce)) {
+        return nullptr;
     }
     if (!Ty::IsTyCorrect(fd.GetTy()) || !fd.GetTy()->IsFunc()) {
         return nullptr;
@@ -1448,7 +1494,7 @@ OwnedPtr<FunctionMatchingUnit> TypeChecker::TypeCheckerImpl::CheckCandidate(
         DynamicBindingThisType(*ce.baseFunc, fd, typeMapping);
         auto instRet = typeManager.ApplySubstPack(retTy, typeMapping);
         // Should delete ideal type in the future.
-        if (!instRet->HasIdealTy() && !typeManager.IsSubtype(instRet, targetRet)) {
+        if (!instRet->HasIdealTy() && !CheckCapabilitySubtype(instRet, targetRet, ce)) {
             if (!ce.sourceExpr) {
                 DiagMismatchedTypesWithFoundTy(diag, ce, *targetRet, *instRet);
             }
@@ -1461,6 +1507,9 @@ OwnedPtr<FunctionMatchingUnit> TypeChecker::TypeCheckerImpl::CheckCandidate(
 std::vector<Ptr<FuncDecl>> TypeChecker::TypeCheckerImpl::ReorderCallArgument(
     ASTContext& ctx, FunctionMatchingUnit& fmu, CallExpr& ce)
 {
+    if (!EnsureContract(ctx, fmu.fd, ce)) {
+        return {};
+    }
     std::vector<Ptr<FuncArg>> args;
     auto defaultArgs = std::vector<OwnedPtr<FuncArg>>();
     // Record the default parameters' type first. Non-default parameters' type is set nullptr firstly.
@@ -1489,7 +1538,7 @@ std::vector<Ptr<FuncDecl>> TypeChecker::TypeCheckerImpl::ReorderCallArgument(
     defaultArgs.clear();
 
     // Caller guarantees fd not null and type must be function type.
-    auto funcTy = RawStaticCast<FuncTy*>(fmu.fd.GetTy());
+    auto funcTy = RawStaticCast<FuncTy*>(EffectiveUseType(fmu.fd, fmu.fd.GetTy()));
     // When the funcDecl is a generic function, we should do instantiation and assign the real type to callExpr.
     if (IsGenericCall(ctx, ce, fmu.fd)) {
         return UpdateFuncGenericType(ctx, fmu, ce);
@@ -1514,7 +1563,7 @@ std::vector<Ptr<FuncDecl>> TypeChecker::TypeCheckerImpl::ReorderCallArgument(
 /// Otherwise it returns the original function return type.
 Ty* TypeChecker::TypeCheckerImpl::GetCallTy(ASTContext& ctx, const CallExpr& ce, const FuncDecl& target) const
 {
-    auto targetRetTy = StaticCast<FuncTy>(target.GetTy())->retTy;
+    auto targetRetTy = StaticCast<FuncTy>(EffectiveUseType(target, target.GetTy()))->retTy;
     auto ret = targetRetTy;
     if (Is<ClassThisTy>(targetRetTy)) {
         if (auto ma = DynamicCast<MemberAccess>(&*ce.baseFunc)) {
@@ -1590,24 +1639,33 @@ TypeChecker::TypeCheckerImpl::FuncTyPair TypeChecker::TypeCheckerImpl::CollectVa
                 genericIgnored = true;
                 break;
             }
-            auto instTy = typeManager.GetInstantiatedTy(fd->GetTy(), mapping);
-            // If parameters' types already incompatible, ignore current candidate.
-            if (targetTy && !typeManager.IsFuncParametersSubtype(*RawStaticCast<FuncTy*>(instTy), *targetTy)) {
+            auto shape =
+                DynamicCast<FuncTy*>(typeManager.GetInstantiatedTy(typeManager.EraseCapTys(fd->GetTy()), mapping));
+            auto targetShape = targetTy ? DynamicCast<FuncTy*>(typeManager.EraseCapTys(targetTy)) : nullptr;
+            if (shape && hasThisRet) {
+                shape = typeManager.GetFunctionTy(
+                    shape->paramTys, typeManager.GetInstantiatedTy(thisCd->GetTy(), mapping), {}, shape->capTys);
+            }
+            if (shape && targetShape &&
+                (!typeManager.IsFuncParametersSubtype(*shape, *targetShape) ||
+                    (ci->invocation.globalOptions.CheckingExceptions() && funcs.size() > 1 &&
+                        Sema::IsInferenceEligible(*fd) && !shape->retTy->HasQuestTy() &&
+                        !typeManager.IsSubtype(shape, targetShape)))) {
                 continue;
             }
-            if (NeedSynOnUsed(*fd) && Synthesize({ctx, SynPos::NONE}, fd) &&
-                (!Ty::IsTyCorrect(fd->GetTy()) || fd->GetTy()->HasQuestTy())) {
-                DiagUnableToInferReturnType(diag, *fd, expr);
-                break; // If the function's type still contains quest type, ignore current candidate.
+            if (!EnsureContract(ctx, *fd, expr)) {
+                break;
             }
+            Ptr<Ty> instTy;
             // Re-instantiated function's type after function has been synthesize.
-            instTy = typeManager.GetInstantiatedTy(fd->GetTy(), mapping);
+            instTy = typeManager.GetInstantiatedTy(EffectiveUseType(*fd, fd->GetTy()), mapping);
             CJC_ASSERT(instTy->IsFunc());
             // Process dynamic binding this type.
             if (hasThisRet) {
                 // Since 'CollectValidFuncTys' is only used for reference node, we do not need to keep 'This' ty here.
                 auto realThisTy = typeManager.GetInstantiatedTy(thisCd->GetTy(), mapping);
-                instTy = typeManager.GetFunctionTy(RawStaticCast<FuncTy*>(instTy)->paramTys, realThisTy);
+                auto instFuncTy = RawStaticCast<FuncTy*>(instTy);
+                instTy = typeManager.GetFunctionTy(instFuncTy->paramTys, realThisTy, {}, instFuncTy->capTys);
             }
             candidates.emplace_back(std::make_tuple(fd, instTy, mapping));
         }
@@ -2093,8 +2151,7 @@ namespace {
  * @param ce The callExpr need to be resolved.
  * @param diagnoses The vector of diagnostics of all function candidates and their count of matched arguments.
  */
-void CheckEmptyMatchResult(DiagnosticEngine& diag, CallExpr& ce,
-    std::vector<FunctionMatchingUnit>& illegals)
+void CheckEmptyMatchResult(DiagnosticEngine& diag, CallExpr& ce, std::vector<FunctionMatchingUnit>& illegals)
 {
     if (illegals.empty()) {
         return;
@@ -2462,7 +2519,7 @@ bool TypeChecker::TypeCheckerImpl::ChkCurryCallBase(ASTContext& ctx, CallExpr& c
     Ptr<Ty> retTy = targetRet ? targetRet : TypeManager::GetQuestTy();
     {
         auto ds = DiagSuppressor(diag);
-        for (auto& arg: ce.args) {
+        for (auto& arg : ce.args) {
             if (Ty::IsInitialTy(arg->GetTy())) {
                 SynthesizeWithCache({ctx, SynPos::EXPR_ARG}, arg);
             }
@@ -2758,12 +2815,12 @@ std::optional<Ptr<Ty>> TypeChecker::TypeCheckerImpl::DynamicBindingThisType(
     auto declOfThisType = GetDeclOfThisType(baseExpr);
     if (auto cd = DynamicCast<ClassDecl*>(declOfThisType); cd && Ty::IsTyCorrect(cd->GetTy())) {
         auto instTy = typeManager.ApplySubstPack(typeManager.GetClassThisTy(*cd, cd->GetTy()->typeArgs), typeMapping);
-        baseExpr.SetTy(typeManager.GetFunctionTy(funcTy->paramTys, instTy));
+        baseExpr.SetTy(typeManager.GetFunctionTy(funcTy->paramTys, instTy, {}, funcTy->capTys));
         return instTy;
     } else if (auto ma = DynamicCast<MemberAccess*>(&baseExpr); ma && ma->baseExpr) {
         // If the baseExpr's type is generic type, set the function call's return type as 'gty'.
         if (auto gty = DynamicCast<GenericsTy*>(ma->baseExpr->GetTy()); gty) {
-            baseExpr.SetTy(typeManager.GetFunctionTy(funcTy->paramTys, gty));
+            baseExpr.SetTy(typeManager.GetFunctionTy(funcTy->paramTys, gty, {}, funcTy->capTys));
             return gty;
         }
     }
@@ -2802,6 +2859,51 @@ FunctionMatchingUnit* TypeChecker::TypeCheckerImpl::FindFuncWithMaxChildRetTy(
     return maxChildFmu;
 }
 
+void TypeChecker::TypeCheckerImpl::ChkClauseOnlyTypeArguments(const CallExpr& ce, const FuncDecl& func) const
+{
+    // Checked exceptions ("Generics"): a type parameter that occurs ONLY in capability lists is
+    // not constrained by the argument that mentions it -- inference ignores those lists on
+    // purpose, to stay out of row unification. The language would still solve such a parameter at
+    // its bound, like any bounded parameter nothing else constrains, which silently picks a list
+    // the author never wrote; the text requires the call to be rejected so the argument is
+    // written. Runs after the candidate is fixed, never during solving: perturbing the solver
+    // would change which overload wins.
+    if ((!ci->invocation.globalOptions.CheckingExceptions() && !ci->invocation.globalOptions.CheckingEffects()) ||
+        !func.TestAttr(Attribute::GENERIC)) {
+        return;
+    }
+    auto clauseOnly = TypeCheckUtil::CollectClauseOnlyTyVars(EffectiveUseType(func, func.GetTy(), true));
+    if (clauseOnly.empty()) {
+        return;
+    }
+    // Only what the AUTHOR wrote discharges it: 'g<A, B>(0, f)' says what the lists are. The
+    // solved 'instTys' must not be consulted here -- they are exactly the silent choice this rule
+    // rejects (the solver fills them from the bound, since nothing else constrains the parameter).
+    if (!ce.baseFunc || !ce.baseFunc->GetTypeArgs().empty()) {
+        return;
+    }
+    // One diagnostic for the whole call: the diagnostic set deduplicates by position and
+    // severity, so a call with two such parameters would otherwise report only the first.
+    // Names come from the declarations, not from 'Ty::String()', which spells them 'Generics-T'.
+    std::vector<std::string> names;
+    for (auto tyVar : clauseOnly) {
+        if (tyVar && tyVar->decl) {
+            names.emplace_back("'" + tyVar->decl->identifier + "'");
+        }
+    }
+    if (names.empty()) {
+        return;
+    }
+    std::sort(names.begin(), names.end());
+    std::string nameList;
+    for (auto& name : names) {
+        nameList += (nameList.empty() ? "" : ", ") + name;
+    }
+    auto kind = names.size() == 1 ? DiagKindRefactor::sema_chexc_clause_only_type_argument
+                                  : DiagKindRefactor::sema_chexc_clause_only_type_arguments;
+    diag.DiagnoseRefactor(kind, *ce.baseFunc, nameList, func.identifier.Val());
+}
+
 bool TypeChecker::TypeCheckerImpl::PostCheckCallExpr(
     const ASTContext& ctx, CallExpr& ce, FuncDecl& func, const SubstPack& typeMapping)
 {
@@ -2825,6 +2927,7 @@ bool TypeChecker::TypeCheckerImpl::PostCheckCallExpr(
         }
     }
     ce.resolvedFunction = &func;
+    ChkClauseOnlyTypeArguments(ce, func);
     UpdateCallTargetsForLSP(ce, func);
     DynamicBindingThisType(*ce.baseFunc, func, typeMapping);
     if (!func.TestAttr(Attribute::FOREIGN) && !func.TestAttr(Attribute::C)) {
@@ -2889,7 +2992,7 @@ Ptr<FuncTy> TryCastingToFuncTy(Ptr<Ty> ty, size_t arity, TypeManager& tyMgr)
     }
     return nullptr;
 };
-}
+} // namespace
 
 bool TypeChecker::TypeCheckerImpl::CheckNonNormalCall(ASTContext& ctx, Ptr<Ty> target, CallExpr& ce)
 {
@@ -3146,7 +3249,9 @@ bool TypeChecker::TypeCheckerImpl::ChkVariadicCallExpr(ASTContext& ctx, Ptr<Ty> 
         // Multiple matching functions found, report ambiguous function call.
         Ptr<Decl> decl = results.front();
         CJC_NULLPTR_CHECK(decl);
-        if (decl->TestAttr(Attribute::CONSTRUCTOR) && decl->outerDecl) { decl = decl->outerDecl; }
+        if (decl->TestAttr(Attribute::CONSTRUCTOR) && decl->outerDecl) {
+            decl = decl->outerDecl;
+        }
         DiagnoseForCall(candidates, results, ce, *decl);
     }
     ce.callKind = CallKind::CALL_INVALID;

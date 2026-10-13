@@ -29,6 +29,10 @@ public:
     ~CjdCompilerInstance() override = default;
     ///@{
     /// After sema, skip all stages until cjo saving
+    bool PerformCapabilityCheck() override
+    {
+        return true;
+    }
     bool PerformDesugarAfterSema() override
     {
         return true;

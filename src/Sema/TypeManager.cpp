@@ -12,18 +12,20 @@
 
 #include "cangjie/Sema/TypeManager.h"
 
+#include <algorithm>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "TypeCheckUtil.h"
 #include "LocalTypeArgumentSynthesis.h"
+#include "TypeCheckUtil.h"
 
 #include "ExtraScopes.h"
 #include "cangjie/AST/Match.h"
 #include "cangjie/AST/ScopeManagerApi.h"
 #include "cangjie/AST/Utils.h"
 #include "cangjie/Utils/CheckUtils.h"
+#include "cangjie/Utils/Utils.h"
 
 namespace Cangjie {
 using namespace AST;
@@ -151,9 +153,58 @@ Ptr<TupleTy> TypeManager::GetTupleTy(const std::vector<Ptr<Ty>>& typeArgs, bool 
     return GetTypeTy<TupleTy>(typeArgs, isClosureTy);
 }
 
-Ptr<FuncTy> TypeManager::GetFunctionTy(const std::vector<Ptr<Ty>>& paramTys, Ptr<Ty> retTy, FuncTy::Config cfg)
+namespace {
+/// A deterministic key for ordering capability-list entries: the printed type, qualified by the
+/// package of every nominal type in it, so equal keys mean the same type in practice and the key
+/// is the same in every compilation that sees the type -- the lists are stored in '.cjo' files and
+/// compared across packages and incremental rounds, so pointer order would not do.
+std::string CapOrderKey(Ptr<const Ty> ty)
 {
-    return GetTypeTy<FuncTy>(paramTys, retTy, cfg);
+    if (!ty) {
+        return {};
+    }
+    std::string key;
+    if (auto decl = Ty::GetDeclPtrOfTy(ty)) {
+        key = decl->fullPackageName + ":";
+    }
+    key += ty->String();
+    for (auto arg : ty->typeArgs) {
+        key += "|" + CapOrderKey(arg);
+    }
+    return key;
+}
+
+/// The list is a set ("Functional types": spelling does not create types), so the order of its
+/// entries must not be part of a type's identity. Sorting is a permutation and asks no subtyping
+/// question, so unlike normalization it is safe at interning, where bounds may not be attached yet.
+void SortCapTys(std::vector<Ptr<Ty>>& capTys)
+{
+    if (capTys.size() < 2) {
+        return;
+    }
+    std::vector<std::pair<std::string, Ptr<Ty>>> keyed;
+    keyed.reserve(capTys.size());
+    for (auto cap : capTys) {
+        keyed.emplace_back(CapOrderKey(cap), cap);
+    }
+    std::stable_sort(keyed.begin(), keyed.end(), [](auto& lhs, auto& rhs) { return lhs.first < rhs.first; });
+    for (size_t i = 0; i < keyed.size(); ++i) {
+        capTys[i] = keyed[i].second;
+    }
+}
+} // namespace
+
+Ptr<FuncTy> TypeManager::GetFunctionTy(
+    const std::vector<Ptr<Ty>>& paramTys, Ptr<Ty> retTy, FuncTy::Config cfg, const std::vector<Ptr<Ty>>& capTys)
+{
+    // The same funnel makes entry order irrelevant to identity: '() throws (A, B) -> R' and
+    // '() throws (B, A) -> R' are one type whichever producer built them.
+    if (capTys.size() > 1) {
+        auto sorted = capTys;
+        SortCapTys(sorted);
+        return GetTypeTy<FuncTy>(paramTys, retTy, cfg, sorted);
+    }
+    return GetTypeTy<FuncTy>(paramTys, retTy, cfg, capTys);
 }
 
 Ptr<Ty> TypeManager::GetIntersectionTy(const std::set<Ptr<Ty>>& tys)
@@ -320,8 +371,17 @@ Ptr<Ty> TypeManager::TyInstantiator::Instantiate(Ty& ty)
                 paramTys.push_back(Instantiate(it));
             }
             auto retType = Instantiate(funcTy.retTy);
+            std::vector<Ptr<Ty>> capTys;
+            for (auto& it : funcTy.capTys) {
+                capTys.push_back(Instantiate(it));
+            }
+            // Checked exceptions (semantic form): substitution is where an entry becomes covered
+            // by a sibling, or becomes unchecked -- 'throws E' with 'E := IllegalStateException'
+            // IS the clause-free type. Canonicalize here so the instantiated type has one
+            // identity, rather than leaving the raw spelling to be compared by coverage forever.
+            capTys = tyMgr.NormalizeCapTys(capTys);
             Ptr<Ty> ret = tyMgr.GetFunctionTy(
-                paramTys, retType, {funcTy.IsCFunc(), funcTy.isClosureTy, funcTy.hasVariableLenArg});
+                paramTys, retType, {funcTy.IsCFunc(), funcTy.isClosureTy, funcTy.hasVariableLenArg}, capTys);
             return ret;
         }
         case TypeKind::TYPE_TUPLE: {
@@ -888,9 +948,189 @@ bool TypeManager::IsFuncSubtype(const Ty& leaf, const Ty& root)
     auto& rootFuncType = static_cast<const FuncTy&>(root);
     if (IsFuncParametersSubtype(leafFuncType, rootFuncType)) {
         bool noCast = leafFuncType.noCast || rootFuncType.noCast;
-        return IsSubtype(leafFuncType.retTy, rootFuncType.retTy, noCast);
+        // Checked exceptions: the subtype's capability list must be subsumed by the
+        // supertype's, so any call site providing the supertype's capabilities can invoke the subtype.
+        return IsSubtype(leafFuncType.retTy, rootFuncType.retTy, noCast) &&
+            IsCapTysSubsumed(leafFuncType.capTys, rootFuncType.capTys);
     }
     return false;
+}
+
+namespace {
+/// True when @p ty is, or contains, a type-inference placeholder. Capability lists take no part in
+/// type-argument inference, so comparing them must never bind one: a placeholder entry neither
+/// covers a requirement nor is itself checked. Without this, subtyping would solve through a
+/// capability list what unification deliberately refuses to solve.
+bool HasPlaceholder(Ptr<const Ty> ty)
+{
+    if (!ty) {
+        return false;
+    }
+    if (auto tyVar = DynamicCast<const GenericsTy*>(ty); tyVar && tyVar->isPlaceholder) {
+        return true;
+    }
+    return std::any_of(ty->typeArgs.begin(), ty->typeArgs.end(), [](auto arg) { return HasPlaceholder(arg); });
+}
+} // namespace
+
+std::vector<Ptr<Ty>> TypeManager::NormalizeCapTys(const std::vector<Ptr<Ty>>& capTys)
+{
+    if (capTys.empty()) {
+        return capTys;
+    }
+    // While type arguments are still being solved, a placeholder entry must not be compared: the
+    // comparison would bind it, and capability lists take no part in type-argument inference. Such
+    // a list is normalized once it is instantiated.
+    if (std::any_of(capTys.begin(), capTys.end(), [](auto cap) { return HasPlaceholder(cap); })) {
+        return capTys;
+    }
+    std::vector<Ptr<Ty>> kept;
+    for (auto cap : capTys) {
+        if (!Ty::IsTyCorrect(cap)) {
+            kept.emplace_back(cap); // an invalid entry is left alone; its error is reported already
+            continue;
+        }
+        // An entry whose type is unchecked is not part of the list ("Unchecked types in 'throws'
+        // lists"): a written one is rejected at the declaration, so this only ever fires after
+        // substitution instantiated a type parameter to an unchecked type -- and then the clause
+        // IS gone, which is what makes the instantiated type identical to the clause-free one.
+        // A type parameter is left alone: its instantiation decides, not its bound.
+        if (uncheckedExceptionTy && !cap->IsGeneric() && IsSubtype(cap, uncheckedExceptionTy)) {
+            continue;
+        }
+        // A type parameter whose bounds are not attached yet must not be COMPARED here. Coverage
+        // for such an entry is decided by its bounds ("coverage is subtyping provable in the
+        // declaration's context, 'where'-bounds included"), and normalization runs at producer
+        // boundaries -- clause elaboration among them, which happens before the bounds are on the
+        // 'GenericsTy'. Asking anyway answers 'false' AND caches it: 'IsSubtype' keeps a cache
+        // that outlives the phase, so one early question would make 'E <: IOException' false for
+        // the rest of the compilation. Such an entry is simply kept; a later normalization, when
+        // the bounds are known, folds it.
+        auto genericWithoutBounds = [](Ptr<Ty> ty) {
+            auto gTy = DynamicCast<GenericsTy*>(ty);
+            return gTy && gTy->upperBounds.empty();
+        };
+        if (genericWithoutBounds(cap)) {
+            if (!Utils::In(cap, kept)) {
+                kept.emplace_back(cap);
+            }
+            continue;
+        }
+        // Keep the maximal entries. An entry equal to one already kept -- mutual subtypes -- is
+        // dropped by the same test, which is what deduplication needs.
+        bool covered = std::any_of(capTys.begin(), capTys.end(), [this, cap, &genericWithoutBounds](Ptr<Ty> other) {
+            return Ty::IsTyCorrect(other) && other != cap && !genericWithoutBounds(other) && IsSubtype(cap, other);
+        });
+        if (!covered && !Utils::In(cap, kept)) {
+            kept.emplace_back(cap);
+        }
+    }
+    // The canonical form is ordered too, so a list printed in a diagnostic or demanded entry by
+    // entry reads the same whatever order it was written in.
+    SortCapTys(kept);
+    return kept;
+}
+
+bool TypeManager::IsCapTysSubsumed(const std::vector<Ptr<Ty>>& subCapTys, const std::vector<Ptr<Ty>>& superCapTys)
+{
+    return std::all_of(subCapTys.begin(), subCapTys.end(), [this, &superCapTys](Ptr<Ty> subCap) {
+        if (HasPlaceholder(subCap)) {
+            return true; // nothing to check yet, and nothing to bind
+        }
+        // An entry that instantiated to an unchecked exception type vanished from the semantic
+        // list ("Unchecked types in 'throws' lists"): 'safeThrow<ReqExc>' with an unchecked
+        // 'ReqExc' is assignable wherever the clause-free shape is. Written entries can never be
+        // unchecked -- they are rejected at declaration -- so this only ever fires post-substitution.
+        if (uncheckedExceptionTy && Ty::IsTyCorrect(subCap) && !subCap->IsGeneric() &&
+            IsSubtype(subCap, uncheckedExceptionTy)) {
+            return true;
+        }
+        return std::any_of(superCapTys.begin(), superCapTys.end(),
+            [this, subCap](Ptr<Ty> superCap) { return !HasPlaceholder(superCap) && IsSubtype(subCap, superCap); });
+    });
+}
+
+Ptr<Ty> TypeManager::EraseCapTys(Ptr<Ty> ty)
+{
+    if (!Ty::IsTyCorrect(ty) || ty->kind <= TypeKind::TYPE_BOOLEAN) {
+        return ty;
+    }
+    if (auto funcTy = DynamicCast<FuncTy*>(ty)) {
+        std::vector<Ptr<Ty>> paramTys;
+        bool changed = !funcTy->capTys.empty();
+        for (auto paramTy : funcTy->paramTys) {
+            auto erased = EraseCapTys(paramTy);
+            changed = changed || erased != paramTy;
+            paramTys.push_back(erased);
+        }
+        auto retTy = EraseCapTys(funcTy->retTy);
+        changed = changed || retTy != funcTy->retTy;
+        if (!changed) {
+            return ty;
+        }
+        return GetFunctionTy(
+            paramTys, retTy, {funcTy->isC, funcTy->isClosureTy, funcTy->hasVariableLenArg, funcTy->noCast});
+    }
+    if (ty->typeArgs.empty()) {
+        return ty;
+    }
+    std::vector<Ptr<Ty>> typeArgs;
+    bool changed = false;
+    for (auto arg : ty->typeArgs) {
+        auto erased = EraseCapTys(arg);
+        changed = changed || erased != arg;
+        typeArgs.push_back(erased);
+    }
+    if (!changed) {
+        return ty;
+    }
+    return SubstituteTypeArgs(ty, typeArgs);
+}
+
+Ptr<Ty> TypeManager::MapCapabilityTypes(
+    Ptr<Ty> ty, const std::function<std::vector<Ptr<Ty>>(const std::vector<Ptr<Ty>>&)>& map)
+{
+    if (!Ty::IsTyCorrect(ty)) {
+        return ty;
+    }
+    if (auto ft = DynamicCast<FuncTy*>(ty)) {
+        auto args = ft->paramTys;
+        for (auto& arg : args) {
+            arg = MapCapabilityTypes(arg, map);
+        }
+        auto caps = ft->capTys;
+        for (auto& cap : caps) {
+            cap = MapCapabilityTypes(cap, map);
+        }
+        return GetFunctionTy(args, MapCapabilityTypes(ft->retTy, map),
+            {ft->isC, ft->isClosureTy, ft->hasVariableLenArg, ft->noCast}, map(caps));
+    }
+    auto args = ty->typeArgs;
+    bool changed = false;
+    for (auto& arg : args) {
+        auto normalized = MapCapabilityTypes(arg, map);
+        changed = changed || normalized != arg;
+        arg = normalized;
+    }
+    return changed ? SubstituteTypeArgs(ty, args) : ty;
+}
+
+Ptr<Ty> TypeManager::NormalizeCapabilityTypes(Ptr<Ty> ty)
+{
+    return MapCapabilityTypes(ty, [this](const std::vector<Ptr<Ty>>& caps) { return NormalizeCapTys(caps); });
+}
+
+Ptr<Ty> TypeManager::EraseExceptionCapTys(Ptr<Ty> ty, Ptr<Ty> exceptionRoot)
+{
+    return MapCapabilityTypes(ty, [this, exceptionRoot](const std::vector<Ptr<Ty>>& caps) {
+        std::vector<Ptr<Ty>> retained;
+        for (auto cap : caps) {
+            if (!Ty::IsTyCorrect(cap) || !IsSubtype(cap, exceptionRoot)) {
+                retained.emplace_back(cap);
+            }
+        }
+        return retained;
+    });
 }
 
 bool TypeManager::IsFuncParametersSubtype(const FuncTy& leaf, const FuncTy& root)
@@ -1120,8 +1360,12 @@ bool TypeManager::IsFuncParameterTypesIdentical(const FuncTy& t1, const FuncTy& 
     if (Ty::IsTyCorrect(&t1) && Ty::IsTyCorrect(&t2) && t1.paramTys.size() == t2.paramTys.size()) {
         result = true;
         for (size_t i = 0; i < t2.paramTys.size(); i++) {
-            result =
-                result && CheckTypeCompatibility(t1.paramTys[i], t2.paramTys[i], false) == TypeCompatibility::IDENTICAL;
+            // Checked exceptions: overloading and overriding compare signatures with
+            // all capability lists removed, so parameter functional types differing only in their
+            // 'throws' lists are the same type here.
+            result = result &&
+                CheckTypeCompatibility(EraseCapTys(t1.paramTys[i]), EraseCapTys(t2.paramTys[i]), false) ==
+                    TypeCompatibility::IDENTICAL;
         }
     }
     return result;
@@ -1135,7 +1379,10 @@ bool TypeManager::IsFuncParameterTypesIdentical(
         result = true;
         for (size_t i = 0; i < paramTys2.size(); i++) {
             auto paramTy1 = GetInstantiatedTy(paramTys1[i], typeMapping);
-            result = result && CheckTypeCompatibility(paramTy1, paramTys2[i], false) == TypeCompatibility::IDENTICAL;
+            // Checked exceptions: compare modulo capability lists.
+            result = result &&
+                CheckTypeCompatibility(EraseCapTys(paramTy1), EraseCapTys(paramTys2[i]), false) ==
+                    TypeCompatibility::IDENTICAL;
         }
     }
     return result;
@@ -1254,8 +1501,8 @@ bool TypeManager::IsTyExtendInterface(const Ty& classTy, const Ty& interfaceTy)
     return false;
 }
 
-bool TypeManager::HasExtendInterfaceTyHelper(Ty& superTy, const std::set<Ptr<ExtendDecl>>& extends,
-    const std::vector<Ptr<Ty>>& typeArgs)
+bool TypeManager::HasExtendInterfaceTyHelper(
+    Ty& superTy, const std::set<Ptr<ExtendDecl>>& extends, const std::vector<Ptr<Ty>>& typeArgs)
 {
     PData::CommitScope cs(constraints);
     for (auto& extend : extends) {
@@ -1972,6 +2219,13 @@ bool TypeManager::IsFuncDeclSubType(const AST::FuncDecl& decl, const AST::FuncDe
 
 bool TypeManager::IsFuncTySubType(const AST::FuncTy& type1, const AST::FuncTy& type2)
 {
+    // Deliberately blind to capability lists. This predicate PAIRS a declaration with the one it
+    // implements -- for instantiation, for the override map, for the common type of a mocked
+    // parameter -- and pairing is a question about shape: two functions never differ in capability
+    // list alone, since a list takes no part in overload resolution. Whether the pairing then
+    // satisfies coverage is a separate rule, reported by the override checks; when that rule is
+    // relaxed to a warning, the violating override must still resolve to its implementation, or
+    // the call is left on an abstract declaration that has no body to link against.
     return IsFuncParameterTypesIdentical(type1.paramTys, type2.paramTys) && IsSubtype(type1.retTy, type2.retTy);
 }
 #endif
@@ -2311,7 +2565,7 @@ TypeSubst GetGreedySubst(Constraint& cst)
     }
     return m;
 }
-}
+} // namespace
 
 Ptr<AST::Ty> TypeManager::TryGreedySubst(Ptr<AST::Ty> ty)
 {
@@ -2382,7 +2636,12 @@ Ptr<Ty> TypeManager::ReplaceThisTy(Ptr<Ty> now)
                 paramTys.push_back(ReplaceThisTy(p));
             }
             auto retTy = ReplaceThisTy(funcTy.retTy);
-            return GetFunctionTy(paramTys, retTy, {funcTy.IsCFunc(), funcTy.isClosureTy, funcTy.hasVariableLenArg});
+            std::vector<Ptr<Ty>> capTys;
+            for (auto& c : funcTy.capTys) {
+                capTys.push_back(ReplaceThisTy(c));
+            }
+            return GetFunctionTy(
+                paramTys, retTy, {funcTy.IsCFunc(), funcTy.isClosureTy, funcTy.hasVariableLenArg}, capTys);
         }
         case TypeKind::TYPE_TUPLE:
             return GetTupleTy(newArgs, static_cast<TupleTy&>(*now).isClosureTy);
@@ -2431,7 +2690,8 @@ Ptr<Ty> TypeManager::SubstituteTypeArgs(Ptr<Ty> baseTy, std::vector<Ptr<Ty>>& ty
             auto returnTy = typeArgs.back();
             typeArgs.pop_back();
             auto funcTy = StaticCast<FuncTy>(baseTy);
-            return GetFunctionTy(typeArgs, returnTy, {funcTy->isC, false, funcTy->hasVariableLenArg});
+            // NOTE: 'typeArgs' only covers params and return type; capability types are carried over unchanged.
+            return GetFunctionTy(typeArgs, returnTy, {funcTy->isC, false, funcTy->hasVariableLenArg}, funcTy->capTys);
         }
         case TypeKind::TYPE: {
             return baseTy;
@@ -2535,7 +2795,7 @@ Ptr<Ty> TypeManager::ObtainsAliasType(Ptr<const Node> node)
                 params.emplace_back(ObtainsAliasType(param.get()));
             }
             auto retTy = ObtainsAliasType(ft->retType.get());
-            ret = GetFunctionTy(params, retTy, {ft->isC, false, fTy->hasVariableLenArg});
+            ret = GetFunctionTy(params, retTy, {ft->isC, false, fTy->hasVariableLenArg}, fTy->capTys);
             break;
         }
         case ASTKind::TUPLE_TYPE: {
@@ -2636,7 +2896,12 @@ Ptr<AST::Ty> TypeManager::SubstituteTypeAliasInTy(AST::Ty& ty, bool needSubstitu
             auto returnTy = typeArgs.back();
             typeArgs.pop_back();
             auto& funcTy = static_cast<FuncTy&>(ty);
-            return GetFunctionTy(typeArgs, returnTy, {funcTy.isC, false, funcTy.hasVariableLenArg});
+            std::vector<Ptr<Ty>> capTys;
+            for (auto capTy : funcTy.capTys) {
+                CJC_ASSERT(capTy);
+                capTys.push_back(SubstituteTypeAliasInTy(*capTy, needSubstituteGeneric, typeMapping));
+            }
+            return GetFunctionTy(typeArgs, returnTy, {funcTy.isC, false, funcTy.hasVariableLenArg}, capTys);
         }
         case TypeKind::TYPE: {
             return GetUnaliasedTypeFromTypeAlias(

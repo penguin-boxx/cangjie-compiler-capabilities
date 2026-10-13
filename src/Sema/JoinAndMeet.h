@@ -25,7 +25,8 @@ struct DualMode {
     Ptr<AST::Ty> bound; // Any for join, Nothing for meet
     std::function<Ptr<AST::Ty>(const std::set<Ptr<AST::Ty>>&)> coFunc; // join for join, meet for meet
     std::function<Ptr<AST::Ty>(const std::set<Ptr<AST::Ty>>&)> contraFunc; // meet for join, join for meet
-    std::function<bool(Ptr<AST::Ty>, Ptr<AST::Ty>)> coSubtyFunc; // is-subtype for join, is-supertype for meet
+    std::function<bool(Ptr<AST::Ty>, Ptr<AST::Ty>)> coSubtyFunc;           // is-subtype for join, is-supertype for meet
+    bool isJoin{true}; // true for join, false for meet (capability lists combine asymmetrically)
 };
 
 class JoinAndMeet {
@@ -84,6 +85,8 @@ private:
     Ptr<AST::Ty> BatchMeet(const std::set<Ptr<AST::Ty>>& tys);
 
     Ptr<AST::Ty> JoinOrMeetFuncTy(const DualMode& mode, const std::set<Ptr<AST::Ty>>& tys);
+    // Checked exceptions: union of capability lists for join, entries covered by all lists for meet.
+    std::vector<Ptr<AST::Ty>> JoinOrMeetCapTys(const DualMode& mode, const std::set<Ptr<AST::Ty>>& tys);
     Ptr<AST::Ty> JoinOrMeetTupleTy(const DualMode& mode, const std::set<Ptr<AST::Ty>>& tys);
 
     void AddFinalErrMsgs(const AST::Ty& ty, bool isJoin);

@@ -5,23 +5,23 @@
 // See https://cangjie-lang.cn/pages/LICENSE for license information.
 // ASTKIND(ast kind, ast value for human reading, ast node, ast size for notify checking related code)
 #ifdef ASTKIND
-ASTKIND(ANNOTATION, "annotation", Annotation, 512)
+ASTKIND(ANNOTATION, "annotation", Annotation, 528)
 ASTKIND(MODIFIER, "modifier", Modifier, 264)
 ASTKIND(DECL, "*decl", Decl, 728) // begin of subtypes of Decl.
 ASTKIND(MAIN_DECL, "main_decl", MainDecl, 752)
 ASTKIND(FUNC_DECL, "func_decl", FuncDecl, 824)
 ASTKIND(MACRO_DECL, "macro_decl", MacroDecl, 744)
-ASTKIND(CLASS_LIKE_DECL, "class_like_decl", ClassLikeDecl, 824) // begin: subtypes of ClassLikeDecl and InheritableDecl.
-ASTKIND(CLASS_DECL, "class_decl", ClassDecl, 840)
-ASTKIND(INTERFACE_DECL, "interface_decl", InterfaceDecl, 832) // end: subtypes of ClassLikeDecl.
-ASTKIND(EXTEND_DECL, "extend_decl", ExtendDecl, 888)
-ASTKIND(ENUM_DECL, "enum_decl", EnumDecl, 928)
-ASTKIND(STRUCT_DECL, "struct_decl", StructDecl, 792) // end of subtypes of InheritableDecl.
+ASTKIND(CLASS_LIKE_DECL, "class_like_decl", ClassLikeDecl, 832) // begin: subtypes of ClassLikeDecl and InheritableDecl.
+ASTKIND(CLASS_DECL, "class_decl", ClassDecl, 848)
+ASTKIND(INTERFACE_DECL, "interface_decl", InterfaceDecl, 840) // end: subtypes of ClassLikeDecl.
+ASTKIND(EXTEND_DECL, "extend_decl", ExtendDecl, 896)
+ASTKIND(ENUM_DECL, "enum_decl", EnumDecl, 936)
+ASTKIND(STRUCT_DECL, "struct_decl", StructDecl, 800) // end of subtypes of InheritableDecl.
 ASTKIND(TYPE_ALIAS_DECL, "type_alias_decl", TypeAliasDecl, 760)
 ASTKIND(PRIMARY_CTOR_DECL, "primary_ctor_decl", PrimaryCtorDecl, 744)
 ASTKIND(BUILTIN_DECL, "builtin_decl", BuiltInDecl, 736)
 ASTKIND(VAR_DECL, "var_decl", VarDecl, 808) // begin of subtypes of VarDecl and VarDeclAbstract.
-ASTKIND(PROP_DECL, "prop_decl", PropDecl, 896)
+ASTKIND(PROP_DECL, "prop_decl", PropDecl, 920)
 ASTKIND(MACRO_EXPAND_PARAM, "macro_expand_param", MacroExpandParam, 1648)
 ASTKIND(FUNC_PARAM, "func_param", FuncParam, 872)                                // end of subtypes of VarDecl.
 ASTKIND(VAR_WITH_PATTERN_DECL, "var_with_pattern_decl", VarWithPatternDecl, 800) // end of subtypes of VarDeclAbstract.
@@ -48,7 +48,7 @@ ASTKIND(CONSTANT_TYPE, "constant_type", ConstantType, 416)
 ASTKIND(VARRAY_TYPE, "varray_type", VArrayType, 464)
 ASTKIND(PRIMITIVE_TYPE, "primitive_type", PrimitiveType, 424)
 ASTKIND(PAREN_TYPE, "paren_type", ParenType, 440)
-ASTKIND(FUNC_TYPE, "func_type", FuncType, 488)
+ASTKIND(FUNC_TYPE, "func_type", FuncType, 512)
 ASTKIND(TUPLE_TYPE, "tuple_type", TupleType, 472)
 ASTKIND(THIS_TYPE, "this_type", ThisType, 384)
 ASTKIND(INVALID_TYPE, "invalid_type", InvalidType, 384) // end of subtypes of Type.
@@ -105,7 +105,8 @@ ASTKIND(MATCH_CASE, "match_case", MatchCase, 360)
 ASTKIND(MATCH_CASE_OTHER, "match_case_other", MatchCaseOther, 296)
 ASTKIND(FUNC_ARG, "func_arg", FuncArg, 416)
 ASTKIND(FUNC_PARAM_LIST, "func_param_list", FuncParamList, 344)
-ASTKIND(FUNC_BODY, " func_body", FuncBody, 448)
+ASTKIND(THROWS_CLAUSE, "throws_clause", ThrowsClause, 368)
+ASTKIND(FUNC_BODY, " func_body", FuncBody, 464)
 ASTKIND(STRUCT_BODY, "struct_body", StructBody, 328)
 ASTKIND(CLASS_BODY, "class_body", ClassBody, 328)
 ASTKIND(INTERFACE_BODY, "interface_body", InterfaceBody, 328)

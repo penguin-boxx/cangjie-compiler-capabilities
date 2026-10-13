@@ -40,8 +40,7 @@ OwnedPtr<AST::Pattern> Parser::ParsePattern()
     return impl->ParsePattern();
 }
 std::vector<OwnedPtr<AST::Node>> Parser::ParseNodes(std::variant<ScopeKind, ExprKind> scope,
-    AST::Node& currentMacroCall, const std::set<AST::Modifier>& modifiers,
-    std::vector<OwnedPtr<AST::Annotation>> annos)
+    AST::Node& currentMacroCall, const std::set<AST::Modifier>& modifiers, std::vector<OwnedPtr<AST::Annotation>> annos)
 {
     return impl->ParseNodes(scope, currentMacroCall, modifiers, std::move(annos));
 }
@@ -110,6 +109,19 @@ bool Parser::IsEHEnabled() const
     return impl->enableEH;
 }
 
+Parser& Parser::SetChexcEnabled(bool enabled)
+{
+    // Parser-side only: 'throws' and 'captures' stay ordinary identifiers in the lexer and are
+    // recognized by spelling at the few positions a clause may start (SeeingChexcClause).
+    impl->enableChexc = enabled;
+    return *this;
+}
+
+bool Parser::IsChexcEnabled() const
+{
+    return impl->enableChexc;
+}
+
 TokenVecMap Parser::GetCommentsMap() const
 {
     return impl->commentsMap;
@@ -126,6 +138,8 @@ void Parser::SetCompileOptions(const GlobalOptions& opts)
     // keywords, so we disable them from the parser unless the user
     // explicitly asks to compile with effect handler support
     SetEHEnabled(opts.enableEH);
+    // Same for the checked-exceptions `throws` keyword.
+    SetChexcEnabled(opts.CheckingExceptions());
 }
 
 bool Parser::Skip(TokenKind kind)
@@ -200,9 +214,12 @@ Parser::~Parser()
 // implementation of ParserImpl
 ParserImpl::ParserImpl(unsigned int fileID, const std::string& input, DiagnosticEngine& diag, SourceManager& sm,
     bool attachComment, bool parsingDeclFiles)
-    : diag(diag), sourceManager(sm),
+    : diag(diag),
+      sourceManager(sm),
       lexer{std::make_unique<Lexer>(fileID, input, diag, sm, attachComment)},
-      enableAttachComment(attachComment), parseDeclFile{parsingDeclFiles}, mpImpl{new MPParserImpl(*this)},
+      enableAttachComment(attachComment),
+      parseDeclFile{parsingDeclFiles},
+      mpImpl{new MPParserImpl(*this)},
       ffiParser{new FFIParserImpl(*this)}
 {
     // do not call EnterXXXMod here because that would then call enter that mod in lexer, but lexer would initialize
@@ -212,9 +229,12 @@ ParserImpl::ParserImpl(unsigned int fileID, const std::string& input, Diagnostic
 
 ParserImpl::ParserImpl(const std::string& input, DiagnosticEngine& diag, SourceManager& sm, const Position& pos,
     bool attachComment, bool parsingDeclFiles)
-    : diag(diag), sourceManager(sm),
+    : diag(diag),
+      sourceManager(sm),
       lexer{std::make_unique<Lexer>(input, diag, sm, pos, attachComment)},
-      enableAttachComment{attachComment}, parseDeclFile{parsingDeclFiles}, mpImpl{new MPParserImpl(*this)},
+      enableAttachComment{attachComment},
+      parseDeclFile{parsingDeclFiles},
+      mpImpl{new MPParserImpl(*this)},
       ffiParser{new FFIParserImpl(*this)}
 {
     ctx.push_back(ParserContext::NORMAL);
@@ -222,9 +242,12 @@ ParserImpl::ParserImpl(const std::string& input, DiagnosticEngine& diag, SourceM
 
 ParserImpl::ParserImpl(const std::vector<Token>& inputTokens, DiagnosticEngine& diag, SourceManager& sm,
     bool attachComment, bool parsingDeclFiles)
-    : diag(diag), sourceManager(sm),
+    : diag(diag),
+      sourceManager(sm),
       lexer{std::make_unique<Lexer>(inputTokens, diag, sm, attachComment)},
-      enableAttachComment{attachComment}, parseDeclFile{parsingDeclFiles}, mpImpl{new MPParserImpl(*this)},
+      enableAttachComment{attachComment},
+      parseDeclFile{parsingDeclFiles},
+      mpImpl{new MPParserImpl(*this)},
       ffiParser{new FFIParserImpl(*this)}
 {
     ctx.push_back(ParserContext::NORMAL);
@@ -256,8 +279,12 @@ bool ParserImpl::CanBeAbstract(const AST::Decl& decl, ScopeKind scopeKind) const
         }
         case ASTKind::PROP_DECL: {
             auto pd = StaticAs<ASTKind::PROP_DECL>(pdecl);
-            if (!pd->getters.empty() || !pd->setters.empty()) {
-                return false;
+            for (const auto* accessors : {&pd->getters, &pd->setters}) {
+                for (const auto& accessor : *accessors) {
+                    if (accessor->funcBody && accessor->funcBody->body) {
+                        return false;
+                    }
+                }
             }
             break;
         }
@@ -268,7 +295,8 @@ bool ParserImpl::CanBeAbstract(const AST::Decl& decl, ScopeKind scopeKind) const
             }
             break;
         }
-        default: break;
+        default:
+            break;
     }
 
     if (scopeKind == ScopeKind::INTERFACE_BODY) {
@@ -285,8 +313,7 @@ void ParserImpl::CheckConstructorBody(AST::FuncDecl& ctor, ScopeKind scopeKind, 
 {
     CJC_ASSERT(ctor.TestAttr(Attribute::CONSTRUCTOR));
     if (ctor.funcBody && ctor.funcBody->retType) {
-        ParseDiagnoseRefactor(
-            DiagKindRefactor::parse_invalid_return_type, *ctor.funcBody->retType, "constructor");
+        ParseDiagnoseRefactor(DiagKindRefactor::parse_invalid_return_type, *ctor.funcBody->retType, "constructor");
         ctor.EnableAttr(Attribute::HAS_BROKEN);
     }
     /*
@@ -350,4 +377,4 @@ const ParserImpl::CombinatorInfo* ParserImpl::LookupSeenCombinator()
     }
     return nullptr;
 }
-}
+} // namespace Cangjie

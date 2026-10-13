@@ -49,6 +49,10 @@ inline const std::string CHIR_READABLE_FILE_EXTENSION = ".chirtxt";
 
 // Built-in type name.
 inline const std::string CLASS_EXCEPTION = "Exception";
+inline const std::string CLASS_UNCHECKED_EXCEPTION = "UncheckedException";
+/// Checked exceptions: the escape hatch, a compiler intrinsic with a library-visible signature.
+/// Named for the capability it fabricates; its effect twin will be 'unsafeCanPerform'.
+inline const std::string UNSAFE_CAN_THROW = "unsafeCanThrow";
 inline const std::string CLASS_ERROR = "Error";
 inline const std::string CLASS_COMMAND = "Command";
 inline const std::string CLASS_HANDLER_FRAME = "HandlerFrame";

@@ -292,7 +292,7 @@ void ASTChecker::CheckFeaturesSet(Ptr<Node> node)
 void ASTChecker::CheckFeatureId(Ptr<Node> node)
 {
     auto fc = StaticAs<ASTKind::FEATURE_ID>(node);
-    for (auto &ident : fc->identifiers) {
+    for (auto& ident : fc->identifiers) {
         EMPTY_IDENTIFIER_CHECK(node, ident);
     }
     VEC_ZERO_POS_CHECK(node, fc->dotPoses);
@@ -369,10 +369,12 @@ void ASTChecker::CheckPropDecl(Ptr<Node> node)
     auto pd = StaticAs<ASTKind::PROP_DECL>(node);
     ZERO_POSITION_CHECK(node, pd->colonPos);
     AST_NULLPTR_CHECK(node, pd->type);
-    ZERO_POSITION_CHECK(node, pd->leftCurlPos);
+    if (!pd->TestAttr(Attribute::ABSTRACT)) {
+        ZERO_POSITION_CHECK(node, pd->leftCurlPos);
+        ZERO_POSITION_CHECK(node, pd->rightCurlPos);
+    }
     VEC_AST_NULLPTR_CHECK(node, pd->getters);
     VEC_AST_NULLPTR_CHECK(node, pd->setters);
-    ZERO_POSITION_CHECK(node, pd->rightCurlPos);
 }
 void ASTChecker::CheckClassLikeDecl(Ptr<Node> node)
 {
@@ -614,7 +616,7 @@ void ASTChecker::CheckPerformExpr(Ptr<Node> node)
 {
     auto pe = StaticAs<ASTKind::PERFORM_EXPR>(node);
     ZERO_POSITION_CHECK(node, pe->performPos);
-    AST_NULLPTR_CHECK(node, pe->expr)   ;
+    AST_NULLPTR_CHECK(node, pe->expr);
 }
 void ASTChecker::CheckResumeExpr(Ptr<Node> node)
 {
@@ -782,6 +784,13 @@ void ASTChecker::CheckFuncType(Ptr<Node> node)
     ZERO_POSITION_CHECK(node, ft->rightParenPos);
     ZERO_POSITION_CHECK(node, ft->arrowPos);
     AST_NULLPTR_CHECK(node, ft->retType);
+}
+void ASTChecker::CheckThrowsClause(Ptr<Node> node)
+{
+    auto tc = StaticAs<ASTKind::THROWS_CLAUSE>(node);
+    ZERO_POSITION_CHECK(node, tc->throwsPos);
+    VEC_AST_NULLPTR_CHECK(node, tc->capTypes);
+    VEC_ZERO_POS_CHECK(node, tc->commaPosVector);
 }
 void ASTChecker::CheckOptionType(Ptr<Node> node)
 {

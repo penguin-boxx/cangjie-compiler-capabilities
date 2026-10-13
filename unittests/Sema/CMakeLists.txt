@@ -24,6 +24,10 @@ target_link_libraries(
     TestCompilerInstanceObject)
 add_test(NAME TypeCheckerTest COMMAND TypeCheckerTest)
 
+add_executable(CapabilityEscapeTest CapabilityEscapeTest.cpp)
+target_link_libraries(CapabilityEscapeTest cangjie-lsp ${LINK_LIBS} boundscheck-static GTest::gtest GTest::gtest_main)
+add_test(NAME CapabilityEscapeTest COMMAND CapabilityEscapeTest)
+
 add_executable(GenericTest GenericTest.cpp)
 target_link_libraries(
     GenericTest

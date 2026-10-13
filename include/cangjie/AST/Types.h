@@ -697,6 +697,15 @@ struct FuncTy : Ty {
      * type will ever be up-cast to it. Which means implicit boxing for variance should be allowed.
      */
     const bool noCast{false};
+    /**
+     * Checked exceptions (experimental, behind '--experimental --enable-chexc'): exception capability
+     * types of the `throws` clause. Part of the interned type identity (Hash/operator==), so
+     * functional types differing only in capability lists are distinct types (compared by set
+     * subsumption in subtyping). NOT part of 'typeArgs': fully erased for CHIR/codegen.
+     * W: Sema.
+     * R: Sema.
+     */
+    const std::vector<Ptr<Ty>> capTys{};
     /** Constructor.
      * U: Sema, CHIR, Modules.
      */
@@ -706,19 +715,22 @@ struct FuncTy : Ty {
         const bool hasVariableLenArg{false};
         const bool noCast{false};
     };
-    FuncTy(std::vector<Ptr<Ty>> paramVector, Ptr<Ty> rType, const Config cfg = {false, false, false, false})
+    FuncTy(std::vector<Ptr<Ty>> paramVector, Ptr<Ty> rType, const Config cfg = {false, false, false, false},
+        std::vector<Ptr<Ty>> capVector = {})
         : Ty(TypeKind::TYPE_FUNC),
           paramTys(std::move(paramVector)),
           retTy(rType),
           isC(cfg.isC),
           isClosureTy(cfg.isClosureTy),
           hasVariableLenArg(cfg.hasVariableLenArg),
-          noCast(cfg.noCast)
+          noCast(cfg.noCast),
+          capTys(std::move(capVector))
     {
         typeArgs = paramTys;
         // Currently, only CFunc has variable length parameters.
-        invalid = !Ty::AreTysCorrect(typeArgs) || !Ty::IsTyCorrect(rType) || (!isC && hasVariableLenArg);
-        generic = Ty::ExistGeneric(typeArgs) || (rType && rType->HasGeneric());
+        invalid = !Ty::AreTysCorrect(typeArgs) || !Ty::IsTyCorrect(rType) || (!isC && hasVariableLenArg) ||
+            !Ty::AreTysCorrect(capTys);
+        generic = Ty::ExistGeneric(typeArgs) || (rType && rType->HasGeneric()) || Ty::ExistGeneric(capTys);
         typeArgs.emplace_back(retTy);
     }
     /** Return the unique name of a ty.

@@ -23,6 +23,7 @@
 #include "NativeFFI/ObjC/AfterTypeCheck/Desugar.h"
 #include "TypeCheckUtil.h"
 #include "TypeCheckerImpl.h"
+#include "cangjie/Sema/CapabilityCheck.h"
 
 #include "cangjie/AST/ASTCasting.h"
 #include "cangjie/AST/Clone.h"
@@ -99,8 +100,8 @@ void TrySetMappedExprForProp(Expr& expr, Ptr<Expr> mapExpr)
     }
 }
 
-std::vector<OwnedPtr<FuncArg>> GetFuncArgsForDesugaredPropDecl(
-    TypeManager& tyMgr, Expr& expr, Ty& propTy, Ptr<Expr> mapExpr, FuncDecl& getFunc)
+std::vector<OwnedPtr<FuncArg>> GetFuncArgsForDesugaredPropDecl(TypeManager& tyMgr, Expr& expr, Ty& propTy,
+    Ptr<Expr> mapExpr, FuncDecl& getFunc, const Sema::EffectiveCapabilityType& effective)
 {
     std::vector<OwnedPtr<FuncArg>> args;
     TokenKind op = TokenKind::ADD;
@@ -136,7 +137,12 @@ std::vector<OwnedPtr<FuncArg>> GetFuncArgsForDesugaredPropDecl(
     auto leftBaseExpr = mapExpr ? CreateMemberAccess(ASTCloner::Clone(mapExpr), getFunc)
                                 : OwnedPtr<Expr>(CreateRefExpr(getFunc).release());
     // 'getFunc' may be generic type, which need to be update to real used type.
-    leftBaseExpr->SetTy(tyMgr.GetFunctionTy({}, &propTy));
+    // Checked exceptions: the accessor's own 'throws' clause must ride on the synthesized callee
+    // type, or the use site demands nothing.
+    leftBaseExpr->SetTy(effective(getFunc,
+        tyMgr.GetFunctionTy(
+            {}, &propTy, {}, GetInstantiatedAccessorCapTys(tyMgr, getFunc, mapExpr ? mapExpr->GetTy() : nullptr)),
+        false));
     auto isMemberAccessSuperCall = false;
     if (auto ma = DynamicCast<MemberAccess*>(leftBaseExpr.get()); ma) {
         CJC_NULLPTR_CHECK(ma->baseExpr);
@@ -161,7 +167,7 @@ std::vector<OwnedPtr<FuncArg>> GetFuncArgsForDesugaredPropDecl(
 /**
  * Desugar of propDecl get is happened after sema well-typed.
  */
-void DesugarGetForPropDecl(TypeManager& tyMgr, Expr& expr)
+void DesugarGetForPropDecl(TypeManager& tyMgr, Expr& expr, const Sema::EffectiveCapabilityType& effective)
 {
     // 1. Do not desugar for expression which already has desugared result.
     // 2. Do not desugar as property get for left value.
@@ -182,11 +188,13 @@ void DesugarGetForPropDecl(TypeManager& tyMgr, Expr& expr)
         return;
     }
     OwnedPtr<Expr> baseExpr;
+    Ptr<Ty> receiverTy = nullptr;
     bool isMemberAccessSuperCall = false;
     if (auto ma = DynamicCast<MemberAccess*>(&expr); ma) {
         if (!ma->baseExpr) {
             return; // Current node may be desugared by other process.
         }
+        receiverTy = ma->baseExpr->GetTy();
         if (auto ref = DynamicCast<RefExpr*>(ma->baseExpr.get()); ref) {
             isMemberAccessSuperCall = ref->isSuper;
         }
@@ -195,7 +203,11 @@ void DesugarGetForPropDecl(TypeManager& tyMgr, Expr& expr)
         baseExpr = CreateRefExpr(*getFunc);
     }
     // 'getFunc' may be generic type, which need to be update to real used type.
-    baseExpr->SetTy(tyMgr.GetFunctionTy({}, expr.GetTy()));
+    // Checked exceptions: carry the accessor's capability list onto the synthesized callee type.
+    baseExpr->SetTy(effective(*getFunc,
+        tyMgr.GetFunctionTy(
+            {}, expr.GetTy(), {}, GetInstantiatedAccessorCapTys(tyMgr, *StaticCast<FuncDecl*>(getFunc), receiverTy)),
+        false));
     CopyBasicInfo(&expr, baseExpr.get());
     auto lastCallExpr = CreateCallExpr(std::move(baseExpr), {});
     lastCallExpr->callKind = isMemberAccessSuperCall ? CallKind::CALL_SUPER_FUNCTION : CallKind::CALL_DECLARED_FUNCTION;
@@ -209,7 +221,7 @@ void DesugarGetForPropDecl(TypeManager& tyMgr, Expr& expr)
 /**
  * Desugar of propDecl set is happened after sema well-typed.
  */
-void DesugarSetForPropDecl(TypeManager& tyMgr, Expr& expr)
+void DesugarSetForPropDecl(TypeManager& tyMgr, Expr& expr, const Sema::EffectiveCapabilityType& effective)
 {
     if (expr.desugarExpr || !Ty::IsTyCorrect(expr.GetTy())) {
         return;
@@ -242,11 +254,17 @@ void DesugarSetForPropDecl(TypeManager& tyMgr, Expr& expr)
     subExpr->EnableAttr(Attribute::UNREACHABLE);
 
     // Since current desugar happens inside sema stage, we cannot use 'move' to create new node.
+    Ptr<Ty> receiverTy =
+        subExpr->astKind == ASTKind::MEMBER_ACCESS ? RawStaticCast<MemberAccess*>(subExpr)->baseExpr->GetTy() : nullptr;
     auto baseExpr = subExpr->astKind == ASTKind::MEMBER_ACCESS
         ? CreateMemberAccess(ASTCloner::Clone(RawStaticCast<MemberAccess*>(subExpr)->baseExpr.get()), *setFunc)
         : OwnedPtr<Expr>(CreateRefExpr(*setFunc).release());
     // 'setFunc' may be generic type, which need to be update to real used type.
-    baseExpr->SetTy(tyMgr.GetFunctionTy({subExpr->GetTy()}, TypeManager::GetPrimitiveTy(TypeKind::TYPE_UNIT)));
+    // Checked exceptions: carry the accessor's capability list onto the synthesized callee type.
+    baseExpr->SetTy(effective(*setFunc,
+        tyMgr.GetFunctionTy({subExpr->GetTy()}, TypeManager::GetPrimitiveTy(TypeKind::TYPE_UNIT), {},
+            GetInstantiatedAccessorCapTys(tyMgr, *setFunc, receiverTy)),
+        false));
     CopyBasicInfo(subExpr, baseExpr.get());
     Ptr<Expr> basePtr = nullptr;
     // For refExpr case, 'a += b' is desugared to aSet(aGet() + b), there is no side effect to be handle.
@@ -265,7 +283,7 @@ void DesugarSetForPropDecl(TypeManager& tyMgr, Expr& expr)
             ma->baseExpr->mapExpr = basePtr;
         }
     }
-    auto args = GetFuncArgsForDesugaredPropDecl(tyMgr, expr, *subExpr->GetTy(), basePtr, *getFunc);
+    auto args = GetFuncArgsForDesugaredPropDecl(tyMgr, expr, *subExpr->GetTy(), basePtr, *getFunc, effective);
     auto lastCallExpr = CreateCallExpr(std::move(baseExpr), std::move(args));
     CopyBasicInfo(subExpr, lastCallExpr.get());
     lastCallExpr->callKind = isMemberAccessSuperCall ? CallKind::CALL_SUPER_FUNCTION : CallKind::CALL_DECLARED_FUNCTION;
@@ -306,6 +324,7 @@ void TypeChecker::TypeCheckerImpl::PerformDesugarAfterSema(std::vector<Ptr<AST::
 {
     TyVarScope ts(typeManager);
     for (auto& pkg : pkgs) {
+        capabilityConsumer = pkg;
         PerformDesugarAfterTypeCheck(*ci->pkgCtxMap[pkg], *pkg);
         TryDesugarForCoalescing(*pkg);
         AutoBoxing autoBox(typeManager);
@@ -411,11 +430,13 @@ void TypeChecker::TypeCheckerImpl::DesugarForPropDecl(Node& pkg)
         switch (node->astKind) {
             case ASTKind::REF_EXPR:
             case ASTKind::MEMBER_ACCESS:
-                DesugarGetForPropDecl(typeManager, *StaticAs<ASTKind::EXPR>(node));
+                DesugarGetForPropDecl(typeManager, *StaticAs<ASTKind::EXPR>(node),
+                    [this](const Decl& decl, Ptr<Ty> ty, bool writing) { return EffectiveUseType(decl, ty, writing); });
                 break;
             case ASTKind::ASSIGN_EXPR:
             case ASTKind::INC_OR_DEC_EXPR:
-                DesugarSetForPropDecl(typeManager, *StaticAs<ASTKind::EXPR>(node));
+                DesugarSetForPropDecl(typeManager, *StaticAs<ASTKind::EXPR>(node),
+                    [this](const Decl& decl, Ptr<Ty> ty, bool writing) { return EffectiveUseType(decl, ty, writing); });
                 break;
             default:
                 break;

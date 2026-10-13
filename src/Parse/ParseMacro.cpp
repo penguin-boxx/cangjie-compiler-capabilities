@@ -242,6 +242,15 @@ OwnedPtr<FuncBody> ParserImpl::ParseMacroBody(AST::MacroDecl& macro)
         ret->retType->EnableAttr(Attribute::IN_MACRO);
         ret->retType->EnableAttr(Attribute::COMPILER_ADD);
     }
+    // Checked exceptions (experimental): a macro is a callable like any other and may declare what
+    // it throws while it expands -- every macro in stdx raises a 'MacroException' and documents it.
+    // 'performs' is refused: a macro body runs inside the compiler, where no handler of a user
+    // effect can be installed. Rejecting it is the conservative reading; widening is compatible.
+    ParseCapabilityClauses(*ret);
+    if (ret->performsClause) {
+        ParseDiagnoseRefactor(DiagKindRefactor::parse_clause_on_macro, *ret->performsClause, "performs");
+        ret->performsClause.reset();
+    }
     if (Seeing(TokenKind::LCURL)) {
         ret->body = ParseBlock(ScopeKind::MACRO_BODY);
     } else {

@@ -200,7 +200,8 @@ private:
     flatbuffers::Offset<NodeFormat::MacroExpandDecl> SerializeMacroExpandDecl(
         const AST::MacroExpandDecl* macroExpandDecl);
     flatbuffers::Offset<NodeFormat::Decl> SerializeDeclOfFuncParam(const AST::Decl* decl);
-    flatbuffers::Offset<NodeFormat::Decl> SerializeDeclOfMacroExpandParam(const AST::Decl* decl); 
+    flatbuffers::Offset<NodeFormat::Decl> SerializeDeclOfMacroExpandParam(const AST::Decl* decl);
+    flatbuffers::Offset<NodeFormat::CapabilityClause> SerializeCapabilityClause(const AST::ThrowsClause* clause);
     flatbuffers::Offset<NodeFormat::FuncBody> SerializeFuncBody(AstFuncBody funcBody);
     flatbuffers::Offset<NodeFormat::FuncParam> SerializeFuncParam(AstFuncParam funcParam);
     flatbuffers::Offset<NodeFormat::FuncParam> SerializeMacroExpandParam(AstMacroExpandParam mep);

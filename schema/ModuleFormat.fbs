@@ -135,6 +135,10 @@ table ClassInfo {
   annoTargets:uint8;   // available if current class is custom annotation
   runtimeVisible:bool;
   annoTargets2:uint8;
+  // Checked exceptions: the 'captures' clause, demanded at every
+  // construction site. Appended last, so a .cjo written before this feature still loads.
+  capturesTypes:[uint32];
+  capturing:bool = false;
 }
 table InterfaceInfo {
   inheritedTypes:[uint32];
@@ -144,6 +148,9 @@ table StructInfo {
   inheritedTypes:[uint32];
   body:[uint32];
   adInfo:AutoDiffInfo;
+  // Checked exceptions: see ClassInfo.capturesTypes.
+  capturesTypes:[uint32];
+  capturing:bool = false;
 }
 table EnumInfo {
   inheritedTypes:[uint32];
@@ -592,6 +599,11 @@ table FuncTyInfo {
   retType:uint32; // Func return type
   isC:bool;       // CFunc or @C func type.
   hasVariableLenArg:bool;
+  // Checked exceptions: the capability list of the functional type, i.e. the
+  // exception types of its 'throws' clause. Kept OUT of typeArgs, which holds the parameter
+  // types: capabilities are erased for codegen and must not be mistaken for type arguments.
+  // Appended last, so a .cjo written before this feature still loads (the field reads as empty).
+  capTypes:[uint32];
 }
 table CompositeTyInfo {
   declPtr:FullId;
@@ -678,9 +690,26 @@ enum OptimizationLevel : uint8 {
   O0, O1, O2, O3, Os, Oz
 }
 
+/// Checked exceptions: the severity capability checking ran at when the package was compiled.
+/// 'Off' also covers every package produced before the feature existed, which is what the default
+/// gives an old '.cjo'.
+enum ChexcLevel : byte {
+  Off = 0,
+  Warn,
+  Error
+}
+
 table CompilationOptions {
   optimization_level: OptimizationLevel;
   debug: bool;
+  // Both checking levels are producer facts. The historical 'effects_enabled' bit only records
+  // handler-feature enablement; it does not establish checked-effect trust. Missing level fields
+  // default to Off. 'records_capabilities' distinguishes artifacts predating this metadata.
+  chexc_level: ChexcLevel = Off;
+  effects_enabled: bool = false;
+  records_capabilities: bool = false;
+  effects_level: ChexcLevel = Off;
+  modal_enabled: bool = false;
 }
 
 // all SemaTys, decls are saved here, and indexed by other nodes.

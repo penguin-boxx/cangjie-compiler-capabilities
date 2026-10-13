@@ -15,6 +15,7 @@
 
 #include "cangjie/AST/Node.h"
 #include "cangjie/Basic/DiagnosticEngine.h"
+#include "cangjie/Modules/PackageCapabilityInfo.h"
 #include "cangjie/Sema/TypeManager.h"
 
 namespace Cangjie {
@@ -66,6 +67,12 @@ public:
     std::string GetPackageDepInfo(const std::string& cjoPath) const;
 
     Ptr<AST::PackageDecl> GetPackageDecl(const std::string& fullPackageName) const;
+    /**
+     * Checked exceptions: the capability metadata of a loaded package -- the level its lists were
+     * verified at, whether effect handlers were on, whether it carries the metadata at all. A
+     * package that is not loaded, or one written before the feature, reports the defaults.
+     */
+    PackageCapabilityInfo GetPackageCapabilityInfo(const std::string& fullPackageName) const;
     /* Load files from common part to current package.
      * This is required to correctly handle imports from common part.
      */

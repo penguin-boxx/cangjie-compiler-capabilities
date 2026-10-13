@@ -24,6 +24,7 @@
 #include "cangjie/Basic/DiagnosticEngine.h"
 #include "cangjie/CHIR/Interpreter/BCHIR.h"
 #include "cangjie/Modules/CjoManager.h"
+#include "cangjie/Modules/PackageCapabilityInfo.h"
 #include "cangjie/Utils/CheckUtils.h"
 
 #include "CjoManager.h"
@@ -304,6 +305,8 @@ public:
      * @return if found, return the packageDecl, otherwise return nullptr.
      */
     Ptr<AST::PackageDecl> GetPackageDecl(const std::string& fullPackageName) const;
+    /** Checked exceptions: capability metadata of an imported package; see 'CjoManager'. */
+    PackageCapabilityInfo GetPackageCapabilityInfo(const std::string& fullPackageName) const;
     Ptr<AST::Package> GetPackage(const std::string& fullPackageName) const;
     void SetImportedPackageFromASTNode(std::vector<OwnedPtr<AST::Package>>& pkgs);
     using DeclImportsMap = std::unordered_map<Ptr<const AST::Decl>, std::vector<Ptr<const AST::ImportSpec>>>;

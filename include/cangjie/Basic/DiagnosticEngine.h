@@ -542,17 +542,20 @@ public:
         auto set = diagnostics[cate];
         return std::vector<Diagnostic>{set.begin(), set.end()};
     }
+    static uint8_t CapabilityAxis(const Diagnostic& diagnostic);
     struct hashFunc {
         // Only take the position and severity into account, if it is too restricted.
         size_t operator()(const Diagnostic& diag) const
         {
-            return (diag.mainHint.range.Hash() >> 1) ^ (diag.diagSeverity == DiagSeverity::DS_ERROR);
+            return (diag.mainHint.range.Hash() >> 1) ^ (diag.diagSeverity == DiagSeverity::DS_ERROR) ^
+                (static_cast<size_t>(CapabilityAxis(diag)) << 2);
         }
     };
     struct equalFunc {
         bool operator()(const Diagnostic& a, const Diagnostic& b) const
         {
-            return a.mainHint.range.EqualForHash(b.mainHint.range) && (a.diagSeverity == b.diagSeverity);
+            return a.mainHint.range.EqualForHash(b.mainHint.range) && (a.diagSeverity == b.diagSeverity) &&
+                CapabilityAxis(a) == CapabilityAxis(b);
         }
     };
     void Clear() const override

@@ -313,6 +313,9 @@ protected:
             if (!instTys.empty() && !re.ref.targets.empty()) {
                 std::unordered_set<Ptr<Ty>> tys;
                 for (auto decl : re.ref.targets) {
+                    if (!decl || !checker.EnsureContract(ctx, *decl, re)) {
+                        continue;
+                    }
                     auto typeMapping = TypeCheckUtil::GenerateTypeMapping(*decl, instTys);
                     tys.emplace(checker.typeManager.GetInstantiatedTy(decl->GetTy(), typeMapping));
                 }
@@ -333,11 +336,14 @@ protected:
         auto baseMapping = TypeCheckUtil::MultiTypeSubstToTypeSubst(mts);
         std::unordered_set<Ptr<Ty>> tys;
         for (auto decl : candidates) {
+            if (!decl || !checker.EnsureContract(ctx, *decl, *expr)) {
+                continue;
+            }
             auto typeMapping = TypeCheckUtil::GenerateTypeMapping(*decl, typeArgs);
             typeMapping.insert(baseMapping.begin(), baseMapping.end());
             auto instTy = checker.typeManager.GetInstantiatedTy(decl->GetTy(), typeMapping);
             if (auto fTy = DynamicCast<FuncTy>(instTy); fTy && Is<ClassThisTy>(fTy->retTy)) {
-                instTy = checker.typeManager.GetFunctionTy(fTy->paramTys, &baseTy);
+                instTy = checker.typeManager.GetFunctionTy(fTy->paramTys, &baseTy, {}, fTy->capTys);
             }
             tys.emplace(instTy);
         }
@@ -471,7 +477,7 @@ protected:
         if (base.value.hasDecl) {
             std::unordered_set<Ptr<Ty>> varTys;
             for (auto decl : base.value.decls) {
-                if (!decl || !Ty::IsTyCorrect(decl->GetTy())) {
+                if (!decl || !checker.EnsureContract(ctx, *decl, ce)) {
                     continue;
                 }
                 if (decl->IsTypeDecl()) {

@@ -543,8 +543,67 @@ static Ptr<Ty> CheckFuncReturnType(Ptr<Ty> ty)
     return retTy;
 }
 
+namespace {
+std::string DescribeCapTys(const std::vector<Ptr<Ty>>& capTys)
+{
+    if (capTys.empty()) {
+        return "nothing";
+    }
+    std::string text;
+    for (auto cap : capTys) {
+        text += (text.empty() ? "'" : ", '") + Ty::ToString(cap) + "'";
+    }
+    return text;
+}
+} // namespace
+
 void MPTypeCheckerImpl::CheckMatchedFunctionReturnTypes(FuncDecl& specificFunc, FuncDecl& commonFunc)
 {
+    // Checked exceptions ("Overriding and redefinition", multiplatform matching): a specific
+    // function matches its common one only if their capability lists are equal up to
+    // normalization -- as sets, up to coverage. Equality, not the narrowing an override may do:
+    // common callers pay the common list whatever the platform does, so a differing specific list
+    // would let the platform surfaces diverge silently. Pairing itself is blind to lists (a list
+    // takes no part in overload resolution), so the list is checked on the matched pair, like the
+    // result type below.
+    auto commonFuncTy = DynamicCast<FuncTy*>(commonFunc.GetTy());
+    auto specificFuncTy = DynamicCast<FuncTy*>(specificFunc.GetTy());
+    if (commonFuncTy && specificFuncTy) {
+        // The common list names the common declarations' type parameters; compare at the specific ones.
+        // (The mapping is rebuilt here rather than taken from 'MapCJMPGenericTypeArgs', which also
+        // reports mismatched bounds -- already reported once for this pair.)
+        TypeSubst genericTyMap;
+        auto outerCommon = commonFunc.outerDecl;
+        auto outerSpecific = specificFunc.outerDecl;
+        if (outerCommon && outerSpecific && outerCommon->IsNominalDecl() && Ty::IsTyCorrect(outerCommon->GetTy()) &&
+            Ty::IsTyCorrect(outerSpecific->GetTy()) &&
+            outerCommon->GetTy()->typeArgs.size() == outerSpecific->GetTy()->typeArgs.size()) {
+            for (size_t i = 0; i < outerCommon->GetTy()->typeArgs.size(); ++i) {
+                if (auto commonGeneric = DynamicCast<TyVar*>(outerCommon->GetTy()->typeArgs[i])) {
+                    genericTyMap[commonGeneric] = outerSpecific->GetTy()->typeArgs[i];
+                }
+            }
+        }
+        if (commonFunc.GetGenericsCount() > 0 && commonFunc.GetGenericsCount() == specificFunc.GetGenericsCount()) {
+            auto mapping = typeManager.GenerateGenericMappingFromGeneric(commonFunc, specificFunc);
+            genericTyMap.insert(mapping.begin(), mapping.end());
+        }
+        std::vector<Ptr<Ty>> commonCaps;
+        for (auto cap : commonFuncTy->capTys) {
+            commonCaps.emplace_back(genericTyMap.empty() ? cap : typeManager.GetInstantiatedTy(cap, genericTyMap));
+        }
+        commonCaps = typeManager.NormalizeCapTys(commonCaps);
+        auto& specificCaps = specificFuncTy->capTys;
+        if (!typeManager.IsCapTysSubsumed(specificCaps, commonCaps) ||
+            !typeManager.IsCapTysSubsumed(commonCaps, specificCaps)) {
+            auto builder =
+                diag.DiagnoseRefactor(DiagKindRefactor::sema_specific_has_different_type, specificFunc, "function");
+            builder.AddNote(Sema::MakeRangeForDeclIdentifier(specificFunc),
+                "the capability lists differ: 'specific' requires " + DescribeCapTys(specificCaps) +
+                    ", 'common' requires " + DescribeCapTys(commonCaps) +
+                    "; they must be equal up to order, duplicates and covered entries");
+        }
+    }
     auto commonType = commonFunc.funcBody->GetTy();
     auto specificType = specificFunc.funcBody->GetTy();
 

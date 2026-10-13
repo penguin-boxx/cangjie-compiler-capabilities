@@ -206,6 +206,12 @@ bool OptionTable::ParseShortTermArgs(const std::vector<std::string>& argsStrs, s
         return false;
     }
     auto arg = maybeArg.value();
+    if (!arg.hasJoinedValue &&
+        (arg.info.GetID() == ID::ENABLE_CHECKED_EXCEPTIONS || arg.info.GetID() == ID::ENABLE_CHECKED_EFFECTS) &&
+        idx + 1 < argsStrs.size() && CheckValueInFlags(argsStrs[idx + 1], arg.info)) {
+        arg.value = argsStrs[++idx];
+        arg.str += " " + arg.value;
+    }
     if (arg.argType == ArgType::PartiallyParsed && !ParseSeparatedArgValue(arg, argsStrs, idx)) {
         return false;
     }

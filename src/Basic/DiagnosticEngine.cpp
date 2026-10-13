@@ -918,6 +918,31 @@ static void ConvertOldDiagToNew(Diagnostic& d)
     d.rKind = DiagKindRefactor::lex_diag_begin;
 }
 
+uint8_t CompilerDiagnosticHandler::CapabilityAxis(const Diagnostic& diagnostic)
+{
+    if (diagnostic.warnGroup == WarnGroup::CHEXC) {
+        return 1;
+    }
+    if (diagnostic.warnGroup == WarnGroup::CHECKED_EFFECTS) {
+        return 2;
+    }
+    if (!diagnostic.isRefactor) {
+        return 0;
+    }
+    switch (diagnostic.rKind) {
+        case DiagKindRefactor::sema_chexc_missing_capability:
+        case DiagKindRefactor::sema_chexc_missing_capabilities:
+        case DiagKindRefactor::sema_chexc_override_missing_capability:
+            return 1;
+        case DiagKindRefactor::sema_chexc_missing_handler_capability:
+        case DiagKindRefactor::sema_effect_missing_capabilities:
+        case DiagKindRefactor::sema_effect_override_missing_capability:
+            return 2;
+        default:
+            return 0;
+    }
+}
+
 bool CompilerDiagnosticHandler::SaveDiagnostics(const Diagnostic& d)
 {
     static const std::vector<DiagCategory> CATEGORY_BE_SAVEED = {
@@ -948,10 +973,14 @@ void CompilerDiagnosticHandler::HandleDiagnose(Diagnostic& d)
     if (!d.isRefactor) {
         ConvertOldDiagToNew(d);
     }
-    if (HasPrevDiag(d.mainHint.range.begin, d.errorMessage)) {
+    auto dedupMessage = d.errorMessage;
+    if (auto axis = CapabilityAxis(d); axis != 0) {
+        dedupMessage += "#capability-axis=" + std::to_string(axis);
+    }
+    if (HasPrevDiag(d.mainHint.range.begin, dedupMessage)) {
         return;
     }
-    SetPrevDiag(d.mainHint.range.begin, d.errorMessage);
+    SetPrevDiag(d.mainHint.range.begin, dedupMessage);
 
     // Diagnostic engine can accept diag without position, like driver diagnostics.
     if (!d.mainHint.range.IsDefault()) {

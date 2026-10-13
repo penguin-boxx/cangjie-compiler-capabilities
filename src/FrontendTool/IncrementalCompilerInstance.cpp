@@ -14,12 +14,15 @@
 #include <sstream>
 
 #include "cangjie/AST/Utils.h"
+#include "cangjie/AST/Walker.h"
 #include "cangjie/Basic/StringConvertor.h"
 #include "cangjie/Basic/Version.h"
 #include "cangjie/Driver/TempFileManager.h"
+#include "cangjie/IncrementalCompilation/IncrementalCompilationLogger.h"
 #include "cangjie/Modules/ImportManager.h"
 #include "cangjie/Modules/PackageManager.h"
 #include "cangjie/Parse/ASTHasher.h"
+#include "cangjie/Sema/CapabilityCheck.h"
 #include "cangjie/Sema/IncrementalUtils.h"
 #include "cangjie/Utils/ConstantsUtils.h"
 #include "cangjie/Utils/FileUtil.h"
@@ -29,8 +32,6 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Support/SourceMgr.h"
-#include "cangjie/IncrementalCompilation/IncrementalCompilationLogger.h"
-
 
 #if (defined RELEASE)
 #include "cangjie/Utils/Signal.h"
@@ -42,6 +43,35 @@ using namespace AST;
 IncrementalCompilerInstance::~IncrementalCompilerInstance()
 {
 }
+
+namespace {
+/**
+ * Checked exceptions: whether any declaration scheduled for recompilation takes its capability
+ * list from its own body. For such a declaration a body edit is a signature change, which the
+ * incremental hashes cannot see -- they are computed before the inference that derives the list.
+ * The predicate itself lives in the capability pass, so both askers get the same answer.
+ */
+bool HasRecompiledInferredDecl(const IncreResult& res)
+{
+    for (auto decl : res.declsToRecompile) {
+        for (auto owner = decl; owner; owner = owner->outerDecl) {
+            if (auto fd = DynamicCast<const FuncDecl*>(owner); fd && Sema::IsInferenceEligible(*fd)) {
+                return true;
+            }
+        }
+        bool inferred = false;
+        Walker(decl, [&inferred](Ptr<Node> node) {
+            auto fd = DynamicCast<FuncDecl*>(node);
+            inferred = inferred || (fd && Sema::IsInferenceEligible(*fd));
+            return inferred ? VisitAction::STOP_NOW : VisitAction::WALK_CHILDREN;
+        }).Walk();
+        if (inferred) {
+            return true;
+        }
+    }
+    return false;
+}
+} // namespace
 
 bool IncrementalCompilerInstance::InitCompilerInstance()
 {
@@ -220,6 +250,18 @@ bool IncrementalCompilerInstance::PerformIncrementalScopeAnalysis()
 
     auto increRes = IncrementalScopeAnalysis({rawMangleName2DeclMap, std::move(astCacheInfo), *package, options,
         *importManager, cachedInfo, fileMap, std::move(directExtends)});
+    if (increRes.kind == IncreKind::INCR && options.CheckingExceptions() && HasRecompiledInferredDecl(increRes)) {
+        // Checked exceptions: a declaration whose capability list is INFERRED takes it from its own
+        // body, so editing that body can change what every caller in the package must supply --
+        // the list is part of the call-site contract, and the hashes cannot know that, because
+        // they are computed here, before the inference that derives it. Rather than let the
+        // unchanged callers be served from the cache and checked against a stale contract (silent
+        // where a full build errors), the package is recompiled whole. Gated on the feature, so a
+        // build without it keeps exactly the recompilation sets it had.
+        increRes.kind = IncreKind::ROLLBACK;
+        IncrementalCompilationLogger::GetInstance().LogLn(
+            "a declaration with an inferred capability list is recompiled, roll back to full compilation");
+    }
     if (increRes.kind == IncreKind::INCR) {
         // check cached bitcode infos
         const std::string& packageName = package->fullPackageName;

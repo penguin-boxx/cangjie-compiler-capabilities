@@ -30,9 +30,12 @@
 #include "cangjie/IncrementalCompilation/IncrementalCompilationLogger.h"
 #include "cangjie/Macro/MacroExpansion.h"
 #include "cangjie/Mangle/BaseMangler.h"
+#include "cangjie/Modules/CapabilityCache.h"
 #include "cangjie/Modules/ImportManager.h"
 #include "cangjie/Modules/PackageManager.h"
 #include "cangjie/Parse/ASTHasher.h"
+#include "cangjie/Sema/CapabilityCheck.h"
+#include "cangjie/Sema/CapabilityEscape.h"
 #include "cangjie/Sema/GenericInstantiationManager.h"
 #include "cangjie/Sema/TestManager.h"
 #include "cangjie/Sema/TypeChecker.h"
@@ -44,8 +47,8 @@
 #include "cangjie/Utils/Utils.h"
 
 #ifdef CANGJIE_CODEGEN_CJNATIVE_BACKEND
-#include "cangjie/Mangle/CHIRMangler.h"
 #include "cangjie/CHIR/Checker/ComputeAnnotations.h"
+#include "cangjie/Mangle/CHIRMangler.h"
 #endif
 #ifdef RELEASE
 #include "cangjie/Utils/Signal.h"
@@ -194,6 +197,7 @@ bool CompilerInstance::InitCompilerInstance()
     performMap.insert_or_assign(CompileStage::MACRO_EXPAND, &CompilerInstance::PerformMacroExpand);
     performMap.insert_or_assign(CompileStage::AST_DIFF, &CompilerInstance::PerformIncrementalScopeAnalysis);
     performMap.insert_or_assign(CompileStage::SEMA, &CompilerInstance::PerformSema);
+    performMap.insert_or_assign(CompileStage::CAPABILITY_CHECK, &CompilerInstance::PerformCapabilityCheck);
     performMap.insert_or_assign(CompileStage::DESUGAR_AFTER_SEMA, &CompilerInstance::PerformDesugarAfterSema);
     performMap.insert_or_assign(CompileStage::GENERIC_INSTANTIATION, &CompilerInstance::PerformGenericInstantiation);
     performMap.insert_or_assign(CompileStage::OVERFLOW_STRATEGY, &CompilerInstance::PerformOverflowStrategy);
@@ -504,7 +508,7 @@ std::vector<OwnedPtr<AST::Decl>> CompilerInstance::ExpandDecl(OwnedPtr<AST::Decl
 
 void CompilerInstance::CacheCompileArgs()
 {
-    cachedInfo.compileArgs = invocation.globalOptions.ToSerialized();
+    cachedInfo.compileArgs = CapabilityCacheKey(invocation.globalOptions, *importManager);
 }
 
 void CompilerInstance::CacheSemaUsage(SemanticInfo&& info)
@@ -571,7 +575,7 @@ void UpdateMemberDeclMangleNameForCachedInfo(const RawMangled2DeclMap& rawMangle
     } else {
         CJC_ABORT();
     }
-    for (auto &m : memCache.members) {
+    for (auto& m : memCache.members) {
         UpdateMemberDeclMangleNameForCachedInfo(rawMangleName2DeclMap, m);
     }
 }
@@ -584,19 +588,19 @@ void UpdateTopLevelDeclMangleNameForCachedInfo(
     } else {
         CJC_ABORT();
     }
-    for (auto &m : topCache.members) {
+    for (auto& m : topCache.members) {
         UpdateMemberDeclMangleNameForCachedInfo(rawMangleName2DeclMap, m);
     }
 }
-}
+} // namespace
 
 void CompilerInstance::UpdateMangleNameForCachedInfo()
 {
-    for (auto &it : cachedInfo.curPkgASTCache) {
+    for (auto& it : cachedInfo.curPkgASTCache) {
         auto rawMangle = it.first;
         UpdateTopLevelDeclMangleNameForCachedInfo(rawMangleName2DeclMap, rawMangle, it.second);
     }
-    for (auto &it : cachedInfo.importedASTCache) {
+    for (auto& it : cachedInfo.importedASTCache) {
         auto rawMangle = it.first;
         UpdateTopLevelDeclMangleNameForCachedInfo(rawMangleName2DeclMap, rawMangle, it.second);
     }
@@ -709,6 +713,33 @@ bool CompilerInstance::PerformOverflowStrategy()
     return true;
 }
 
+bool CompilerInstance::PerformCapabilityCheck()
+{
+    // Read-only capability and override validation runs before desugaring removes handler scopes.
+    bool checkExceptions = invocation.globalOptions.CheckingExceptions();
+    if (!checkExceptions && !invocation.globalOptions.CheckingEffects()) {
+        return true;
+    }
+    Utils::ProfileRecorder recorder("Main Stage", "Capability Check");
+    auto errorCountBefore = diag.GetErrorCount();
+    Sema::ReportCapabilityMissHandler missHandler(
+        diag, invocation.globalOptions.exceptionsLevel, invocation.globalOptions.effectsLevel);
+    CJC_NULLPTR_CHECK(typeManager);
+    CJC_NULLPTR_CHECK(importManager);
+    for (auto& srcPkg : GetSourcePackages()) {
+        CJC_NULLPTR_CHECK(srcPkg);
+        Sema::EffectiveCapabilityType effective = [this, &srcPkg](const Decl& decl, Ptr<Ty> ty, bool writing) {
+            return typeChecker->EffectiveUseType(decl, ty, writing, srcPkg);
+        };
+        Sema::CheckCompletedOverrides(*typeManager, *importManager, *srcPkg, diag,
+            invocation.globalOptions.exceptionsLevel, invocation.globalOptions.effectsLevel, effective);
+        Sema::CheckCapabilities(*typeManager, *importManager, *srcPkg, missHandler, diag, effective);
+        Sema::CheckPackageCapabilityEscapes(*srcPkg, typeChecker->GetModalEscapeFacts(*srcPkg),
+            invocation.globalOptions.exceptionsLevel, invocation.globalOptions.effectsLevel, diag);
+    }
+    return diag.GetErrorCount() == errorCountBefore;
+}
+
 bool CompilerInstance::PerformDesugarAfterSema()
 {
     testManager->MarkDeclsForTestIfNeeded(GetSourcePackages());
@@ -807,8 +838,7 @@ void DoNewMangling(
                 if (lambda.TestAttr(Attribute::GENERIC) || !Ty::IsTyCorrect(lambda.GetTy())) {
                     return VisitAction::SKIP_CHILDREN;
                 }
-                lambda.mangledName = baseMangler.MangleLambda(lambda,
-                    filteredPrefix);
+                lambda.mangledName = baseMangler.MangleLambda(lambda, filteredPrefix);
                 return VisitAction::WALK_CHILDREN;
             },
             []([[maybe_unused]] const Annotation& anno) {
@@ -1249,8 +1279,8 @@ bool CompilerInstance::DetectCangjieHome()
     }
     // Detect from exepath.
     if (invocation.globalOptions.executablePath.empty()) {
-        diag.DiagnoseRefactor(DiagKindRefactor::frontend_failed_to_detect_cangjie_home,
-            DEFAULT_POSITION, "can not resolve executable path");
+        diag.DiagnoseRefactor(DiagKindRefactor::frontend_failed_to_detect_cangjie_home, DEFAULT_POSITION,
+            "can not resolve executable path");
         return false;
     } else {
         cangjieHome =
