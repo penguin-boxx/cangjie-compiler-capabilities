@@ -13,7 +13,7 @@
 #ifndef CANGJIE_MODULES_PACKAGECAPABILITYINFO_H
 #define CANGJIE_MODULES_PACKAGECAPABILITYINFO_H
 
-#include <cstdint>
+#include "cangjie/Basic/CheckingLevel.h"
 
 namespace Cangjie {
 /**
@@ -22,8 +22,10 @@ namespace Cangjie {
  * empty capability list means "unknown", not "requires nothing".
  */
 struct PackageCapabilityInfo {
-    enum class Level : uint8_t { OFF, WARN, ERROR };
+    using Level = CheckingLevel;
     Level level{Level::OFF};         /**< Severity capability checking ran at, 'OFF' if it did not. */
+    Level effectsLevel{Level::OFF};
+    bool modalEnabled{false};
     bool effectsEnabled{false};      /**< Whether effect handlers were enabled for the package. */
     bool recordsCapabilities{false}; /**< Whether the package carries capability metadata at all. */
 };

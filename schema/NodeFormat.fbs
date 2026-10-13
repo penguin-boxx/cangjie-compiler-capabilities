@@ -814,6 +814,8 @@ table Annotation {
   left_square_pos: Position;
   right_square_pos: Position;
   is_compile_time_visible: bool;
+  assume_throws: CapabilityClause;
+  assume_performs: CapabilityClause;
 }
 
 table Modifier {

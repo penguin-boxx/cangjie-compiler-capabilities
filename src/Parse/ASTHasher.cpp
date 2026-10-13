@@ -388,6 +388,9 @@ struct ASTHasherImpl {
             if (anno && anno->assumeThrows) {
                 SUPERHash<whatTypeToHash>(anno->assumeThrows);
             }
+            if (anno && anno->assumePerforms) {
+                SUPERHash<whatTypeToHash>(anno->assumePerforms);
+            }
         }
     }
     template <int whatTypeToHash> void HashPackageSpec(const PackageSpec& ps)

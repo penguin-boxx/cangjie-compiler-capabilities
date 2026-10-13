@@ -475,7 +475,8 @@ void TypeChecker::TypeCheckerImpl::InferRefExpr(ASTContext& ctx, RefExpr& re)
         re.SetTy(TypeManager::GetInvalidTy());
         return;
     }
-    re.SetTy(typeManager.SubstituteTypeAliasInTy(*re.ref.target->GetTy()));
+    re.SetTy(EffectiveUseType(*re.ref.target, typeManager.SubstituteTypeAliasInTy(*re.ref.target->GetTy()),
+        re.TestAttr(Attribute::LEFT_VALUE)));
     if (!decl->IsFunc() || re.isAlone) {
         // Only check non-function or non-call target. Functions will be check after function overload resolution.
         InstantiateReferenceType(ctx, re);
@@ -590,7 +591,8 @@ void TypeChecker::TypeCheckerImpl::InferMemberAccess(ASTContext& ctx, MemberAcce
         ma.SetTy(TypeManager::GetInvalidTy());
         return;
     }
-    ma.SetTy(typeManager.SubstituteTypeAliasInTy(*ma.target->GetTy()));
+    ma.SetTy(EffectiveUseType(
+        *ma.target, typeManager.SubstituteTypeAliasInTy(*ma.target->GetTy()), ma.TestAttr(Attribute::LEFT_VALUE)));
     // Only instantiate ty for non-function or non-call. Function's will be done after overload resolution.
     if (!ma.target->IsFunc() || ma.isAlone) {
         InstantiateReferenceType(ctx, ma);

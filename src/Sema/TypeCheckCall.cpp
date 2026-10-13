@@ -1064,7 +1064,7 @@ bool TypeChecker::TypeCheckerImpl::CheckGenericCallCompatible(
     }
     CJC_ASSERT(ce.baseFunc);
     // After generating type mapping, check the compatibility of arguments and parameters.
-    std::vector<Ptr<Ty>> paramTysInArgOrder = GetParamTysInArgsOrder(typeManager, ce, fd);
+    std::vector<Ptr<Ty>> paramTysInArgOrder = EffectiveParamTys(ce, fd);
     if (paramTysInArgOrder.size() != ce.args.size()) {
         return false;
     }
@@ -1216,7 +1216,7 @@ bool TypeChecker::TypeCheckerImpl::CheckCallCompatible(ASTContext& ctx, Function
 {
     auto& ce = candidate.ce;
     auto& fd = candidate.fd;
-    std::vector<Ptr<Ty>> paramTysInArgsOrder = GetParamTysInArgsOrder(typeManager, ce, fd);
+    std::vector<Ptr<Ty>> paramTysInArgsOrder = EffectiveParamTys(ce, fd);
     if (paramTysInArgsOrder.size() != ce.args.size()) {
         return false;
     }
@@ -1362,7 +1362,7 @@ void TypeChecker::TypeCheckerImpl::FillTypeArgumentsTy(const FuncDecl& fd, const
 std::vector<Ptr<FuncDecl>> TypeChecker::TypeCheckerImpl::UpdateFuncGenericType(
     ASTContext& ctx, FunctionMatchingUnit& fmu, CallExpr& ce)
 {
-    auto funcTy = RawStaticCast<FuncTy*>(fmu.fd.GetTy());
+    auto funcTy = RawStaticCast<FuncTy*>(EffectiveUseType(fmu.fd, fmu.fd.GetTy()));
     ReplaceIdealTypeInSubstPack(fmu.typeMapping);
     // Caller guarantees 'desugarArgs' has value.
     if (!ce.desugarArgs.has_value()) {
@@ -1423,14 +1423,15 @@ OwnedPtr<FunctionMatchingUnit> TypeChecker::TypeCheckerImpl::CheckCandidate(
         return nullptr;
     }
     candidate.stat.argNameValid = CheckArgsWithParamName(ce, fd);
-    std::vector<Ptr<Ty>> paramTyInArgOrder = GetParamTysInArgsOrder(typeManager, ce, fd);
+    std::vector<Ptr<Ty>> paramTyInArgOrder = EffectiveParamTys(ce, fd);
     if (paramTyInArgOrder.size() != ce.args.size()) {
         return nullptr;
     }
     // Written parameter types are available before the inferred result and capability list.
     // Reject ordinary argument mismatches before requesting a candidate's body: an overload
     // with the wrong parameter types is not a recursive contract dependency.
-    if (ci->invocation.globalOptions.enableChexc && Sema::IsInferenceEligible(fd) && TypeCheckUtil::NeedSynOnUsed(fd)) {
+    if (ci->invocation.globalOptions.CheckingExceptions() && Sema::IsInferenceEligible(fd) &&
+        TypeCheckUtil::NeedSynOnUsed(fd)) {
         for (size_t i = 0; i < paramTyInArgOrder.size(); ++i) {
             auto paramTy = paramTyInArgOrder[i];
             if (Ty::IsTyCorrect(paramTy) && !paramTy->HasGeneric() && !CheckWithCache(ctx, paramTy, ce.args[i].get())) {
@@ -1469,7 +1470,8 @@ OwnedPtr<FunctionMatchingUnit> TypeChecker::TypeCheckerImpl::CheckCandidate(
     // Call applicability consumes the ordinary signature, not the callee's own list.
     // Complete inferred ordinary results now; otherwise defer the top-level list until an
     // overload is selected, so discarded but applicable overloads do not create false cycles.
-    if (ci->invocation.globalOptions.enableChexc && TypeCheckUtil::NeedSynOnUsed(fd) && !EnsureContract(ctx, fd, ce)) {
+    if (ci->invocation.globalOptions.CheckingExceptions() && TypeCheckUtil::NeedSynOnUsed(fd) &&
+        !EnsureContract(ctx, fd, ce)) {
         return nullptr;
     }
     // Check whether the target function's params type is compatible with arguments.
@@ -1536,7 +1538,7 @@ std::vector<Ptr<FuncDecl>> TypeChecker::TypeCheckerImpl::ReorderCallArgument(
     defaultArgs.clear();
 
     // Caller guarantees fd not null and type must be function type.
-    auto funcTy = RawStaticCast<FuncTy*>(fmu.fd.GetTy());
+    auto funcTy = RawStaticCast<FuncTy*>(EffectiveUseType(fmu.fd, fmu.fd.GetTy()));
     // When the funcDecl is a generic function, we should do instantiation and assign the real type to callExpr.
     if (IsGenericCall(ctx, ce, fmu.fd)) {
         return UpdateFuncGenericType(ctx, fmu, ce);
@@ -1561,7 +1563,7 @@ std::vector<Ptr<FuncDecl>> TypeChecker::TypeCheckerImpl::ReorderCallArgument(
 /// Otherwise it returns the original function return type.
 Ty* TypeChecker::TypeCheckerImpl::GetCallTy(ASTContext& ctx, const CallExpr& ce, const FuncDecl& target) const
 {
-    auto targetRetTy = StaticCast<FuncTy>(target.GetTy())->retTy;
+    auto targetRetTy = StaticCast<FuncTy>(EffectiveUseType(target, target.GetTy()))->retTy;
     auto ret = targetRetTy;
     if (Is<ClassThisTy>(targetRetTy)) {
         if (auto ma = DynamicCast<MemberAccess>(&*ce.baseFunc)) {
@@ -1646,8 +1648,9 @@ TypeChecker::TypeCheckerImpl::FuncTyPair TypeChecker::TypeCheckerImpl::CollectVa
             }
             if (shape && targetShape &&
                 (!typeManager.IsFuncParametersSubtype(*shape, *targetShape) ||
-                    (ci->invocation.globalOptions.enableChexc && funcs.size() > 1 && Sema::IsInferenceEligible(*fd) &&
-                        !shape->retTy->HasQuestTy() && !typeManager.IsSubtype(shape, targetShape)))) {
+                    (ci->invocation.globalOptions.CheckingExceptions() && funcs.size() > 1 &&
+                        Sema::IsInferenceEligible(*fd) && !shape->retTy->HasQuestTy() &&
+                        !typeManager.IsSubtype(shape, targetShape)))) {
                 continue;
             }
             if (!EnsureContract(ctx, *fd, expr)) {
@@ -1655,7 +1658,7 @@ TypeChecker::TypeCheckerImpl::FuncTyPair TypeChecker::TypeCheckerImpl::CollectVa
             }
             Ptr<Ty> instTy;
             // Re-instantiated function's type after function has been synthesize.
-            instTy = typeManager.GetInstantiatedTy(fd->GetTy(), mapping);
+            instTy = typeManager.GetInstantiatedTy(EffectiveUseType(*fd, fd->GetTy()), mapping);
             CJC_ASSERT(instTy->IsFunc());
             // Process dynamic binding this type.
             if (hasThisRet) {
@@ -2865,10 +2868,11 @@ void TypeChecker::TypeCheckerImpl::ChkClauseOnlyTypeArguments(const CallExpr& ce
     // the author never wrote; the text requires the call to be rejected so the argument is
     // written. Runs after the candidate is fixed, never during solving: perturbing the solver
     // would change which overload wins.
-    if (!ci->invocation.globalOptions.enableChexc || !func.TestAttr(Attribute::GENERIC)) {
+    if ((!ci->invocation.globalOptions.CheckingExceptions() && !ci->invocation.globalOptions.CheckingEffects()) ||
+        !func.TestAttr(Attribute::GENERIC)) {
         return;
     }
-    auto clauseOnly = TypeCheckUtil::CollectClauseOnlyTyVars(func.GetTy());
+    auto clauseOnly = TypeCheckUtil::CollectClauseOnlyTyVars(EffectiveUseType(func, func.GetTy(), true));
     if (clauseOnly.empty()) {
         return;
     }

@@ -7,8 +7,8 @@
 /**
  * @file
  *
- * This file declares the checked-exception capability checking pass (experimental, behind
- * '--experimental --enable-checked-exceptions').
+ * This file declares capability resolution and read-only validation for independent
+ * checked-exception and checked-effect policies.
  */
 
 #ifndef CANGJIE_SEMA_CAPABILITYCHECK_H
@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "cangjie/AST/Node.h"
+#include "cangjie/Basic/CheckingLevel.h"
 
 namespace Cangjie {
 class DiagnosticEngine;
@@ -59,21 +60,14 @@ public:
 };
 
 /**
- * Reporting miss-handler: diagnoses each miss. Severity follows
- * '--enable-checked-exceptions[=error|warn]'; the warning variant belongs to the 'chexc'
- * warn group.
+ * Reporting miss-handler: batches each requirement site and capability kind, using the
+ * independent checking levels and their respective warning groups.
  */
 class ReportCapabilityMissHandler : public CapabilityMissHandler {
 public:
-    /**
-     * @p asWarning downgrades exception misses to warnings (the 'warn' checking level).
-     * @p reportExceptions is false when exception checking is off: the clauses still parse and
-     * still mean what they say, but impose no obligations, while effect requirements are reported
-     * whenever the effect-handler feature is on -- and always as errors, since an unhandled
-     * 'perform' fails at run time and has no migration level.
-     */
-    ReportCapabilityMissHandler(DiagnosticEngine& diag, bool asWarning, bool reportExceptions = true)
-        : diag(diag), asWarning(asWarning), reportExceptions(reportExceptions)
+    /// Each capability kind uses its package's independent checking level.
+    ReportCapabilityMissHandler(DiagnosticEngine& diag, CheckingLevel exceptions, CheckingLevel effects)
+        : diag(diag), exceptions(exceptions), effects(effects)
     {
     }
     ~ReportCapabilityMissHandler() override
@@ -82,18 +76,15 @@ public:
     }
     void HandleMiss(const CapabilityDemand& demand) override;
     /**
-     * Emits one diagnostic per requirement site, naming every capability missing there. The
-     * compiler's diagnostic set deduplicates by position and severity alone, so several
-     * diagnostics at one site collapse into the first -- a call missing three capabilities would
-     * report one, and the next only after that one is fixed. Batching keeps them all visible,
-     * which is what burning warnings down during migration needs.
+     * Emits one diagnostic per requirement site and kind, naming all missing capabilities
+     * together while preserving both axes at a mixed site.
      */
     void Finish() override;
 
 private:
     DiagnosticEngine& diag;
-    bool asWarning;
-    bool reportExceptions;
+    CheckingLevel exceptions;
+    CheckingLevel effects;
     /// Misses in the order they were found, grouped by site when they are reported.
     std::vector<CapabilityDemand> pending;
 };
@@ -112,6 +103,9 @@ bool IsExportedDecl(const AST::Decl& decl);
 bool IsInferenceEligible(const AST::FuncDecl& fd);
 
 enum class CapabilityKind { UNTRACKED, EXCEPTION, EFFECT };
+std::vector<Ptr<AST::Ty>> FilterCapabilityKinds(
+    TypeManager& typeManager, const std::vector<Ptr<AST::Ty>>& caps, CheckingLevel exceptions, CheckingLevel effects);
+using EffectiveCapabilityType = std::function<Ptr<AST::Ty>(const AST::Decl&, Ptr<AST::Ty>, bool)>;
 /// Classify nominal types and bounded type parameters without scheduling or reporting.
 CapabilityKind ClassifyCapability(TypeManager& typeManager, const ImportManager& importManager, Ptr<AST::Ty> ty);
 
@@ -137,11 +131,12 @@ CapabilityResolution ResolveCapability(
 using EnsureCapabilityContract = std::function<bool(AST::FuncDecl&, const AST::Node&)>;
 /// Collect from one accepted typed declaration. The callback completes implicit operations.
 std::vector<Ptr<AST::Ty>> CollectCapabilityRequirements(TypeManager& typeManager, const ImportManager& importManager,
-    AST::FuncDecl& decl, const EnsureCapabilityContract& ensure);
+    AST::FuncDecl& decl, const EnsureCapabilityContract& ensure, const EffectiveCapabilityType& effective = {});
 void CheckCompletedOverrides(TypeManager& typeManager, const ImportManager& importManager, AST::Package& pkg,
-    DiagnosticEngine& diag, bool asWarning);
+    DiagnosticEngine& diag, CheckingLevel exceptions, CheckingLevel effects,
+    const EffectiveCapabilityType& effective = {});
 void CheckCapabilities(TypeManager& typeManager, const ImportManager& importManager, AST::Package& pkg,
-    CapabilityMissHandler& missHandler, DiagnosticEngine& diag);
+    CapabilityMissHandler& missHandler, DiagnosticEngine& diag, const EffectiveCapabilityType& effective = {});
 
 /**
  * The capability list of @p decl's 'captures' clause, with capability list aliases

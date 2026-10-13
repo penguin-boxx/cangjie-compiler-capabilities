@@ -11,6 +11,8 @@
  */
 
 #include "cangjie/Modules/ImportManager.h"
+#include "cangjie/Modules/CapabilityCache.h"
+#include "cangjie/Sema/CapabilityCheck.h"
 
 #include <fstream>
 #include <sstream>
@@ -308,11 +310,12 @@ void ImportManager::ExportAST(bool saveFileWithAbsPath, std::vector<uint8_t>& as
     auto found = astWriters.find(&pkg);
     if (found != astWriters.end()) {
         realWriter = found->second;
-    } else {
-        writer.PreSaveFullExportDecls(*packageDecl->srcPackage);
+    }
+    realWriter->SaveOptions(opts);
+    if (found == astWriters.end()) {
+        realWriter->PreSaveFullExportDecls(*packageDecl->srcPackage);
     }
     realWriter->ExportAST(*packageDecl);
-    realWriter->SaveOptions(opts);
 
     additionalSerializations(*realWriter);
 
@@ -330,9 +333,9 @@ std::vector<uint8_t> ImportManager::ExportASTSignature(const Package& pkg)
         *cjoManager, typeManager);
     auto packageDecl = cjoManager->GetPackageDecl(pkg.fullPackageName);
     CJC_NULLPTR_CHECK(packageDecl);
+    writer.SaveOptions(opts);
     writer.PreSaveFullExportDecls(*packageDecl->srcPackage);
     writer.ExportAST(*packageDecl);
-    writer.SaveOptions(opts);
 
     std::vector<uint8_t> astData;
     writer.AST2FB(astData, *packageDecl);
@@ -354,8 +357,8 @@ void ImportManager::ExportDeclsWithContent(bool saveFileWithAbsPath, Package& pa
     if (opts.outputMode == GlobalOptions::OutputMode::CHIR) {
         writer->SetSerializingCommon();
     }
-    writer->PreSaveFullExportDecls(package);
     writer->SaveOptions(opts);
+    writer->PreSaveFullExportDecls(package);
     if (auto [it, success] = astWriters.emplace(&package, writer); !success) {
         delete it->second;
         astWriters[&package] = writer;
@@ -1650,4 +1653,86 @@ bool ImportManager::AnalyzeDepStdPkgsOfBC(const std::string& fullPackageName)
         }
     }
     return true;
+}
+
+std::vector<std::string> Cangjie::CapabilityCacheKey(const GlobalOptions& options, const ImportManager& imports)
+{
+    auto result = options.ToSerialized();
+    std::vector<std::string> facts;
+    std::function<std::string(Ptr<Ty>)> components = [&](Ptr<Ty> ty) -> std::string {
+        if (!Ty::IsTyCorrect(ty)) {
+            return {};
+        }
+        std::string value;
+        if (auto ft = DynamicCast<FuncTy*>(ty)) {
+            std::vector<std::string> caps;
+            for (auto cap : ft->capTys) {
+                caps.push_back(Ty::ToString(cap) + components(cap));
+            }
+            std::sort(caps.begin(), caps.end());
+            for (auto& cap : caps) {
+                value += "cap[" + cap + "]";
+            }
+            auto returned = components(ft->retTy);
+            if (!returned.empty()) {
+                value += "result[" + returned + "]";
+            }
+        }
+        for (size_t i = 0; i < ty->typeArgs.size(); ++i) {
+            auto child = components(ty->typeArgs[i]);
+            if (!child.empty()) {
+                value += "arg" + std::to_string(i) + "[" + child + "]";
+            }
+        }
+        return value;
+    };
+    for (auto pd : imports.GetAllImportedPackages()) {
+        if (!pd->srcPackage || !pd->srcPackage->TestAttr(Attribute::IMPORTED)) {
+            continue;
+        }
+        auto name = pd->GetFullPackageName();
+        auto info = imports.GetPackageCapabilityInfo(name);
+        std::vector<std::string> signatures;
+        Walker(pd->srcPackage, [&](Ptr<Node> node) {
+            auto decl = DynamicCast<Decl*>(node);
+            if (!decl) {
+                return VisitAction::WALK_CHILDREN;
+            }
+            auto signature = components(decl->GetTy());
+            if (auto nominal = DynamicCast<InheritableDecl*>(decl); nominal && nominal->capturesClause) {
+                std::vector<std::string> captures;
+                for (auto cap : Sema::GetCapturesCapTys(*nominal)) {
+                    captures.push_back(Ty::ToString(cap) + components(cap));
+                }
+                std::sort(captures.begin(), captures.end());
+                signature += "capturing";
+                for (auto& cap : captures) {
+                    signature += "[" + cap + "]";
+                }
+            }
+            if (!signature.empty()) {
+                std::string owner;
+                for (auto outer = decl->outerDecl; outer; outer = outer->outerDecl) {
+                    owner += outer->identifier.Val() + ".";
+                }
+                signatures.push_back(
+                    name + ":" + owner + decl->identifier.Val() + ":" + Ty::ToString(decl->GetTy()) + ":" + signature);
+            }
+            return VisitAction::WALK_CHILDREN;
+        }).Walk();
+        // Off with no contract or capturing identity is the canonical absent/default policy.
+        // Ordinary dependency changes retain existing declaration-level invalidation. Enabling
+        // either producer axis still adds a policy fact, including for an unchecked consumer.
+        if (info.level != CheckingLevel::OFF || info.effectsLevel != CheckingLevel::OFF || info.modalEnabled ||
+            !signatures.empty()) {
+            facts.push_back(name + ":policy:" + std::to_string(static_cast<uint8_t>(info.level)) + ":" +
+                std::to_string(static_cast<uint8_t>(info.effectsLevel)) + ":" + std::to_string(info.modalEnabled) +
+                ":" + std::to_string(info.recordsCapabilities));
+            facts.insert(facts.end(), signatures.begin(), signatures.end());
+        }
+    }
+    std::sort(facts.begin(), facts.end());
+    result.push_back("capability-dependencies-v1");
+    result.insert(result.end(), facts.begin(), facts.end());
+    return result;
 }

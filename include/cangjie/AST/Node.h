@@ -567,6 +567,7 @@ enum class AnnotationKind {
     FROZEN,
     ENSURE_PREPARED_TO_MOCK,
     NON_PRODUCT,
+    ASSUME_PERFORMS,
     UNKNOWN
 };
 
@@ -610,6 +611,7 @@ struct Annotation : public Node {
      * Reuses the clause node shape. Optional, may be null.
      */
     OwnedPtr<ThrowsClause> assumeThrows;
+    OwnedPtr<ThrowsClause> assumePerforms;
     // For @Annotation.
     uint16_t target = 0;
     // For imported j-foreign annotations.

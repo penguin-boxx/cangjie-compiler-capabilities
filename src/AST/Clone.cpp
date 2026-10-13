@@ -1478,6 +1478,9 @@ OwnedPtr<Annotation> ASTCloner::CloneAnnotation(const Annotation& annotation, co
     if (annotation.assumeThrows) {
         ret->assumeThrows = CloneThrowsClause(*annotation.assumeThrows, visitor);
     }
+    if (annotation.assumePerforms) {
+        ret->assumePerforms = CloneThrowsClause(*annotation.assumePerforms, visitor);
+    }
     for (auto& arg : annotation.args) {
         ret->args.emplace_back(CloneNode(arg.get(), visitor));
     }

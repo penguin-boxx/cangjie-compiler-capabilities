@@ -442,7 +442,7 @@ bool IsCapturingTy(Ptr<Ty> ty)
         return false;
     }
     auto decl = Ty::GetDeclOfTy<InheritableDecl>(ty);
-    return decl && !GetDeclCapturesCapTys(*decl).empty();
+    return decl && decl->capturesClause;
 }
 
 /// Effects: an entry is an effect requirement iff it is a 'Command' subtype, and

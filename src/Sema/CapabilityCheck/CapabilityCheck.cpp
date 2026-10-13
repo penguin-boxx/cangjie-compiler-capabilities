@@ -65,62 +65,6 @@ namespace {
 /// One capability scope: the exception types whose capabilities the scope supplies, in textual
 /// order (within one scope the first suitable entry wins).
 using SupplyScope = std::vector<Ptr<Ty>>;
-/// Assumption imports: the exception types imposed on every call into each named package. The
-/// claim is package-scoped -- one file's annotated import binds the whole consuming package, since
-/// the trust relationship is the package's, not the file's -- so the lists of every annotated
-/// import in the package are unioned per dependency.
-using AssumedThrows = std::unordered_map<std::string, std::vector<Ptr<Ty>>>;
-
-/**
- * Collects the assumption imports of a package.
- *
- * The bare form '@AssumeThrows' assumes 'Exception'. A tuple entry — written directly or reached
- * through a type alias — is a capability list and is spliced in. The claim is
- * recorded under every package name the import could denote, so it matches the callee's package
- * whether the import names the package ('import legacy.db.*') or a declaration in it
- * ('import legacy.db.query').
- */
-AssumedThrows CollectAssumedThrows(const Package& pkg, const ImportManager& importManager)
-{
-    AssumedThrows assumed;
-    for (auto& file : pkg.files) {
-        if (!file) {
-            continue;
-        }
-        for (auto& import : file->imports) {
-            if (!import || import->IsImportMulti()) {
-                continue; // Desugared into single imports, which carry copies of the annotations.
-            }
-            for (auto& anno : import->annotations) {
-                if (!anno || !anno->assumeThrows) {
-                    continue;
-                }
-                std::vector<Ptr<Ty>> caps;
-                if (anno->assumeThrows->capTypes.empty()) {
-                    auto exception = importManager.GetCoreDecl<ClassDecl>(CLASS_EXCEPTION);
-                    if (exception && Ty::IsTyCorrect(exception->GetTy())) {
-                        caps.emplace_back(exception->GetTy());
-                    }
-                } else {
-                    caps = TypeCheckUtil::ExpandCapabilityList(anno->assumeThrows->capTypes);
-                }
-                if (caps.empty()) {
-                    continue;
-                }
-                for (auto& name : import->content.GetPossiblePackageNames()) {
-                    auto& entry = assumed[name];
-                    for (auto cap : caps) {
-                        if (Ty::IsTyCorrect(cap) && !Utils::In(cap, entry)) {
-                            entry.emplace_back(cap);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    return assumed;
-}
-
 /// The nullary member named @p name among @p members, if any.
 Ptr<FuncDecl> FindNullaryAmong(const std::vector<Ptr<Decl>>& members, const std::string& name)
 {
@@ -166,12 +110,12 @@ Ptr<FuncDecl> FindNullaryMemberOf(TypeManager& typeManager, Ptr<Ty> receiverTy, 
 class CapabilityChecker {
 public:
     CapabilityChecker(TypeManager& typeManager, const ImportManager& importManager,
-        Sema::CapabilityMissHandler& missHandler, const AssumedThrows& assumed,
+        Sema::CapabilityMissHandler& missHandler, const Sema::EffectiveCapabilityType& effective,
         const Sema::EnsureCapabilityContract& ensure = {}, Ptr<DiagnosticEngine> diag = nullptr)
         : typeManager(typeManager),
           importManager(importManager),
           missHandler(missHandler),
-          assumed(assumed),
+          effective(effective),
           ensure(ensure),
           diag(diag)
     {
@@ -574,7 +518,7 @@ private:
         if (ensure && !ensure(*accessor, site)) {
             return;
         }
-        for (auto cap : TypeCheckUtil::GetInstantiatedAccessorCapTys(typeManager, *accessor, receiver)) {
+        for (auto cap : ProtocolMemberCaps(*accessor, receiver)) {
             Demand(cap, site, getter ? "this property read" : "this property write");
         }
     }
@@ -659,11 +603,6 @@ private:
             case ASTKind::CALL_EXPR: {
                 auto& ce = StaticCast<CallExpr&>(*node);
                 HandleCall(ce);
-                // The callee expression is not a value taken out of the package -- the call itself
-                // already carries the assumed list.
-                if (ce.baseFunc) {
-                    (void)calleeExprs.emplace(ce.baseFunc.get());
-                }
                 return VisitAction::WALK_CHILDREN;
             }
             case ASTKind::ASSIGN_EXPR: {
@@ -693,7 +632,6 @@ private:
                 if (!ma.TestAttr(Attribute::LEFT_VALUE)) {
                     DemandProperty(ma, true, ma);
                 }
-                ImposeAssumedOnValue(ma, ma.target);
                 return VisitAction::WALK_CHILDREN;
             }
             case ASTKind::REF_EXPR: {
@@ -702,7 +640,6 @@ private:
                 if (!re.TestAttr(Attribute::LEFT_VALUE)) {
                     DemandProperty(re, true, re);
                 }
-                ImposeAssumedOnValue(re, re.ref.target);
                 return VisitAction::WALK_CHILDREN;
             }
             default:
@@ -748,8 +685,25 @@ private:
         if (ensure && !ensure(const_cast<FuncDecl&>(member), member)) {
             return {};
         }
-        auto caps = TypeCheckUtil::GetInstantiatedAccessorCapTys(typeManager, member, receiverTy);
-
+        auto ty = effective ? effective(member, member.GetTy(), false) : member.GetTy();
+        auto ft = DynamicCast<FuncTy*>(ty);
+        if (!ft) {
+            return {};
+        }
+        MultiTypeSubst mapping;
+        if (Ty::IsTyCorrect(receiverTy)) {
+            typeManager.GenerateGenericMapping(mapping, *receiverTy);
+        }
+        TypeSubst subst;
+        for (auto& [var, candidates] : mapping) {
+            if (candidates.size() == 1) {
+                subst.emplace(var, *candidates.begin());
+            }
+        }
+        auto caps = ft->capTys;
+        for (auto& cap : caps) {
+            cap = typeManager.GetInstantiatedTy(cap, subst);
+        }
         return typeManager.NormalizeCapTys(caps);
     }
 
@@ -966,7 +920,6 @@ private:
             return;
         }
         std::vector<Ptr<Ty>> demands = funcTy->capTys;
-        AddAssumedDemands(ce, demands);
         // The semantic form is what a scope offers AND what a callee requires: an entry covered by
         // a more general entry of the same list is not part of the list, so it is not demanded --
         // 'throws Base, Derived' is the list {Base}, and a missing handler reports Base alone.
@@ -976,72 +929,6 @@ private:
             }
         }
         DemandConstructedCaptures(ce);
-    }
-
-    /**
-     * Assumption imports: a call into an assumed package carries the assumed
-     * list on top of whatever the callee declares. Assumptions only ADD obligations relative to
-     * the read-as-empty default, so the two are unioned; the entries can already be present when
-     * the dependency is itself checked.
-     */
-    void AddAssumedDemands(const CallExpr& ce, std::vector<Ptr<Ty>>& demands) const
-    {
-        if (assumed.empty() || !ce.resolvedFunction) {
-            return;
-        }
-        auto entry = assumed.find(ce.resolvedFunction->fullPackageName);
-        if (entry == assumed.end()) {
-            return;
-        }
-        for (auto cap : entry->second) {
-            if (Ty::IsTyCorrect(cap) && !Utils::In(cap, demands)) {
-                demands.emplace_back(cap);
-            }
-        }
-    }
-
-    /**
-     * Assumption imports: the assumed list reaches every functional value the dependency hands
-     * out in a COVARIANT position -- a call's result, a function-typed field or property, a method
-     * taken as a value -- and not only the calls that resolve into the package. A parameter
-     * position is left alone: there the dependency calls OUR function, and what that one requires
-     * is already ours to declare.
-     *
-     * The text puts the list on the TYPE, so that the obligation is paid wherever the value is
-     * finally called. Rewriting the type of the expression is not enough to achieve that -- the
-     * variable, field or parameter it flows into keeps the type checking gave it -- so the
-     * obligation is demanded here, where the value crosses the boundary. That is sound and
-     * stricter: a value taken and never called still pays (see I.3 in the gap analysis).
-     */
-    bool YieldsFunctionValue(Ptr<Ty> ty) const
-    {
-        auto funcTy = DynamicCast<FuncTy*>(ty);
-        return funcTy != nullptr;
-    }
-
-    /// The assumed list of the package @p decl belongs to, empty when it is not an assumed one.
-    const std::vector<Ptr<Ty>>& AssumedCapsOf(const Decl& decl) const
-    {
-        static const std::vector<Ptr<Ty>> none;
-        auto entry = assumed.find(decl.fullPackageName);
-        return entry == assumed.end() ? none : entry->second;
-    }
-
-    void ImposeAssumedOnValue(Expr& expr, Ptr<const Decl> target)
-    {
-        // A callee is not a value taken out of the package: the call itself already carries the
-        // assumed list, and demanding twice would report the same obligation twice.
-        if (assumed.empty() || !target || calleeExprs.count(&expr) > 0) {
-            return;
-        }
-        if (!Ty::IsTyCorrect(expr.GetTy()) || !YieldsFunctionValue(expr.GetTy())) {
-            return;
-        }
-        for (auto cap : AssumedCapsOf(*target)) {
-            if (Ty::IsTyCorrect(cap)) {
-                Demand(cap, expr, "this function value from a package with assumed requirements");
-            }
-        }
     }
 
     /// Substitution from the callee's own type parameters to this call site's type arguments:
@@ -1147,10 +1034,8 @@ private:
     TypeManager& typeManager;
     const ImportManager& importManager;
     Sema::CapabilityMissHandler& missHandler;
-    /// Assumption imports of the package being checked, indexed by the package they name. The
-    /// annotation is package-scoped -- "the annotation applies to every call into the dependency
-    /// from the whole consuming package" -- so the file that wrote the import does not narrow it.
-    const AssumedThrows& assumed;
+    /// Sema-owned consumer view, also used for implicit operations.
+    Sema::EffectiveCapabilityType effective;
     std::vector<SupplyScope> supplies;
     std::vector<Ptr<const Node>> supplyOwners;
     /// Effects: the capabilities a 'resume ... throwing' may resolve against on top of the
@@ -1159,8 +1044,6 @@ private:
     /// handler runs where the handler was installed, while a resumed exception surfaces at the
     /// suspended 'perform', inside the try's body.
     std::vector<Sema::CapabilityScope> resumeSupplies;
-    /// Callee expressions, which the call path already accounts for; see 'ImposeAssumedOnValue'.
-    std::set<Ptr<const Node>> calleeExprs;
     Sema::EnsureCapabilityContract ensure;
     // Set while collecting one declaration's residual demands: its own inferred list is not a supply.
     Ptr<const Decl> collectingFor{nullptr};
@@ -1251,8 +1134,8 @@ bool IsExportedDecl(const Decl& decl)
 void ReportCapabilityMissHandler::HandleMiss(const CapabilityDemand& demand)
 {
     CJC_NULLPTR_CHECK(demand.demandSite);
-    if (!demand.isEffect && !reportExceptions) {
-        return; // Exception checking is off: the clauses impose no obligations.
+    if ((demand.isEffect ? effects : exceptions) == CheckingLevel::OFF) {
+        return; // This checking axis imposes no obligations.
     }
     // Held until the package has been walked: several misses at one site have to be reported
     // together (see 'Finish').
@@ -1263,8 +1146,7 @@ void ReportCapabilityMissHandler::Finish()
 {
     auto batch = std::move(pending);
     pending.clear();
-    // Group by site AND kind: effects are always errors while exceptions follow the level, so a
-    // site that misses both cannot be one diagnostic.
+    // Group by site and kind so independent checking levels and warning groups remain visible.
     std::vector<std::pair<std::pair<Ptr<const Node>, bool>, std::vector<const CapabilityDemand*>>> groups;
     for (auto& demand : batch) {
         auto key = std::make_pair(Ptr<const Node>(demand.demandSite), demand.isEffect);
@@ -1277,12 +1159,12 @@ void ReportCapabilityMissHandler::Finish()
     }
     for (auto& [key, demands] : groups) {
         auto& first = *demands.front();
-        // Effects: an effect capability is named 'Handler<C>', not 'CanThrow<E>', and a missing one
-        // is an error at every exception-checking level -- there is no migration level for a
-        // 'perform'.
+        bool asWarning = (first.isEffect ? effects : exceptions) == CheckingLevel::WARN;
+        // Each capability kind uses its own terminology, checking level, and warning group.
         if (demands.size() == 1) {
             auto tyName = Ty::ToString(first.exceptionTy);
-            auto kind = first.isEffect ? DiagKindRefactor::sema_chexc_missing_handler_capability
+            auto kind = first.isEffect ? (asWarning ? DiagKindRefactor::sema_chexc_missing_handler_capability_warn
+                                                    : DiagKindRefactor::sema_chexc_missing_handler_capability)
                                        : (asWarning ? DiagKindRefactor::sema_chexc_missing_capability_warn
                                                     : DiagKindRefactor::sema_chexc_missing_capability);
             auto builder = diag.DiagnoseRefactor(kind, *first.demandSite, tyName, tyName);
@@ -1297,15 +1179,17 @@ void ReportCapabilityMissHandler::Finish()
             names += (names.empty() ? "" : ", ") + ("'" + tyName + "'");
             types += (types.empty() ? "" : ", ") + ("'" + capability + tyName + ">'");
         }
-        auto kind = (!first.isEffect && asWarning) ? DiagKindRefactor::sema_chexc_missing_capabilities_warn
-                                                   : DiagKindRefactor::sema_chexc_missing_capabilities;
+        auto kind = asWarning ? (first.isEffect ? DiagKindRefactor::sema_effect_missing_capabilities_warn
+                                                : DiagKindRefactor::sema_chexc_missing_capabilities_warn)
+                              : (first.isEffect ? DiagKindRefactor::sema_effect_missing_capabilities
+                                                : DiagKindRefactor::sema_chexc_missing_capabilities);
         auto builder = diag.DiagnoseRefactor(kind, *first.demandSite, names, types);
         builder.AddMainHintArguments("required by " + first.requiredBy);
     }
 }
 
-void CheckCompletedOverrides(
-    TypeManager& typeManager, const ImportManager& importManager, Package& pkg, DiagnosticEngine& diag, bool asWarning)
+void CheckCompletedOverrides(TypeManager& typeManager, const ImportManager& importManager, Package& pkg,
+    DiagnosticEngine& diag, CheckingLevel exceptions, CheckingLevel effects, const EffectiveCapabilityType& effective)
 {
     std::vector<Ptr<FuncDecl>> declarations;
     Walker(&pkg, [&declarations](Ptr<Node> node) {
@@ -1325,8 +1209,22 @@ void CheckCompletedOverrides(
             if (!parentTy) {
                 continue;
             }
-            auto parentCaps = TypeCheckUtil::GetInstantiatedAccessorCapTys(
-                typeManager, *parent, decl->outerDecl ? decl->outerDecl->GetTy() : nullptr);
+            auto effectiveParent =
+                DynamicCast<FuncTy*>(effective ? effective(*parent, parent->GetTy(), false) : parent->GetTy());
+            auto parentCaps = effectiveParent ? effectiveParent->capTys : std::vector<Ptr<Ty>>{};
+            if (decl->outerDecl && Ty::IsTyCorrect(decl->outerDecl->GetTy())) {
+                MultiTypeSubst mts;
+                typeManager.GenerateGenericMapping(mts, *decl->outerDecl->GetTy());
+                TypeSubst subst;
+                for (auto& [var, candidates] : mts) {
+                    if (candidates.size() == 1) {
+                        subst.emplace(var, *candidates.begin());
+                    }
+                }
+                for (auto& cap : parentCaps) {
+                    cap = typeManager.GetInstantiatedTy(cap, subst);
+                }
+            }
             if (parent->TestAttr(Attribute::GENERIC) && decl->TestAttr(Attribute::GENERIC)) {
                 auto mapping = typeManager.GenerateGenericMappingFromGeneric(*parent, *decl);
                 for (auto& cap : parentCaps) {
@@ -1348,9 +1246,16 @@ void CheckCompletedOverrides(
                 }
                 // The checking level applies here as everywhere: at 'warn' the violation is
                 // reported and the package still builds.
-                auto kind = asWarning && !TypeCheckUtil::IsCommandTy(typeManager, importManager, capTy)
-                    ? DiagKindRefactor::sema_chexc_override_missing_capability_warn
-                    : DiagKindRefactor::sema_chexc_override_missing_capability;
+                bool effect = TypeCheckUtil::IsCommandTy(typeManager, importManager, capTy);
+                auto level = effect ? effects : exceptions;
+                if (level == CheckingLevel::OFF) {
+                    continue;
+                }
+                auto kind = level == CheckingLevel::WARN
+                    ? (effect ? DiagKindRefactor::sema_effect_override_missing_capability_warn
+                              : DiagKindRefactor::sema_chexc_override_missing_capability_warn)
+                    : (effect ? DiagKindRefactor::sema_effect_override_missing_capability
+                              : DiagKindRefactor::sema_chexc_override_missing_capability);
                 auto builder = diag.DiagnoseRefactor(
                     kind, MakeRangeForDeclIdentifier(*blame), Ty::ToString(capTy), GetDiagnosableDeclName(*decl));
                 builder.AddMainHintArguments(Ty::ToString(capTy));
@@ -1369,6 +1274,42 @@ void CheckCompletedOverrides(
 std::vector<Ptr<Ty>> GetCapturesCapTys(const AST::Decl& decl)
 {
     return TypeCheckUtil::GetDeclCapturesCapTys(decl);
+}
+
+std::vector<Ptr<Ty>> FilterCapabilityKinds(
+    TypeManager& typeManager, const std::vector<Ptr<Ty>>& caps, CheckingLevel exceptions, CheckingLevel effects)
+{
+    std::vector<Ptr<Ty>> kept;
+    for (auto cap : caps) {
+        if (!Ty::IsTyCorrect(cap)) {
+            continue;
+        }
+        bool effect = false;
+        auto isCommand = [](Ptr<Ty> ty) {
+            auto decl = Ty::GetDeclPtrOfTy(ty);
+            return decl && decl->fullPackageName == EFFECT_PACKAGE_NAME && decl->identifier == CLASS_COMMAND;
+        };
+        // Generic upper bounds may name a subclass of Command rather than Command itself.
+        // Follow those bounds' nominal ancestors too, without revisiting recursive bounds.
+        std::vector<Ptr<Ty>> pending{cap};
+        std::unordered_set<Ptr<Ty>> visited;
+        while (!pending.empty() && !effect) {
+            auto current = pending.back();
+            pending.pop_back();
+            if (!visited.emplace(current).second) {
+                continue;
+            }
+            effect = isCommand(current);
+            if (!effect) {
+                auto supers = typeManager.GetAllSuperTys(*current);
+                pending.insert(pending.end(), supers.begin(), supers.end());
+            }
+        }
+        if ((effect ? effects : exceptions) != CheckingLevel::OFF) {
+            kept.emplace_back(cap);
+        }
+    }
+    return typeManager.NormalizeCapTys(kept);
 }
 
 CapabilityKind ClassifyCapability(TypeManager& typeManager, const ImportManager& importManager, Ptr<Ty> ty)
@@ -1403,22 +1344,18 @@ CapabilityResolution ResolveCapability(
 }
 
 std::vector<Ptr<Ty>> CollectCapabilityRequirements(TypeManager& typeManager, const ImportManager& importManager,
-    FuncDecl& decl, const EnsureCapabilityContract& ensure)
+    FuncDecl& decl, const EnsureCapabilityContract& ensure, const EffectiveCapabilityType& effective)
 {
     CollectingMissHandler collector;
-    auto assumed = decl.curFile && decl.curFile->curPackage
-        ? CollectAssumedThrows(*decl.curFile->curPackage, importManager)
-        : AssumedThrows{};
-    CapabilityChecker checker(typeManager, importManager, collector, assumed, ensure);
+    CapabilityChecker checker(typeManager, importManager, collector, effective, ensure);
     checker.CollectResidualDemands(decl, IsInferenceEligible(decl) ? &decl : nullptr);
     return collector.Take();
 }
 
 void CheckCapabilities(TypeManager& typeManager, const ImportManager& importManager, AST::Package& pkg,
-    CapabilityMissHandler& missHandler, DiagnosticEngine& diag)
+    CapabilityMissHandler& missHandler, DiagnosticEngine& diag, const EffectiveCapabilityType& effective)
 {
-    auto assumed = CollectAssumedThrows(pkg, importManager);
-    CapabilityChecker(typeManager, importManager, missHandler, assumed, {}, &diag).CheckPackage(pkg);
+    CapabilityChecker(typeManager, importManager, missHandler, effective, {}, &diag).CheckPackage(pkg);
     // A handler that batches its misses reports them now that the package is walked.
     missHandler.Finish();
 }

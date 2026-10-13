@@ -550,17 +550,11 @@ void ASTWriter::ASTWriterImpl::SaveOptions(const GlobalOptions& opts)
             return InternalError("Unsupported optimization level");
     }
 
-    // Checked exceptions: what this package's capability lists are worth to a consumer. A list
-    // written at 'Off' was never verified -- the clauses are the author's word, like an assumption
-    // import -- and 'recordsCapabilities' separates a package this compiler wrote from one that
-    // predates capability metadata, whose absent lists must not read as empty ones.
-    auto chexcLevel = PackageFormat::ChexcLevel::ChexcLevel_Off;
-    if (opts.enableChexc) {
-        chexcLevel = opts.chexcSeverity == GlobalOptions::ChexcSeverity::CS_WARN
-            ? PackageFormat::ChexcLevel::ChexcLevel_Warn
-            : PackageFormat::ChexcLevel::ChexcLevel_Error;
-    }
-    options = PackageFormat::CreateCompilationOptions(builder, saveLevel, debug, chexcLevel, opts.enableEH, true);
+    exceptionsLevel = opts.exceptionsLevel;
+    effectsLevel = opts.effectsLevel;
+    options = PackageFormat::CreateCompilationOptions(builder, saveLevel, debug,
+        static_cast<PackageFormat::ChexcLevel>(exceptionsLevel), opts.enableEH, true,
+        static_cast<PackageFormat::ChexcLevel>(effectsLevel), false);
 }
 
 /**
@@ -1412,7 +1406,8 @@ TDeclOffset ASTWriter::ASTWriterImpl::SaveStructDecl(const StructDecl& structDec
     auto generic = SaveGeneric(structDecl);
     auto genericDeclIndex = GetGenericDeclIndex(structDecl);
     auto vcaptures = SaveCapturesCapTys(structDecl);
-    auto info = PackageFormat::CreateStructInfo(builder, vInterfaceTypes, structBody, 0, vcaptures);
+    auto info = PackageFormat::CreateStructInfo(
+        builder, vInterfaceTypes, structBody, 0, vcaptures, structDecl.capturesClause != nullptr);
     PackageFormat::DeclBuilder dbuilder(builder);
     SaveDeclBasicInfo(declInfo, dbuilder);
     dbuilder.add_kind(PackageFormat::DeclKind_StructDecl);
@@ -1497,6 +1492,7 @@ TDeclOffset ASTWriter::ASTWriterImpl::SaveClassDecl(const ClassDecl& classDecl, 
     ibuilder.add_body(vclassBody);
     ibuilder.add_inheritedTypes(vinheritedTypes);
     ibuilder.add_capturesTypes(vcaptures);
+    ibuilder.add_capturing(classDecl.capturesClause != nullptr);
     if (classDecl.TestAttr(Attribute::IS_ANNOTATION)) {
         ibuilder.add_isAnno(true);
         for (auto& ann : classDecl.annotations) {

@@ -250,7 +250,7 @@ bool IncrementalCompilerInstance::PerformIncrementalScopeAnalysis()
 
     auto increRes = IncrementalScopeAnalysis({rawMangleName2DeclMap, std::move(astCacheInfo), *package, options,
         *importManager, cachedInfo, fileMap, std::move(directExtends)});
-    if (increRes.kind == IncreKind::INCR && options.enableChexc && HasRecompiledInferredDecl(increRes)) {
+    if (increRes.kind == IncreKind::INCR && options.CheckingExceptions() && HasRecompiledInferredDecl(increRes)) {
         // Checked exceptions: a declaration whose capability list is INFERRED takes it from its own
         // body, so editing that body can change what every caller in the package must supply --
         // the list is part of the call-site contract, and the hashes cannot know that, because

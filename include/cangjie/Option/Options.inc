@@ -133,7 +133,8 @@ PREDEFVALUE(warn_group, {
     VALUE("semantics", "", { BACKEND(ALL) }, { GROUP(GLOBAL) COMMA GROUP(STABLE) COMMA GROUP(VISIBLE) }) COMMA
     VALUE("interpreter", "", { BACKEND(ALL) }, { GROUP(GLOBAL) COMMA GROUP(STABLE) COMMA GROUP(VISIBLE) }) COMMA
     VALUE("apilevel-check", "", { BACKEND(ALL) }, { GROUP(GLOBAL) COMMA GROUP(STABLE) COMMA GROUP(VISIBLE) }) COMMA
-    VALUE("checked-exceptions", "", { BACKEND(ALL) }, { GROUP(GLOBAL) COMMA GROUP(STABLE) COMMA GROUP(VISIBLE) })});
+    VALUE("checked-exceptions", "", { BACKEND(ALL) }, { GROUP(GLOBAL) COMMA GROUP(STABLE) COMMA GROUP(VISIBLE) }) COMMA
+    VALUE("checked-effects", "", { BACKEND(ALL) }, { GROUP(GLOBAL) COMMA GROUP(STABLE) COMMA GROUP(VISIBLE) })});
 PREDEFVALUE(diagnostic_value, {
     VALUE("json", "", { BACKEND(ALL) }, { GROUP(STABLE) COMMA GROUP(VISIBLE) }) COMMA
     VALUE("noColor", "", { BACKEND(ALL) }, { GROUP(STABLE) COMMA GROUP(VISIBLE) }) COMMA
@@ -143,6 +144,8 @@ PREDEFVALUE(emit_chir_phase, {
     VALUE("opt", "emit CHIR after compiler optimization (default)", {BACKEND(ALL)},
         {GROUP(STABLE) COMMA GROUP(VISIBLE)})});
 PREDEFVALUE(chexc_severity, {
+    VALUE("off", "disable capability checking", { BACKEND(CJNATIVE) },
+        { GROUP(STABLE) COMMA GROUP(VISIBLE) }) COMMA
     VALUE("error", "report capability violations as errors (default)", { BACKEND(CJNATIVE) },
         { GROUP(STABLE) COMMA GROUP(VISIBLE) }) COMMA
     VALUE("warn", "report capability violations as warnings", { BACKEND(CJNATIVE) },
@@ -358,6 +361,9 @@ OPTION("--enable-eh", ENABLE_EFFECTS, FLAG, { BACKEND(CJNATIVE) },
 OPTION("--enable-checked-exceptions", ENABLE_CHECKED_EXCEPTIONS, FLAG_WITH_ARG, { BACKEND(CJNATIVE) },
     { GROUP(GLOBAL) COMMA GROUP(VISIBLE) }, "--enable-chexc", chexc_severity, MULTIPLE_OCCURRENCE,
     "Enables experimental support for checked exceptions. Candidate severities:")
+OPTION("--enable-checked-effects", ENABLE_CHECKED_EFFECTS, FLAG_WITH_ARG, { BACKEND(CJNATIVE) },
+    { GROUP(GLOBAL) COMMA GROUP(VISIBLE) }, nullptr, chexc_severity, MULTIPLE_OCCURRENCE,
+    "Set effect capability checking to off, warn, or error (requires --enable-eh)")
 OPTION("--dump-ast", DUMP_AST, FLAG, { BACKEND(ALL) },
     { GROUP(GLOBAL) COMMA GROUP(STABLE) COMMA GROUP(VISIBLE) }, nullptr, {}, MULTIPLE_OCCURRENCE,
     "Dump human readable AST when compiling for debug")

@@ -30,6 +30,8 @@ public:
      * @see TypeCheck
      */
     void TypeCheckForPackages(const std::vector<Ptr<AST::Package>>& pkgs) const;
+    Ptr<AST::Ty> EffectiveUseType(
+        const AST::Decl& decl, Ptr<AST::Ty> ty, bool writing = false, Ptr<const AST::Package> consumer = nullptr) const;
     void SetOverflowStrategy(const std::vector<Ptr<AST::Package>>& pkgs) const;
     /**
      * Perform autobox and recursive type resolving of enum.

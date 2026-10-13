@@ -551,6 +551,7 @@ private:
         Utils::ProfileRecorder recorder("Semantic", "In TypeCheck");
         // Type checking to add semantic type values.
         for (auto& ctx : contexts) {
+            capabilityConsumer = ctx->curPackage;
             TypeCheck(*ctx, *ctx->curPackage);
         }
     }
@@ -1337,6 +1338,13 @@ private:
     void ChkPerformsClauseTypes(ASTContext& ctx, AST::ThrowsClause& clause);
     /// Checked exceptions: validate the '@AssumeThrows' annotations of a package.
     void ChkAssumeThrowsAnnotations(ASTContext& ctx, AST::Package& pkg);
+    std::vector<Ptr<AST::Ty>> EffectiveCaps(const std::vector<Ptr<AST::Ty>>& caps) const;
+    std::vector<Ptr<AST::Ty>> EffectiveParamTys(const AST::CallExpr& ce, const AST::FuncDecl& fd) const;
+    Ptr<AST::Ty> EffectiveUseType(
+        const AST::Decl& decl, Ptr<AST::Ty> ty, bool writing = false, Ptr<const AST::Package> consumer = nullptr) const;
+    using PackageAssumptions = std::unordered_map<std::string, std::vector<Ptr<AST::Ty>>>;
+    std::unordered_map<Ptr<const AST::Package>, PackageAssumptions> assumedCapabilities;
+    Ptr<const AST::Package> capabilityConsumer{nullptr};
     /// Checked exceptions: validate what the imported packages' capability metadata allows.
     void ChkImportedCapabilityMetadata(AST::Package& pkg);
     /// Checked exceptions: reject a call that leaves a clause-only type parameter to inference.

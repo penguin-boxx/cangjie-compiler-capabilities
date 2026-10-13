@@ -524,6 +524,12 @@ PackageCapabilityInfo ASTLoader::ASTLoaderImpl::GetCapabilityInfo() const
         return info; // A '.cjo' from before capability metadata: every default already says so.
     }
     auto options = package->options();
+    info.effectsEnabled = options->effects_enabled();
+    info.modalEnabled = options->modal_enabled();
+    info.recordsCapabilities = options->records_capabilities();
+    if (!info.recordsCapabilities) {
+        return info;
+    }
     switch (options->chexc_level()) {
         case PackageFormat::ChexcLevel::ChexcLevel_Warn:
             info.level = PackageCapabilityInfo::Level::WARN;
@@ -535,8 +541,17 @@ PackageCapabilityInfo ASTLoader::ASTLoaderImpl::GetCapabilityInfo() const
             info.level = PackageCapabilityInfo::Level::OFF;
             break;
     }
-    info.effectsEnabled = options->effects_enabled();
-    info.recordsCapabilities = options->records_capabilities();
+    switch (options->effects_level()) {
+        case PackageFormat::ChexcLevel::ChexcLevel_Warn:
+            info.effectsLevel = CheckingLevel::WARN;
+            break;
+        case PackageFormat::ChexcLevel::ChexcLevel_Error:
+            info.effectsLevel = CheckingLevel::ERROR;
+            break;
+        default:
+            info.effectsLevel = CheckingLevel::OFF;
+            break;
+    }
     return info;
 }
 
@@ -929,9 +944,12 @@ void ASTLoader::ASTLoaderImpl::LoadInheritableDeclAdvancedInfo(const PackageForm
     } else if (id.astKind == ASTKind::STRUCT_DECL) {
         capturesTypes = decl.info_as_StructInfo()->capturesTypes();
     }
-    if (capturesTypes != nullptr && capturesTypes->size() > 0) {
+    bool capturing = id.astKind == ASTKind::CLASS_DECL
+        ? decl.info_as_ClassInfo()->capturing()
+        : id.astKind == ASTKind::STRUCT_DECL && decl.info_as_StructInfo()->capturing();
+    if (capturing || (capturesTypes != nullptr && capturesTypes->size() > 0)) {
         auto clause = MakeOwned<ThrowsClause>();
-        for (uoffset_t i = 0; i < capturesTypes->size(); i++) {
+        for (uoffset_t i = 0; capturesTypes && i < capturesTypes->size(); i++) {
             auto capTy = LoadType(capturesTypes->Get(i));
             if (!Ty::IsTyCorrect(capTy)) {
                 continue;

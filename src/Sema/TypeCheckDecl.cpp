@@ -67,7 +67,7 @@ void TypeChecker::TypeCheckerImpl::CheckFuncDecl(ASTContext& ctx, FuncDecl& fd)
 {
     CJC_NULLPTR_CHECK(fd.funcBody);
     if (fd.TestAttr(Attribute::IS_CHECK_VISITED) &&
-        (!ci->invocation.globalOptions.enableChexc || !Sema::IsInferenceEligible(fd) ||
+        (!ci->invocation.globalOptions.CheckingExceptions() || !Sema::IsInferenceEligible(fd) ||
             capabilityContracts[&fd] == ContractState::COMPLETE)) {
         return;
     }

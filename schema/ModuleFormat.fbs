@@ -138,6 +138,7 @@ table ClassInfo {
   // Checked exceptions: the 'captures' clause, demanded at every
   // construction site. Appended last, so a .cjo written before this feature still loads.
   capturesTypes:[uint32];
+  capturing:bool = false;
 }
 table InterfaceInfo {
   inheritedTypes:[uint32];
@@ -149,6 +150,7 @@ table StructInfo {
   adInfo:AutoDiffInfo;
   // Checked exceptions: see ClassInfo.capturesTypes.
   capturesTypes:[uint32];
+  capturing:bool = false;
 }
 table EnumInfo {
   inheritedTypes:[uint32];
@@ -700,14 +702,14 @@ enum ChexcLevel : byte {
 table CompilationOptions {
   optimization_level: OptimizationLevel;
   debug: bool;
-  // Checked exceptions: what the capability lists in this package are worth. 'chexc_level' says
-  // whether they were verified and how strictly; 'effects_enabled' says whether effect handlers
-  // were on, so an empty 'performs' list means "performs nothing" rather than "was not recorded";
-  // 'records_capabilities' distinguishes a package this compiler produced from one that predates
-  // capability metadata entirely, which the two enums above cannot express on their own.
+  // Both checking levels are producer facts. The historical 'effects_enabled' bit only records
+  // handler-feature enablement; it does not establish checked-effect trust. Missing level fields
+  // default to Off. 'records_capabilities' distinguishes artifacts predating this metadata.
   chexc_level: ChexcLevel = Off;
   effects_enabled: bool = false;
   records_capabilities: bool = false;
+  effects_level: ChexcLevel = Off;
+  modal_enabled: bool = false;
 }
 
 // all SemaTys, decls are saved here, and indexed by other nodes.

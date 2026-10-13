@@ -440,7 +440,7 @@ WARNING(sema_chexc_missing_capability_warn, CHEXC,
 ERROR(sema_chexc_missing_handler_capability,
     "Cannot find a capability for '%s' (of type 'CanPerform<%s>') in the current scope",
     "required by %s")
-WARNING(sema_chexc_missing_handler_capability_warn, CHEXC,
+WARNING(sema_chexc_missing_handler_capability_warn, CHECKED_EFFECTS,
     "Cannot find a capability for '%s' (of type 'CanPerform<%s>') in the current scope",
     "required by %s")
 
@@ -517,3 +517,26 @@ ERROR(sema_chexc_polymorphic_recursion,
     "add an explicit 'throws' clause to each declaration of this recursion cycle")
 
 ERROR(sema_diag_end, "")
+
+WARNING(sema_effect_type_requirement_warn, CHECKED_EFFECTS,
+    "capability requirements of '%s' are not admitted by expected type '%s'", "incompatible exception requirements")
+
+WARNING(sema_effect_override_missing_capability_warn, CHECKED_EFFECTS,
+    "exception type '%s' in 'throws' clause of '%s' is not covered by the overridden or implemented declaration",
+    "no exception type in the original declaration's 'throws' clause is a supertype of '%s'")
+
+WARNING(sema_effect_missing_capabilities_warn, CHECKED_EFFECTS,
+    "Cannot find capabilities for %s (of types %s) in the current scope",
+    "%s")
+
+WARNING(sema_effect_cast_target_func_warn, CHECKED_EFFECTS,
+    "'%s' cannot be a runtime cast target: it contains a function type",
+    "erasure leaves no capability list to check, so such a cast would launder the requirements of "
+    "the value it accepts")
+
+ERROR(sema_assume_performs_on_checked_package, "'@AssumePerforms' names package '%s', whose effect capability lists are recorded", "this package records its own performs contracts")
+ERROR(sema_assumption_member_import, "'@%s' applies to a whole package; member imports are not allowed", "annotate a package import")
+ERROR(sema_assumption_not_on_import, "'@%s' is only allowed on an 'import'", "an assumption applies to a whole imported package")
+
+ERROR(sema_effect_missing_capabilities, "Cannot find capabilities for %s (of types %s) in the current scope", "%s")
+ERROR(sema_effect_override_missing_capability, "command type '%s' in 'performs' clause of '%s' is not covered by the overridden or implemented declaration", "no command type in the original declaration's 'performs' clause covers '%s'")

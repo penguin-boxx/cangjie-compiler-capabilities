@@ -13,6 +13,8 @@
 #ifndef CANGJIE_OPTION_OPTION_H
 #define CANGJIE_OPTION_OPTION_H
 
+#include "cangjie/Basic/CheckingLevel.h"
+
 #include <climits>
 #include <cstdint>
 #include <functional>
@@ -593,13 +595,16 @@ public:
 
     bool enableEH = false; /** Whether support for effect handlers is enabled */
 
-    bool enableChexc = false; /** Whether support for checked exceptions is enabled */
-
-    /** Severity of capability diagnostics under '--enable-checked-exceptions[=error|warn]';
-     * the bare flag means error. */
-    enum class ChexcSeverity : uint8_t { CS_ERROR, CS_WARN };
-
-    ChexcSeverity chexcSeverity = ChexcSeverity::CS_ERROR; /** Severity of checked-exception diagnostics */
+    CheckingLevel exceptionsLevel{CheckingLevel::OFF};
+    CheckingLevel effectsLevel{CheckingLevel::OFF};
+    bool CheckingExceptions() const
+    {
+        return exceptionsLevel != CheckingLevel::OFF;
+    }
+    bool CheckingEffects() const
+    {
+        return effectsLevel != CheckingLevel::OFF;
+    }
 
     MockMode mock = MockMode::DEFAULT; /**< Whether enable mocking. */
 

@@ -30,6 +30,7 @@
 #include "cangjie/IncrementalCompilation/IncrementalCompilationLogger.h"
 #include "cangjie/Macro/MacroExpansion.h"
 #include "cangjie/Mangle/BaseMangler.h"
+#include "cangjie/Modules/CapabilityCache.h"
 #include "cangjie/Modules/ImportManager.h"
 #include "cangjie/Modules/PackageManager.h"
 #include "cangjie/Parse/ASTHasher.h"
@@ -60,7 +61,6 @@ CompilerInstance::CompilerInstance(CompilerInvocation& invocation, DiagnosticEng
 {
     // allocate managers in safe order
     typeManager = new TypeManager();
-    typeManager->SetCapTysInert(!invocation.globalOptions.enableChexc && !invocation.globalOptions.enableEH);
     importManager = new ImportManager(diag, *typeManager, invocation.globalOptions);
     packageManager = new PackageManager(*importManager);
     testManager = new TestManager(*importManager, *typeManager, diag, invocation.globalOptions);
@@ -507,7 +507,7 @@ std::vector<OwnedPtr<AST::Decl>> CompilerInstance::ExpandDecl(OwnedPtr<AST::Decl
 
 void CompilerInstance::CacheCompileArgs()
 {
-    cachedInfo.compileArgs = invocation.globalOptions.ToSerialized();
+    cachedInfo.compileArgs = CapabilityCacheKey(invocation.globalOptions, *importManager);
 }
 
 void CompilerInstance::CacheSemaUsage(SemanticInfo&& info)
@@ -714,25 +714,25 @@ bool CompilerInstance::PerformOverflowStrategy()
 
 bool CompilerInstance::PerformCapabilityCheck()
 {
-    // Checked exceptions (experimental): capability argument checking (/3.5) over the
-    // typed AST. Must run before desugar destroys 'TryExpr' structure and before instantiation.
-    // Effect requirements follow the effect-handler feature, on an axis of its own: wherever it is
-    // enabled, a 'perform' without a handler is an error at every exception-checking level, so the
-    // pass runs for effects alone as well.
-    bool checkExceptions = invocation.globalOptions.enableChexc;
-    if (!checkExceptions && !invocation.globalOptions.enableEH) {
+    // Read-only capability and override validation runs before desugaring removes handler scopes.
+    bool checkExceptions = invocation.globalOptions.CheckingExceptions();
+    if (!checkExceptions && !invocation.globalOptions.CheckingEffects()) {
         return true;
     }
     Utils::ProfileRecorder recorder("Main Stage", "Capability Check");
     auto errorCountBefore = diag.GetErrorCount();
-    bool asWarning = invocation.globalOptions.chexcSeverity == GlobalOptions::ChexcSeverity::CS_WARN;
-    Sema::ReportCapabilityMissHandler missHandler(diag, asWarning, checkExceptions);
+    Sema::ReportCapabilityMissHandler missHandler(
+        diag, invocation.globalOptions.exceptionsLevel, invocation.globalOptions.effectsLevel);
     CJC_NULLPTR_CHECK(typeManager);
     CJC_NULLPTR_CHECK(importManager);
     for (auto& srcPkg : GetSourcePackages()) {
         CJC_NULLPTR_CHECK(srcPkg);
-        Sema::CheckCompletedOverrides(*typeManager, *importManager, *srcPkg, diag, asWarning);
-        Sema::CheckCapabilities(*typeManager, *importManager, *srcPkg, missHandler, diag);
+        Sema::EffectiveCapabilityType effective = [this, &srcPkg](const Decl& decl, Ptr<Ty> ty, bool writing) {
+            return typeChecker->EffectiveUseType(decl, ty, writing, srcPkg);
+        };
+        Sema::CheckCompletedOverrides(*typeManager, *importManager, *srcPkg, diag,
+            invocation.globalOptions.exceptionsLevel, invocation.globalOptions.effectsLevel, effective);
+        Sema::CheckCapabilities(*typeManager, *importManager, *srcPkg, missHandler, diag, effective);
     }
     return diag.GetErrorCount() == errorCountBefore;
 }

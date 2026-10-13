@@ -4,6 +4,7 @@
 //
 // See https://cangjie-lang.cn/pages/LICENSE for license information.
 
+#include "cangjie/Sema/TypeChecker.h"
 #include "TestCompilerInstance.h"
 #include "cangjie/AST/Match.h"
 #include "cangjie/AST/PrintNode.h"
@@ -11,6 +12,7 @@
 #include "cangjie/Basic/Match.h"
 #include "cangjie/Sema/CapabilityCheck.h"
 #include "cangjie/Sema/TypeManager.h"
+#include "cangjie/Utils/FileUtil.h"
 #include "gtest/gtest.h"
 #include <cstdlib>
 #include <string>
@@ -877,8 +879,7 @@ TEST(CapabilityResolution, ResidualOwnershipAndIndependentContexts)
 TEST_F(TypeCheckerTest, CapabilityContractsCompleteDuringSema)
 {
     instance->cangjieHome = projectPath + "/output";
-    invocation.globalOptions.enableChexc = true;
-    instance->typeManager->SetCapTysInert(false);
+    invocation.globalOptions.exceptionsLevel = CheckingLevel::ERROR;
     instance->code = R"(
 class Checked <: Exception {}
 func identity<T>(value: T): T { value }
@@ -919,9 +920,8 @@ main(): Int64 { 0 }
 TEST_F(TypeCheckerTest, CapabilityCycleIsFatalAtWarningLevelDuringSema)
 {
     instance->cangjieHome = projectPath + "/output";
-    invocation.globalOptions.enableChexc = true;
-    instance->typeManager->SetCapTysInert(false);
-    invocation.globalOptions.chexcSeverity = GlobalOptions::ChexcSeverity::CS_WARN;
+    invocation.globalOptions.exceptionsLevel = CheckingLevel::ERROR;
+    invocation.globalOptions.exceptionsLevel = CheckingLevel::WARN;
     instance->code = R"(
 func first(): Unit { second() }
 func second(): Unit { first() }
@@ -934,8 +934,7 @@ main(): Int64 { 0 }
 TEST_F(TypeCheckerTest, CompleteLocalSignaturePermitsRecursionDuringSema)
 {
     instance->cangjieHome = projectPath + "/output";
-    invocation.globalOptions.enableChexc = true;
-    instance->typeManager->SetCapTysInert(false);
+    invocation.globalOptions.exceptionsLevel = CheckingLevel::ERROR;
     instance->code = R"(
 func enclosing(): Unit {
     func recursive(n: Int64): Unit {
@@ -952,9 +951,8 @@ main(): Int64 { 0 }
 TEST_F(TypeCheckerTest, CapabilityContractsAreCompleteForCjd)
 {
     instance->cangjieHome = projectPath + "/output";
-    invocation.globalOptions.enableChexc = true;
+    invocation.globalOptions.exceptionsLevel = CheckingLevel::ERROR;
     invocation.globalOptions.compileCjd = true;
-    instance->typeManager->SetCapTysInert(false);
     instance->code = R"(
 class Checked <: Exception {}
 func caller(): Unit { leaf() }
@@ -980,9 +978,8 @@ func leaf(): Unit { throw Checked() }
 TEST_F(TypeCheckerTest, CapabilityContractsAreCompleteForLsp)
 {
     instance->cangjieHome = projectPath + "/output";
-    invocation.globalOptions.enableChexc = true;
+    invocation.globalOptions.exceptionsLevel = CheckingLevel::ERROR;
     invocation.globalOptions.enableMacroInLSP = true;
-    instance->typeManager->SetCapTysInert(false);
     instance->code = R"(
 class Checked <: Exception {}
 func factory() { leaf }
@@ -1008,4 +1005,215 @@ main(): Int64 { 0 }
         return VisitAction::WALK_CHILDREN;
     }).Walk();
     EXPECT_EQ(checked, 1);
+}
+
+TEST(CapabilityPolicy, IndependentProjectionPreservesCanonicalTypes)
+{
+    TypeManager types;
+    ClassDecl exception;
+    exception.identifier = "Exception";
+    exception.fullPackageName = "std.core";
+    ClassDecl command;
+    command.identifier = "Command";
+    command.fullPackageName = "stdx.effect";
+    auto e = types.GetClassTy(exception, {});
+    auto c = types.GetClassTy(command, {});
+    auto callback = types.GetFunctionTy({}, TypeManager::GetNothingTy(), {}, {e, c});
+    auto original = types.GetFunctionTy({callback}, types.GetTupleTy({callback}), {}, {e, c});
+    auto project = [&](CheckingLevel exceptions, CheckingLevel effects) {
+        return DynamicCast<FuncTy*>(types.MapCapabilityTypes(
+            original, [&](const auto& caps) { return Sema::FilterCapabilityKinds(types, caps, exceptions, effects); }));
+    };
+    auto exceptionOnly = project(CheckingLevel::WARN, CheckingLevel::OFF);
+    ASSERT_NE(exceptionOnly, nullptr);
+    ASSERT_EQ(exceptionOnly->capTys.size(), 1);
+    EXPECT_EQ(exceptionOnly->capTys.front(), e);
+    auto effectOnly = project(CheckingLevel::OFF, CheckingLevel::ERROR);
+    ASSERT_NE(effectOnly, nullptr);
+    ASSERT_EQ(effectOnly->capTys.size(), 1);
+    EXPECT_EQ(effectOnly->capTys.front(), c);
+    auto off = project(CheckingLevel::OFF, CheckingLevel::OFF);
+    ASSERT_NE(off, nullptr);
+    EXPECT_TRUE(off->capTys.empty());
+    EXPECT_TRUE(DynamicCast<FuncTy*>(off->paramTys.front())->capTys.empty());
+    EXPECT_TRUE(DynamicCast<FuncTy*>(off->retTy->typeArgs.front())->capTys.empty());
+    EXPECT_EQ(original->capTys.size(), 2);
+    EXPECT_EQ(callback->capTys.size(), 2);
+    EXPECT_EQ(project(CheckingLevel::ERROR, CheckingLevel::ERROR), original);
+}
+
+TEST(CapabilityPolicy, CommandSubclassBoundsRetainEffectIdentity)
+{
+    TypeManager types;
+    ClassDecl command;
+    command.identifier = "Command";
+    command.fullPackageName = "stdx.effect";
+    auto commandTy = types.GetClassTy(command, {});
+    command.SetTy(commandTy);
+    ClassDecl ask;
+    ask.identifier = "Ask";
+    ask.fullPackageName = "bounds";
+    auto inherited = MakeOwned<RefType>();
+    inherited->SetTy(commandTy);
+    ask.inheritedTypes.emplace_back(std::move(inherited));
+    auto askTy = types.GetClassTy(ask, {});
+    ask.SetTy(askTy);
+    GenericParamDecl param;
+    param.identifier = "C";
+    auto generic = types.GetGenericsTy(param);
+    generic->upperBounds.emplace(askTy);
+    auto effects = Sema::FilterCapabilityKinds(types, {generic}, CheckingLevel::OFF, CheckingLevel::ERROR);
+    ASSERT_EQ(effects.size(), 1);
+    EXPECT_EQ(effects.front(), generic);
+    EXPECT_TRUE(Sema::FilterCapabilityKinds(types, {generic}, CheckingLevel::WARN, CheckingLevel::OFF).empty());
+    EXPECT_EQ(generic->upperBounds.size(), 1);
+}
+
+TEST(CapabilityPolicy, LegacyMetadataDefaultsAreUnchecked)
+{
+    PackageCapabilityInfo legacy;
+    EXPECT_EQ(legacy.level, CheckingLevel::OFF);
+    EXPECT_EQ(legacy.effectsLevel, CheckingLevel::OFF);
+    EXPECT_FALSE(legacy.modalEnabled);
+    legacy.effectsEnabled = true;
+    EXPECT_EQ(legacy.effectsLevel, CheckingLevel::OFF);
+}
+
+TEST_F(TypeCheckerTest, AssumedImportViewsDoNotMutateProducerTypes)
+{
+    instance->cangjieHome = projectPath + "/output";
+    invocation.globalOptions.outputMode = GlobalOptions::OutputMode::STATIC_LIB;
+    instance->code = R"(
+package semaview
+public class E <: Exception {}
+public func read(): () -> Unit { { => () } }
+)";
+    ASSERT_TRUE(instance->Compile(CompileStage::SEMA));
+    ASSERT_EQ(diag.GetErrorCount(), 0);
+    std::vector<uint8_t> data;
+    instance->importManager->ExportAST(false, data, *instance->GetSourcePackages().front());
+    const auto file = FileUtil::JoinPath(projectPath, "build/build/semaview.cjo");
+    FileUtil::WriteBufferToASTFile(file, data);
+    invocation.globalOptions.exceptionsLevel = CheckingLevel::ERROR;
+    invocation.globalOptions.importPaths.push_back(projectPath + "/build/build");
+    struct ViewCompilerInstance : TestCompilerInstance {
+        using CompilerInstance::typeChecker;
+        using TestCompilerInstance::TestCompilerInstance;
+    };
+    auto consumer = std::make_unique<ViewCompilerInstance>(invocation, diag);
+    auto consumerInstance = consumer.get();
+    instance = std::move(consumer);
+    instance->cangjieHome = projectPath + "/output";
+    instance->code = R"(
+@AssumeThrows[v.E]
+import semaview as v
+main(): Int64 {
+    let reference = v.read
+    let result = v.read()
+    0
+}
+)";
+    ASSERT_TRUE(instance->Compile(CompileStage::SEMA));
+    ASSERT_EQ(diag.GetErrorCount(), 0);
+    auto decl = instance->importManager->GetImportedDecl("semaview", "read");
+    ASSERT_NE(decl, nullptr);
+    auto producer = DynamicCast<FuncTy*>(decl->GetTy());
+    ASSERT_NE(producer, nullptr);
+    EXPECT_TRUE(producer->capTys.empty());
+    auto producerResult = DynamicCast<FuncTy*>(producer->retTy);
+    ASSERT_NE(producerResult, nullptr);
+    EXPECT_TRUE(producerResult->capTys.empty());
+    size_t checked = 0;
+    Walker(instance->GetSourcePackages().front(), [&](Ptr<Node> node) {
+        auto var = DynamicCast<VarDecl*>(node);
+        if (!var || (var->identifier != "reference" && var->identifier != "result")) {
+            return VisitAction::WALK_CHILDREN;
+        }
+        auto view = DynamicCast<FuncTy*>(var->GetTy());
+        EXPECT_NE(view, nullptr);
+        if (view) {
+            EXPECT_EQ(view->capTys.size(), 1);
+            if (var->identifier == "reference") {
+                auto returned = DynamicCast<FuncTy*>(view->retTy);
+                EXPECT_NE(returned, nullptr);
+                if (returned) {
+                    EXPECT_EQ(returned->capTys.size(), 1);
+                }
+                EXPECT_NE(view, producer);
+            } else {
+                EXPECT_NE(view, producerResult);
+            }
+            ++checked;
+        }
+        return VisitAction::WALK_CHILDREN;
+    }).Walk();
+    EXPECT_EQ(checked, 2);
+    Package otherConsumer;
+    auto otherView =
+        DynamicCast<FuncTy*>(consumerInstance->typeChecker->EffectiveUseType(*decl, producer, false, &otherConsumer));
+    ASSERT_NE(otherView, nullptr);
+    EXPECT_TRUE(otherView->capTys.empty());
+    EXPECT_TRUE(DynamicCast<FuncTy*>(otherView->retTy)->capTys.empty());
+    EXPECT_TRUE(producer->capTys.empty());
+    EXPECT_TRUE(producerResult->capTys.empty());
+    FileUtil::Remove(file);
+}
+
+TEST_F(TypeCheckerTest, AssumptionsFollowOnUseDeclarationContext)
+{
+    instance->cangjieHome = projectPath + "/output";
+    invocation.globalOptions.outputMode = GlobalOptions::OutputMode::STATIC_LIB;
+    instance->code = R"(
+package contextlegacy
+public class E <: Exception {}
+public func read(): () -> Unit { { => () } }
+)";
+    ASSERT_TRUE(instance->Compile(CompileStage::SEMA));
+    std::vector<uint8_t> data;
+    instance->importManager->ExportAST(false, data, *instance->GetSourcePackages().front());
+    const auto file = FileUtil::JoinPath(projectPath, "build/build/contextlegacy.cjo");
+    FileUtil::WriteBufferToASTFile(file, data);
+    invocation.globalOptions.exceptionsLevel = CheckingLevel::ERROR;
+    invocation.globalOptions.importPaths.push_back(projectPath + "/build/build");
+    instance = std::make_unique<TestCompilerInstance>(invocation, diag);
+    instance->cangjieHome = projectPath + "/output";
+    instance->code = R"(
+package contextcaller
+import contextfactory.*
+import contextlegacy as v
+public func caller() { factory() }
+public func raw() { v.read }
+)";
+    ASSERT_TRUE(instance->Compile(CompileStage::PARSE));
+    instance->code = R"(
+package contextfactory
+@AssumeThrows[v.E]
+import contextlegacy as v
+public func factory() { v.read }
+)";
+    ASSERT_TRUE(instance->Compile(CompileStage::SEMA));
+    ASSERT_EQ(diag.GetErrorCount(), 0);
+    size_t checked = 0;
+    for (auto pkg : instance->GetSourcePackages()) {
+        Walker(pkg, [&](Ptr<Node> node) {
+            auto fd = DynamicCast<FuncDecl*>(node);
+            if (!fd || (fd->identifier != "caller" && fd->identifier != "factory" && fd->identifier != "raw")) {
+                return VisitAction::WALK_CHILDREN;
+            }
+            auto signature = DynamicCast<FuncTy*>(fd->GetTy());
+            EXPECT_NE(signature, nullptr);
+            if (signature) {
+                EXPECT_TRUE(signature->capTys.empty());
+                auto returned = DynamicCast<FuncTy*>(signature->retTy);
+                EXPECT_NE(returned, nullptr);
+                if (returned) {
+                    EXPECT_EQ(returned->capTys.size(), fd->identifier == "raw" ? 0 : 1);
+                    ++checked;
+                }
+            }
+            return VisitAction::WALK_CHILDREN;
+        }).Walk();
+    }
+    EXPECT_EQ(checked, 3);
+    FileUtil::Remove(file);
 }

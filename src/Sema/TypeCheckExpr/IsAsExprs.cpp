@@ -24,21 +24,20 @@ Ptr<Ty> TypeChecker::TypeCheckerImpl::CastTargetTy(Type& target)
     // extension. A parameter-typed target ('x as Box<T>') is accepted: rejecting it would break
     // ordinary generic code, and an instantiation with a function type is an unchecked boundary.
     auto targetTy = target.GetTy();
-    bool checkExceptions = ci->invocation.globalOptions.enableChexc;
-    bool checkEffects = ci->invocation.globalOptions.enableEH;
-    if ((!checkExceptions && !checkEffects) || !Ty::IsTyCorrect(targetTy)) {
-        return targetTy;
-    }
-    if (TypeCheckUtil::ContainsFuncTy(targetTy)) {
-        // For the exception kind this is an ordinary checking violation, so it follows the level.
-        // With effect handlers enabled it is an error at every level besides: the value may carry
-        // a 'performs' component, for which no pessimistic reading exists -- there is no top
-        // command type to fall back on.
-        bool asWarning =
-            !checkEffects && ci->invocation.globalOptions.chexcSeverity == GlobalOptions::ChexcSeverity::CS_WARN;
-        diag.DiagnoseRefactor(asWarning ? DiagKindRefactor::sema_chexc_cast_target_func_warn
-                                        : DiagKindRefactor::sema_chexc_cast_target_func,
-            target, Ty::ToString(targetTy));
+    const auto& options = ci->invocation.globalOptions;
+    if (Ty::IsTyCorrect(targetTy) && TypeCheckUtil::ContainsFuncTy(targetTy)) {
+        if (options.exceptionsLevel == CheckingLevel::ERROR || options.effectsLevel == CheckingLevel::ERROR) {
+            diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_cast_target_func, target, Ty::ToString(targetTy));
+        } else {
+            if (options.exceptionsLevel == CheckingLevel::WARN) {
+                diag.DiagnoseRefactor(
+                    DiagKindRefactor::sema_chexc_cast_target_func_warn, target, Ty::ToString(targetTy));
+            }
+            if (options.effectsLevel == CheckingLevel::WARN) {
+                diag.DiagnoseRefactor(
+                    DiagKindRefactor::sema_effect_cast_target_func_warn, target, Ty::ToString(targetTy));
+            }
+        }
     }
     return targetTy;
 }

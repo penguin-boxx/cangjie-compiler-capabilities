@@ -139,7 +139,7 @@ void Parser::SetCompileOptions(const GlobalOptions& opts)
     // explicitly asks to compile with effect handler support
     SetEHEnabled(opts.enableEH);
     // Same for the checked-exceptions `throws` keyword.
-    SetChexcEnabled(opts.enableChexc);
+    SetChexcEnabled(opts.CheckingExceptions());
 }
 
 bool Parser::Skip(TokenKind kind)

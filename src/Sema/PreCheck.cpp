@@ -953,11 +953,16 @@ void TypeChecker::TypeCheckerImpl::ResolveNames(ASTContext& ctx)
             CJC_NULLPTR_CHECK(file);
             for (auto& import : file->imports) {
                 for (auto& anno : import->annotations) {
-                    if (!anno || !anno->assumeThrows) {
+                    if (!anno || (!anno->assumeThrows && !anno->assumePerforms)) {
                         continue;
                     }
-                    for (auto& capType : anno->assumeThrows->capTypes) {
-                        Walker(capType.get(), id, resolveSingleType).Walk();
+                    for (auto clause : {anno->assumeThrows.get(), anno->assumePerforms.get()}) {
+                        if (!clause) {
+                            continue;
+                        }
+                        for (auto& capType : clause->capTypes) {
+                            Walker(capType.get(), id, resolveSingleType).Walk();
+                        }
                     }
                 }
             }
@@ -1824,7 +1829,7 @@ void TypeChecker::TypeCheckerImpl::PreSetDeclType(const ASTContext& ctx)
             continue; // Do not replace valid ty.
         }
         auto paramTys = GetFuncBodyParamTys(*fd->funcBody);
-        auto capTys = typeManager.NormalizeCapTys(GetFuncBodyCapTys(*fd->funcBody));
+        auto capTys = EffectiveCaps(GetFuncBodyCapTys(*fd->funcBody));
         Ptr<Ty> retTy = TypeManager::GetQuestTy();
         if (fd->TestAttr(Attribute::CONSTRUCTOR)) {
             // Static init has return type of unit. Instance init has return type of current typeDecl.
@@ -1877,7 +1882,8 @@ void TypeChecker::TypeCheckerImpl::PreCheckUsage(ASTContext& ctx, const Package&
     // All generic bounds are available now; finish open written types before API identity checks.
     Walker(const_cast<Package*>(&pkg), [this](Ptr<Node> node) {
         if (Ty::IsTyCorrect(node->GetTy())) {
-            node->SetTy(typeManager.NormalizeCapabilityTypes(node->GetTy()));
+            node->SetTy(typeManager.MapCapabilityTypes(
+                node->GetTy(), [this](const auto& caps) { return EffectiveCaps(caps); }));
         }
         return VisitAction::WALK_CHILDREN;
     }).Walk();

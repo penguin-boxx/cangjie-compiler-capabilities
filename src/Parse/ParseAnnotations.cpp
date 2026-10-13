@@ -367,6 +367,7 @@ OwnedPtr<Annotation> ParserImpl::ParseAnnotation()
             ParseWhenAnnotation(*annotation);
             break;
         }
+        case AnnotationKind::ASSUME_PERFORMS:
         case AnnotationKind::ASSUME_THROWS: {
             ParseAssumeThrowsAnnotation(*annotation);
             break;
@@ -409,6 +410,7 @@ void ParserImpl::ParseAssumeThrowsAnnotation(Annotation& anno)
     // Checked exceptions: '@AssumeThrows[E1, E2]' on an import imposes the
     // listed exception types on every call into the imported package; the bare '@AssumeThrows'
     // assumes 'Exception'. Capability list aliases apply, so the entries are ordinary types.
+    bool performs = anno.kind == AnnotationKind::ASSUME_PERFORMS;
     auto clause = MakeOwned<ThrowsClause>();
     ChainScope cs(*this, clause.get());
     clause->begin = anno.begin;
@@ -423,7 +425,9 @@ void ParserImpl::ParseAssumeThrowsAnnotation(Annotation& anno)
             // The empty list is rejected: an assumption that assumes nothing is either a mistake
             // or the bare form written the long way, and the bare form already means 'Exception'.
             if (Seeing(TokenKind::RSQUARE) && clause->capTypes.empty()) {
-                ParseDiagnoseRefactor(DiagKindRefactor::parse_empty_assume_throws_list, anno.lsquarePos);
+                ParseDiagnoseRefactor(performs ? DiagKindRefactor::parse_empty_assume_performs_list
+                                               : DiagKindRefactor::parse_empty_assume_throws_list,
+                    anno.lsquarePos);
                 anno.EnableAttr(Attribute::IS_BROKEN);
                 break;
             }
@@ -449,5 +453,12 @@ void ParserImpl::ParseAssumeThrowsAnnotation(Annotation& anno)
         }
     }
     // An empty list is the bare form: elaboration substitutes 'Exception'.
-    anno.assumeThrows = std::move(clause);
+    if (performs) {
+        if (anno.lsquarePos.IsZero()) {
+            ParseDiagnoseRefactor(DiagKindRefactor::parse_assume_performs_requires_list, anno.begin);
+        }
+        anno.assumePerforms = std::move(clause);
+    } else {
+        anno.assumeThrows = std::move(clause);
+    }
 }

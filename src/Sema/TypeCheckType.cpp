@@ -345,6 +345,14 @@ void TypeChecker::TypeCheckerImpl::CheckFuncType(ASTContext& ctx, FuncType& ft)
             ChkThrowsClauseTypes(ctx, *ft.throwsClause);
         }
     }
+    if (ft.performsClause) {
+        if (ft.isC) {
+            diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_clause_on_cfunc, *ft.performsClause, "a 'CFunc' type");
+        } else {
+            ChkPerformsClauseTypes(ctx, *ft.performsClause);
+        }
+    }
+    ft.SetTy(typeManager.MapCapabilityTypes(ft.GetTy(), [this](const auto& caps) { return EffectiveCaps(caps); }));
     if (!ft.isC) {
         return;
     }

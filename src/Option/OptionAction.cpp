@@ -1082,12 +1082,20 @@ std::unordered_map<Options::ID, std::function<bool(GlobalOptions&, OptionArgInst
     {Options::ID::ENABLE_CHECKED_EXCEPTIONS, [](GlobalOptions& opts, const OptionArgInstance& arg) {
         // '--enable-checked-exceptions' (alias '--enable-chexc') and '=error' report capability
         // violations as errors; '=warn' downgrades them to warnings (warn group 'chexc').
-        if (!arg.value.empty() && arg.value != "error" && arg.value != "warn") {
+        if (!arg.value.empty() && arg.value != "error" && arg.value != "warn" && arg.value != "off") {
             return false;
         }
-        opts.enableChexc = true;
-        opts.chexcSeverity = arg.value == "warn" ? GlobalOptions::ChexcSeverity::CS_WARN
-                                                 : GlobalOptions::ChexcSeverity::CS_ERROR;
+        opts.exceptionsLevel = arg.value == "off" ? CheckingLevel::OFF :
+            arg.value == "warn" ? CheckingLevel::WARN : CheckingLevel::ERROR;
+        return true;
+    }},
+    {Options::ID::ENABLE_CHECKED_EFFECTS, [](GlobalOptions& opts, const OptionArgInstance& arg) {
+        // Checked effects use an explicit level; handler syntax is enabled independently.
+        if (arg.value != "error" && arg.value != "warn" && arg.value != "off") {
+            return false;
+        }
+        opts.effectsLevel = arg.value == "off" ? CheckingLevel::OFF :
+            arg.value == "warn" ? CheckingLevel::WARN : CheckingLevel::ERROR;
         return true;
     }},
 #endif // CANGJIE_CODEGEN_CJNATIVE_BACKEND

@@ -79,11 +79,16 @@ void Collector::CollectFileNode(ASTContext& ctx, File& file, bool buildTrie)
         // Checked exceptions: the exception types of an '@AssumeThrows' import
         // annotation are named in the file's top-level scope, which is the scope in effect here.
         for (auto& anno : import->annotations) {
-            if (!anno || !anno->assumeThrows) {
+            if (!anno || (!anno->assumeThrows && !anno->assumePerforms)) {
                 continue;
             }
-            for (auto& capType : anno->assumeThrows->capTypes) {
-                BuildSymbolTable(ctx, capType.get(), buildTrie);
+            for (auto clause : {anno->assumeThrows.get(), anno->assumePerforms.get()}) {
+                if (!clause) {
+                    continue;
+                }
+                for (auto& capType : clause->capTypes) {
+                    BuildSymbolTable(ctx, capType.get(), buildTrie);
+                }
             }
         }
     }
@@ -724,6 +729,13 @@ void Collector::BuildSymbolTable(ASTContext& ctx, Ptr<Node> node, bool buildTrie
             BuildSymbolTable(ctx, anno->baseExpr.get(), buildTrie);
             for (auto& funcArg : anno->args) {
                 BuildSymbolTable(ctx, funcArg.get(), buildTrie);
+            }
+            for (auto clause : {anno->assumeThrows.get(), anno->assumePerforms.get()}) {
+                if (clause) {
+                    for (auto& type : clause->capTypes) {
+                        BuildSymbolTable(ctx, type.get(), buildTrie);
+                    }
+                }
             }
             break;
         }

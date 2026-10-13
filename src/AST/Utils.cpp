@@ -58,6 +58,9 @@ void AddCurFile(Node& root, Ptr<File> file)
                         if (anno && anno->assumeThrows) {
                             Walker(anno->assumeThrows.get(), walkerID, setCurFile).Walk();
                         }
+                        if (anno && anno->assumePerforms) {
+                            Walker(anno->assumePerforms.get(), walkerID, setCurFile).Walk();
+                        }
                     }
                 }
                 return VisitAction::WALK_CHILDREN;

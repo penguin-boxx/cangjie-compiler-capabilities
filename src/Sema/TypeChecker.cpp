@@ -263,17 +263,26 @@ void TypeChecker::TypeCheckerImpl::ChkCapturesSuperclassCoverage(const ClassDecl
     if (!super) {
         return;
     }
-    auto superCaps = TypeCheckUtil::GetDeclCapturesCapTys(*super);
+    auto superCaps = EffectiveCaps(TypeCheckUtil::GetDeclCapturesCapTys(*super));
     if (superCaps.empty()) {
         return;
     }
-    auto ownCaps = TypeCheckUtil::GetDeclCapturesCapTys(cd);
+    auto ownCaps = EffectiveCaps(TypeCheckUtil::GetDeclCapturesCapTys(cd));
     for (auto superCap : superCaps) {
         if (!Ty::IsTyCorrect(superCap) || typeManager.IsCapTysSubsumed({superCap}, ownCaps)) {
             continue;
         }
-        auto builder = diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_subclass_captures_missing,
-            MakeRangeForDeclIdentifier(cd), cd.identifier.Val(), Ty::ToString(superCap));
+        const auto& options = ci->invocation.globalOptions;
+        bool effect = TypeCheckUtil::IsCommandTy(typeManager, importManager, superCap);
+        auto level = effect ? options.effectsLevel : options.exceptionsLevel;
+        Diagnostic diagnostic(true, MakeRangeForDeclIdentifier(cd),
+            DiagKindRefactor::sema_chexc_subclass_captures_missing, {cd.identifier.Val(), Ty::ToString(superCap)});
+        if (level == CheckingLevel::WARN) {
+            diagnostic.diagSeverity = DiagSeverity::DS_WARNING;
+            diagnostic.warnGroup = effect ? WarnGroup::CHECKED_EFFECTS : WarnGroup::CHEXC;
+            diagnostic.mainHint.color = SEVE_TO_COLOR.at(DiagSeverity::DS_WARNING);
+        }
+        auto builder = diag.Diagnose(diagnostic);
         builder.AddNote(MakeRangeForDeclIdentifier(*super), "the superclass captures it here");
     }
 }
@@ -296,38 +305,41 @@ void TypeChecker::TypeCheckerImpl::ChkCapturesClauseOfDecl(ASTContext& ctx, Inhe
 
 void TypeChecker::TypeCheckerImpl::ChkImportedCapabilityMetadata(Package& pkg)
 {
-    bool checkExceptions = ci->invocation.globalOptions.enableChexc;
-    if (!checkExceptions && !ci->invocation.globalOptions.enableEH) {
-        return;
-    }
     for (auto& file : pkg.files) {
-        CJC_NULLPTR_CHECK(file);
         for (auto& import : file->imports) {
             if (!import || import->IsImportMulti()) {
-                continue; // Desugared into single imports, which carry copies of the annotations.
+                continue;
             }
-            bool assumes = std::any_of(import->annotations.begin(), import->annotations.end(),
-                [](auto& anno) { return anno && anno->assumeThrows; });
-            for (auto& name : import->content.GetPossiblePackageNames()) {
-                auto info = importManager.GetPackageCapabilityInfo(name);
-                if (!info.recordsCapabilities) {
-                    // Effects: a package built with handlers but no capability metadata has
-                    // 'performs' lists that were never written, and an empty list would read as
-                    // "performs nothing". Exception lists are safe to read that way -- an
-                    // unchecked package simply requires nothing of its callers.
-                    if (info.effectsEnabled) {
-                        diag.DiagnoseRefactor(
-                            DiagKindRefactor::sema_chexc_import_without_capability_metadata, *import, name);
-                    }
+            const auto name = import->content.prefixPaths.empty() ? import->content.identifier.Val()
+                                                                  : import->content.GetImportedPackageNameWithIsDecl();
+            auto info = importManager.GetPackageCapabilityInfo(name);
+            for (auto& anno : import->annotations) {
+                if (!anno || (!anno->assumeThrows && !anno->assumePerforms)) {
                     continue;
                 }
-                // An assumption stands in for the lists a dependency does not have. A package that
-                // records lists of its own -- verified at 'error' or trusted at 'warn' -- has them,
-                // and the two would contradict each other: the assumption would override what the
-                // dependency states, in whichever direction the author guessed wrong.
-                if (assumes && checkExceptions && info.level != PackageCapabilityInfo::Level::OFF) {
-                    diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_assume_on_checked_package, *import, name);
+                const bool performs = anno->assumePerforms != nullptr;
+                const auto annotationName = performs ? "AssumePerforms" : "AssumeThrows";
+                if (import->content.isDecl) {
+                    diag.DiagnoseRefactor(DiagKindRefactor::sema_assumption_member_import, *import, annotationName);
+                    continue;
                 }
+                if ((performs ? info.effectsLevel : info.level) != CheckingLevel::OFF) {
+                    diag.DiagnoseRefactor(performs ? DiagKindRefactor::sema_assume_performs_on_checked_package
+                                                   : DiagKindRefactor::sema_chexc_assume_on_checked_package,
+                        *import, name);
+                    continue;
+                }
+                auto clause = performs ? anno->assumePerforms.get() : anno->assumeThrows.get();
+                auto caps = TypeCheckUtil::ExpandCapabilityList(clause->capTypes);
+                if (!performs && clause->capTypes.empty()) {
+                    auto exception = importManager.GetCoreDecl<ClassDecl>(CLASS_EXCEPTION);
+                    if (exception) {
+                        caps.emplace_back(exception->GetTy());
+                    }
+                }
+                auto& all = assumedCapabilities[&pkg][name];
+                all.insert(all.end(), caps.begin(), caps.end());
+                all = EffectiveCaps(all);
             }
         }
     }
@@ -335,29 +347,26 @@ void TypeChecker::TypeCheckerImpl::ChkImportedCapabilityMetadata(Package& pkg)
 
 void TypeChecker::TypeCheckerImpl::ChkAssumeThrowsAnnotations(ASTContext& ctx, Package& pkg)
 {
-    if (!ci->invocation.globalOptions.enableChexc) {
-        return;
-    }
-    // Checked exceptions: validate the exception types of every assumption import
-    // exactly like the entries of a 'throws' clause. Their types were resolved by 'ResolveNames'.
     for (auto& file : pkg.files) {
-        CJC_NULLPTR_CHECK(file);
         for (auto& import : file->imports) {
             for (auto& anno : import->annotations) {
                 if (anno && anno->assumeThrows) {
                     ChkThrowsClauseTypes(ctx, *anno->assumeThrows, "@AssumeThrows");
                 }
+                if (anno && anno->assumePerforms) {
+                    ChkPerformsClauseTypes(ctx, *anno->assumePerforms);
+                }
             }
         }
     }
-    // The annotation only means anything on an import, where the trust relationship lives; it is
-    // silently inert anywhere else, so a misplaced one is rejected rather than ignored.
     Walker(&pkg, [this](Ptr<Node> node) -> VisitAction {
         if (node->astKind == ASTKind::IMPORT_SPEC) {
             return VisitAction::SKIP_CHILDREN;
         }
-        if (auto anno = DynamicCast<Annotation*>(node); anno && anno->kind == AnnotationKind::ASSUME_THROWS) {
-            diag.DiagnoseRefactor(DiagKindRefactor::sema_chexc_assume_throws_not_on_import, *anno);
+        if (auto anno = DynamicCast<Annotation*>(node);
+            anno && Utils::In(anno->kind, {AnnotationKind::ASSUME_THROWS, AnnotationKind::ASSUME_PERFORMS})) {
+            diag.DiagnoseRefactor(DiagKindRefactor::sema_assumption_not_on_import, *anno,
+                anno->kind == AnnotationKind::ASSUME_THROWS ? "AssumeThrows" : "AssumePerforms");
         }
         return VisitAction::WALK_CHILDREN;
     }).Walk();
@@ -436,31 +445,114 @@ void TypeChecker::TypeCheckerImpl::ChkThrowsClauseOfFuncBody(ASTContext& ctx, Fu
     }
 }
 
+std::vector<Ptr<Ty>> TypeChecker::TypeCheckerImpl::EffectiveCaps(const std::vector<Ptr<Ty>>& caps) const
+{
+    const auto& options = ci->invocation.globalOptions;
+    return Sema::FilterCapabilityKinds(typeManager, caps, options.exceptionsLevel, options.effectsLevel);
+}
+
+std::vector<Ptr<Ty>> TypeChecker::TypeCheckerImpl::EffectiveParamTys(const CallExpr& ce, const FuncDecl& fd) const
+{
+    auto params = TypeCheckUtil::GetParamTysInArgsOrder(typeManager, ce, fd);
+    for (auto& param : params) {
+        param = EffectiveUseType(fd, param, true);
+    }
+    return params;
+}
+
+Ptr<Ty> TypeChecker::EffectiveUseType(const Decl& decl, Ptr<Ty> ty, bool writing, Ptr<const Package> consumer) const
+{
+    return impl->EffectiveUseType(decl, ty, writing, consumer);
+}
+
+Ptr<Ty> TypeChecker::TypeCheckerImpl::EffectiveUseType(
+    const Decl& decl, Ptr<Ty> ty, bool writing, Ptr<const Package> consumer) const
+{
+    if (!Ty::IsTyCorrect(ty)) {
+        return ty;
+    }
+    auto exceptions = ci->invocation.globalOptions.exceptionsLevel;
+    auto effects = ci->invocation.globalOptions.effectsLevel;
+    if (decl.TestAttr(Attribute::IMPORTED)) {
+        const auto info = importManager.GetPackageCapabilityInfo(decl.fullPackageName);
+        if (!info.recordsCapabilities || info.level == CheckingLevel::OFF) {
+            exceptions = CheckingLevel::OFF;
+        }
+        if (!info.recordsCapabilities || info.effectsLevel == CheckingLevel::OFF) {
+            effects = CheckingLevel::OFF;
+        }
+    }
+    auto projected = typeManager.MapCapabilityTypes(ty, [this, exceptions, effects](const auto& caps) {
+        return Sema::FilterCapabilityKinds(typeManager, caps, exceptions, effects);
+    });
+    if (writing || !decl.TestAttr(Attribute::IMPORTED)) {
+        return projected;
+    }
+    auto package = assumedCapabilities.find(consumer ? consumer : capabilityConsumer);
+    if (package == assumedCapabilities.end()) {
+        return projected;
+    }
+    auto found = package->second.find(decl.fullPackageName);
+    if (found == package->second.end() || found->second.empty()) {
+        return projected;
+    }
+    // Read results are covariant. Nominal arguments and function inputs retain the producer's accepted type.
+    std::function<Ptr<Ty>(Ptr<Ty>)> read = [&](Ptr<Ty> value) -> Ptr<Ty> {
+        if (auto ft = DynamicCast<FuncTy*>(value)) {
+            auto caps = ft->capTys;
+            caps.insert(caps.end(), found->second.begin(), found->second.end());
+            return typeManager.GetFunctionTy(ft->paramTys, read(ft->retTy),
+                {ft->isC, ft->isClosureTy, ft->hasVariableLenArg, ft->noCast}, typeManager.NormalizeCapTys(caps));
+        }
+        if (auto tuple = DynamicCast<TupleTy*>(value)) {
+            std::vector<Ptr<Ty>> items;
+            for (auto item : tuple->typeArgs) {
+                items.emplace_back(read(item));
+            }
+            return typeManager.GetTupleTy(items, tuple->isClosureTy);
+        }
+        return value;
+    };
+    return read(projected);
+}
+
 bool TypeChecker::TypeCheckerImpl::CheckCapabilitySubtype(Ptr<Ty> source, Ptr<Ty> target, const Node& site)
 {
     if (typeManager.IsSubtype(source, target)) {
         return true;
     }
+    if (!Ty::IsTyCorrect(source) || !Ty::IsTyCorrect(target)) {
+        return false;
+    }
+    if (!typeManager.IsSubtype(typeManager.EraseCapTys(source), typeManager.EraseCapTys(target))) {
+        return false;
+    }
     const auto& options = ci->invocation.globalOptions;
-    if (!options.enableChexc || options.chexcSeverity != GlobalOptions::ChexcSeverity::CS_WARN ||
-        !Ty::IsTyCorrect(source) || !Ty::IsTyCorrect(target)) {
-        return false;
+    auto project = [this](Ptr<Ty> ty, CheckingLevel exceptions, CheckingLevel effects) {
+        return typeManager.MapCapabilityTypes(ty, [this, exceptions, effects](const auto& caps) {
+            return Sema::FilterCapabilityKinds(typeManager, caps, exceptions, effects);
+        });
+    };
+    bool exceptionsMismatch = !typeManager.IsSubtype(project(source, CheckingLevel::ERROR, CheckingLevel::OFF),
+        project(target, CheckingLevel::ERROR, CheckingLevel::OFF));
+    bool effectsMismatch = !typeManager.IsSubtype(project(source, CheckingLevel::OFF, CheckingLevel::ERROR),
+        project(target, CheckingLevel::OFF, CheckingLevel::ERROR));
+    if (exceptionsMismatch && options.exceptionsLevel == CheckingLevel::WARN) {
+        diag.DiagnoseRefactor(
+            DiagKindRefactor::sema_chexc_type_requirement_warn, site, Ty::ToString(source), Ty::ToString(target));
     }
-    auto exception = importManager.GetCoreDecl<ClassDecl>(CLASS_EXCEPTION);
-    if (!exception ||
-        !typeManager.IsSubtype(typeManager.EraseExceptionCapTys(source, exception->GetTy()),
-            typeManager.EraseExceptionCapTys(target, exception->GetTy()))) {
-        return false;
+    if (effectsMismatch && options.effectsLevel == CheckingLevel::WARN) {
+        diag.DiagnoseRefactor(
+            DiagKindRefactor::sema_effect_type_requirement_warn, site, Ty::ToString(source), Ty::ToString(target));
     }
-    diag.DiagnoseRefactor(
-        DiagKindRefactor::sema_chexc_type_requirement_warn, site, Ty::ToString(source), Ty::ToString(target));
-    return true;
+    return (!exceptionsMismatch || options.exceptionsLevel != CheckingLevel::ERROR) &&
+        (!effectsMismatch || options.effectsLevel != CheckingLevel::ERROR);
 }
 
 bool TypeChecker::TypeCheckerImpl::NeedSynOnUsed(const Decl& decl) const
 {
     auto fd = DynamicCast<const FuncDecl*>(&decl);
-    if (ci->invocation.globalOptions.enableChexc && fd && Sema::IsInferenceEligible(*fd)) {
+    if (ci->invocation.globalOptions.CheckingExceptions() && fd && Sema::IsInferenceEligible(*fd)) {
         auto it = capabilityContracts.find(const_cast<FuncDecl*>(fd));
         if (it == capabilityContracts.end() || it->second != ContractState::COMPLETE) {
             return true;
@@ -508,7 +600,7 @@ bool TypeChecker::TypeCheckerImpl::EnsureContract(ASTContext& ctx, Decl& decl, c
     if (NeedSynOnUsed(decl)) {
         auto depth = capabilityRequests.size();
         if (auto fd = DynamicCast<FuncDecl*>(&decl);
-            fd && ci->invocation.globalOptions.enableChexc && Sema::IsInferenceEligible(*fd)) {
+            fd && ci->invocation.globalOptions.CheckingExceptions() && Sema::IsInferenceEligible(*fd)) {
             capabilityRequests.emplace_back(fd, &site);
         }
         Synthesize({ctx, SynPos::NONE}, &decl);
@@ -518,7 +610,7 @@ bool TypeChecker::TypeCheckerImpl::EnsureContract(ASTContext& ctx, Decl& decl, c
         if (!CheckActiveContract(*fd, site)) {
             return false;
         }
-        if (ci->invocation.globalOptions.enableChexc && Sema::IsInferenceEligible(*fd)) {
+        if (ci->invocation.globalOptions.CheckingExceptions() && Sema::IsInferenceEligible(*fd)) {
             auto state = capabilityContracts.find(fd);
             if (state == capabilityContracts.end() || state->second != ContractState::COMPLETE) {
                 return false;
@@ -531,7 +623,7 @@ bool TypeChecker::TypeCheckerImpl::EnsureContract(ASTContext& ctx, Decl& decl, c
 bool TypeChecker::TypeCheckerImpl::CheckFuncBody(ASTContext& ctx, FuncBody& fb)
 {
     auto fd = fb.funcDecl;
-    bool infer = ci->invocation.globalOptions.enableChexc && fd && Sema::IsInferenceEligible(*fd);
+    bool infer = ci->invocation.globalOptions.CheckingExceptions() && fd && Sema::IsInferenceEligible(*fd);
     if (infer) {
         if (!CheckActiveContract(*fd, *fd)) {
             return false;
@@ -548,7 +640,7 @@ bool TypeChecker::TypeCheckerImpl::CheckFuncBody(ASTContext& ctx, FuncBody& fb)
     bool valid = CheckFuncBodyImpl(ctx, fb);
     valid = valid && diag.GetErrorCount() == errorsBefore;
     if (fd && !fd->ownerFunc && fb.body &&
-        (ci->invocation.globalOptions.enableChexc || ci->invocation.globalOptions.enableEH)) {
+        (ci->invocation.globalOptions.CheckingExceptions() || ci->invocation.globalOptions.CheckingEffects())) {
         // Initializer typing is a dependency of each constructor, not of every class member.
         if (fd->TestAttr(Attribute::CONSTRUCTOR) && !fd->TestAttr(Attribute::STATIC) && fd->outerDecl) {
             for (auto& member : fd->outerDecl->GetMemberDecls()) {
@@ -561,11 +653,15 @@ bool TypeChecker::TypeCheckerImpl::CheckFuncBody(ASTContext& ctx, FuncBody& fb)
         }
         if (valid) {
             bool dependenciesValid = true;
-            auto requirements = Sema::CollectCapabilityRequirements(typeManager, importManager, *fd,
+            auto requirements = Sema::CollectCapabilityRequirements(
+                typeManager, importManager, *fd,
                 [this, &ctx, &dependenciesValid](FuncDecl& dependency, const Node& site) {
                     bool ready = EnsureContract(ctx, dependency, site);
                     dependenciesValid = ready && dependenciesValid;
                     return ready;
+                },
+                [this, &ctx](const Decl& decl, Ptr<Ty> ty, bool writing) {
+                    return EffectiveUseType(decl, ty, writing, ctx.curPackage);
                 });
             valid = dependenciesValid && valid;
             if (infer && valid && capabilityContracts[fd] != ContractState::FAILED) {
@@ -576,8 +672,7 @@ bool TypeChecker::TypeCheckerImpl::CheckFuncBody(ASTContext& ctx, FuncBody& fb)
                     auto caps = TypeCheckUtil::GetFuncBodyCapTys(fb);
                     caps.insert(caps.end(), requirements.begin(), requirements.end());
                     auto complete = typeManager.GetFunctionTy(ft->paramTys, ft->retTy,
-                        {ft->isC, ft->isClosureTy, ft->hasVariableLenArg, ft->noCast},
-                        typeManager.NormalizeCapTys(caps));
+                        {ft->isC, ft->isClosureTy, ft->hasVariableLenArg, ft->noCast}, EffectiveCaps(caps));
                     fb.SetTy(complete);
                     fd->SetTy(complete);
                 } else {
@@ -642,7 +737,7 @@ bool TypeChecker::TypeCheckerImpl::CheckNormalFuncBody(ASTContext& ctx, FuncBody
     }
     CheckFuncParamList(ctx, *fb.paramLists[0]);
     paramTys = GetFuncBodyParamTys(fb);
-    auto capTys = typeManager.NormalizeCapTys(GetFuncBodyCapTys(fb));
+    auto capTys = EffectiveCaps(GetFuncBodyCapTys(fb));
 
     bool isCFFIBackend = IsUnsafeBackend(backendType);
     bool isCFunc =
@@ -884,7 +979,7 @@ void TypeChecker::TypeCheckerImpl::CheckCtorFuncBody(ASTContext& ctx, FuncBody& 
     }
     CheckFuncParamList(ctx, *fb.paramLists[0].get());
     auto paramTys = GetFuncBodyParamTys(fb);
-    fb.SetTy(typeManager.GetFunctionTy(paramTys, ctorTy, {}, typeManager.NormalizeCapTys(GetFuncBodyCapTys(fb))));
+    fb.SetTy(typeManager.GetFunctionTy(paramTys, ctorTy, {}, EffectiveCaps(GetFuncBodyCapTys(fb))));
     fb.funcDecl->SetTy(fb.GetTy());
     fb.retType->SetTy(ctorTy);
     Synthesize({ctx, SynPos::UNUSED}, fb.body.get());
@@ -1165,7 +1260,7 @@ bool TypeChecker::TypeCheckerImpl::IsChecked(ASTContext& ctx, Node& node) const
 {
     auto decl = As<ASTKind::DECL>(&node);
     if (auto fd = DynamicCast<FuncDecl*>(decl);
-        fd && ci->invocation.globalOptions.enableChexc && Sema::IsInferenceEligible(*fd)) {
+        fd && ci->invocation.globalOptions.CheckingExceptions() && Sema::IsInferenceEligible(*fd)) {
         auto state = capabilityContracts.find(fd);
         if (state == capabilityContracts.end() || state->second != ContractState::COMPLETE) {
             return false;
@@ -1216,6 +1311,17 @@ Ptr<Ty> TypeChecker::TypeCheckerImpl::Synthesize(const CheckerContext& ctx, Ptr<
         }
     }
     CheckerContext newCtx{*curCtx, ctx.SynthPos()};
+    // On-use completion may switch source packages. Keep assumptions in the declaration's
+    // context while typing its body, and restore the caller's view when the request finishes.
+    struct RestoreConsumer {
+        Ptr<const Package>& current;
+        Ptr<const Package> saved;
+        ~RestoreConsumer()
+        {
+            current = saved;
+        }
+    } restoreConsumer{capabilityConsumer, capabilityConsumer};
+    capabilityConsumer = curCtx->curPackage;
 
     if (auto decl = DynamicCast<Decl*>(node)) {
         auto stashDiagnoseStatus = diag.AutoStashDisableDiagnoseStatus();
@@ -2452,6 +2558,8 @@ void TypeChecker::TypeCheckForPackages(const std::vector<Ptr<Package>>& pkgs) co
 std::vector<Ptr<ASTContext>> TypeChecker::TypeCheckerImpl::PreTypeCheck(const std::vector<Ptr<AST::Package>>& pkgs)
 {
     capabilityContracts.clear();
+    assumedCapabilities.clear();
+    capabilityConsumer = nullptr;
     capabilityRequests.clear();
     Utils::ProfileRecorder recorder("Semantic", "Pre TypeCheck");
     std::vector<Ptr<ASTContext>> contexts;
@@ -2469,6 +2577,10 @@ std::vector<Ptr<ASTContext>> TypeChecker::TypeCheckerImpl::PreTypeCheck(const st
     Utils::ProfileRecorder::Stop("Pre TypeCheck", "PrepareTypeCheck");
     // Pre checking for resolving types and rules without semantic type.
     PreCheck(contexts);
+    for (auto ctx : contexts) {
+        ChkAssumeThrowsAnnotations(*ctx, *ctx->curPackage);
+        ChkImportedCapabilityMetadata(*ctx->curPackage);
+    }
 
     Utils::ProfileRecorder::Start("Pre TypeCheck", "CollectDeclsWithMember");
     for (auto pkg : pkgs) {
@@ -2493,7 +2605,8 @@ void TypeChecker::TypeCheckerImpl::PostTypeCheck(std::vector<Ptr<ASTContext>>& c
     Utils::ProfileRecorder recorder("Semantic", "Post TypeCheck");
     // Post checking for legality of semantic.
     for (auto& ctx : contexts) {
-        if (ci->invocation.globalOptions.enableChexc && diag.GetErrorCount() == 0) {
+        capabilityConsumer = ctx->curPackage;
+        if (ci->invocation.globalOptions.CheckingExceptions() && diag.GetErrorCount() == 0) {
             // Successful Sema must not expose a provisional contract to AST validation,
             // serialization, lowering, or clients that stop before CAPABILITY_CHECK.
             Walker(ctx->curPackage, [this](Ptr<Node> node) {
@@ -2507,8 +2620,6 @@ void TypeChecker::TypeCheckerImpl::PostTypeCheck(std::vector<Ptr<ASTContext>>& c
             }).Walk();
         }
         CheckOverflow(*ctx->curPackage);
-        ChkAssumeThrowsAnnotations(*ctx, *ctx->curPackage);
-        ChkImportedCapabilityMetadata(*ctx->curPackage);
         CheckUnusedImportSpec(*ctx->curPackage);
         // Check duplicated super interfaces in class, interface when type arguments applied.
         CheckInstDupSuperInterfacesEntry(*ctx->curPackage);

@@ -91,6 +91,8 @@ private:
     std::string packageDepInfo;
     const CjoManager& cjoManager;
     TypeManager& typeManager;
+    CheckingLevel exceptionsLevel{CheckingLevel::OFF};
+    CheckingLevel effectsLevel{CheckingLevel::OFF};
     /** All serialized node index in order. */
     // Save all imported packages, the vector pos is package index.
     std::vector<TStringOffset> allPackages;
@@ -239,7 +241,7 @@ private:
         // the list); the exported form adds a stable order, so that reordering a clause in source
         // is not a metadata change. Ordering is by name rather than by pointer, which would vary
         // run to run.
-        auto kept = typeManager.NormalizeCapTys(capTys);
+        auto kept = Sema::FilterCapabilityKinds(typeManager, capTys, exceptionsLevel, effectsLevel);
         std::stable_sort(kept.begin(), kept.end(),
             [](Ptr<AST::Ty> a, Ptr<AST::Ty> b) { return AST::Ty::ToString(a) < AST::Ty::ToString(b); });
         return kept;

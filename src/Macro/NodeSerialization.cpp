@@ -1098,8 +1098,10 @@ flatbuffers::Offset<NodeFormat::Annotation> NodeWriter::SerializeAnnotation(AstA
     }
     auto fbAttrs = builder.CreateVector(vecAttrs);
     auto condExpr = SerializeExpr(annotation->condExpr.get());
+    auto assumeThrows = SerializeCapabilityClause(annotation->assumeThrows.get());
+    auto assumePerforms = SerializeCapabilityClause(annotation->assumePerforms.get());
     return NodeFormat::CreateAnnotation(builder, base, kind, &identPos, identifier, fbArgs, overlowStrategy, fbAttrs,
-        condExpr, &lsquarePos, &rsquarePos, isCompileTimeVisible);
+        condExpr, &lsquarePos, &rsquarePos, isCompileTimeVisible, assumeThrows, assumePerforms);
 }
 
 flatbuffers::Offset<NodeFormat::Modifier> NodeWriter::SerializeModifier(AstModifier modifier)

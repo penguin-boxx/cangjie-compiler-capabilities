@@ -197,13 +197,6 @@ void SortCapTys(std::vector<Ptr<Ty>>& capTys)
 Ptr<FuncTy> TypeManager::GetFunctionTy(
     const std::vector<Ptr<Ty>>& paramTys, Ptr<Ty> retTy, FuncTy::Config cfg, const std::vector<Ptr<Ty>>& capTys)
 {
-    // With both capability features off the clause is documentation: it shapes no type, so
-    // '() throws E -> R' IS '() -> R' -- one identity, assignable in every position, absent from
-    // the '.cjo'. Dropped here, at the one funnel every FuncTy passes through (declaration types,
-    // functional type nodes, loaded imports, joins), rather than at each elaboration site.
-    if (capTysInert && !capTys.empty()) {
-        return GetTypeTy<FuncTy>(paramTys, retTy, cfg, std::vector<Ptr<Ty>>{});
-    }
     // The same funnel makes entry order irrelevant to identity: '() throws (A, B) -> R' and
     // '() throws (B, A) -> R' are one type whichever producer built them.
     if (capTys.size() > 1) {
@@ -1105,8 +1098,12 @@ Ptr<Ty> TypeManager::MapCapabilityTypes(
         for (auto& arg : args) {
             arg = MapCapabilityTypes(arg, map);
         }
+        auto caps = ft->capTys;
+        for (auto& cap : caps) {
+            cap = MapCapabilityTypes(cap, map);
+        }
         return GetFunctionTy(args, MapCapabilityTypes(ft->retTy, map),
-            {ft->isC, ft->isClosureTy, ft->hasVariableLenArg, ft->noCast}, map(ft->capTys));
+            {ft->isC, ft->isClosureTy, ft->hasVariableLenArg, ft->noCast}, map(caps));
     }
     auto args = ty->typeArgs;
     bool changed = false;

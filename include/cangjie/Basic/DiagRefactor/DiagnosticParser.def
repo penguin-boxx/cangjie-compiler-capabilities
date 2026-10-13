@@ -403,3 +403,6 @@ WARNING(parse_diag_warning, PARSER, "%s", "%s")
 
 // Don't add any diag after this kind.
 ERROR(parse_diag_end, "")
+
+ERROR(parse_assume_performs_requires_list, "'@AssumePerforms' requires an explicit nonempty list of Command types", "write '@AssumePerforms[C]'")
+ERROR(parse_empty_assume_performs_list, "'@AssumePerforms[]' requires a nonempty list of Command types", "write '@AssumePerforms[C]'")

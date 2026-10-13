@@ -255,3 +255,40 @@ TEST(ToFullTripleStringTest, EnvironmentNameTest)
         EXPECT_EQ(actualName, pairs[i].second);
     }
 }
+
+#ifdef CANGJIE_CODEGEN_CJNATIVE_BACKEND
+TEST_F(OptionTest, CapabilityLevelsAreIndependent)
+{
+    const std::vector<std::pair<std::string, CheckingLevel>> levels = {
+        {"off", CheckingLevel::OFF}, {"warn", CheckingLevel::WARN}, {"error", CheckingLevel::ERROR}};
+    std::set<std::vector<std::string>> fingerprints;
+    for (auto& [exceptionName, exceptions] : levels) {
+        for (auto& [effectName, effects] : levels) {
+            ArgList args;
+            ASSERT_TRUE(optTbl->ParseArgs({"cjc", "--experimental", "--enable-checked-effects", effectName,
+                                              "--enable-eh", "--enable-checked-exceptions", exceptionName, srcFile},
+                args));
+            GlobalOptions options;
+            ASSERT_TRUE(options.ParseFromArgs(args));
+            EXPECT_EQ(options.exceptionsLevel, exceptions);
+            EXPECT_EQ(options.effectsLevel, effects);
+            fingerprints.emplace(options.ToSerialized());
+        }
+    }
+    EXPECT_EQ(fingerprints.size(), 9);
+}
+
+TEST_F(OptionTest, EffectCheckingRequiresExplicitLevel)
+{
+    ArgList args;
+    ASSERT_TRUE(optTbl->ParseArgs({"cjc", "--experimental", "--enable-eh", "--enable-checked-effects", srcFile}, args));
+    EXPECT_FALSE(gblOpts->ParseFromArgs(args));
+}
+
+TEST_F(OptionTest, EffectCheckingRequiresHandlers)
+{
+    ArgList args;
+    ASSERT_TRUE(optTbl->ParseArgs({"cjc", "--experimental", "--enable-checked-effects", "warn", srcFile}, args));
+    EXPECT_FALSE(gblOpts->ParseFromArgs(args));
+}
+#endif

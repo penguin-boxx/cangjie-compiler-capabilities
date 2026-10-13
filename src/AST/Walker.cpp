@@ -1127,6 +1127,9 @@ template <class NodeT> VisitAction WalkerT<NodeT>::Walk(Ptr<NodeT> curNode) cons
                 if (Walk(anno->assumeThrows.get()) == VisitAction::STOP_NOW) {
                     return VisitAction::STOP_NOW;
                 }
+                if (Walk(anno->assumePerforms.get()) == VisitAction::STOP_NOW) {
+                    return VisitAction::STOP_NOW;
+                }
                 action = VisitAction::WALK_CHILDREN;
                 break;
             }

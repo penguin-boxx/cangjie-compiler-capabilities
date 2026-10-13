@@ -25,6 +25,7 @@
 #include "cangjie/IncrementalCompilation/IncrementalScopeAnalysis.h"
 #include "cangjie/Modules/ASTSerialization.h"
 #include "cangjie/Utils/FileUtil.h"
+#include "flatbuffers/ModuleFormat_generated.h"
 
 using namespace Cangjie;
 using namespace AST;
@@ -1400,4 +1401,70 @@ TEST_F(PackageTest, TypeAliasRefExport)
         }
         return VisitAction::WALK_CHILDREN;
     }).Walk();
+}
+
+TEST_F(PackageTest, CapabilityPolicyAndEmptyCaptureIdentityRoundTrip)
+{
+    diag.Reset();
+    invocation.globalOptions.exceptionsLevel = CheckingLevel::WARN;
+    invocation.globalOptions.effectsLevel = CheckingLevel::ERROR;
+    invocation.globalOptions.enableEH = true;
+    instance = std::make_unique<TestCompilerInstance>(invocation, diag);
+    instance->code =
+        "package capturepolicy\nimport std.core.*\npublic class Capturing captures () { public init() {} }";
+    ASSERT_TRUE(instance->Compile(CompileStage::SEMA));
+    std::vector<uint8_t> data;
+    instance->importManager->ExportAST(false, data, *instance->GetSourcePackages().front());
+    auto file = FileUtil::JoinPath(packagePath, "capturepolicy.cjo");
+    FileUtil::WriteBufferToASTFile(file, data);
+    instance = std::make_unique<TestCompilerInstance>(invocation, diag);
+    instance->code = "import std.core.*\nmain() {}";
+    ASSERT_TRUE(instance->Compile(CompileStage::IMPORT_PACKAGE));
+    auto pkg = instance->importManager->LoadPackageFromCjo("capturepolicy", file);
+    ASSERT_NE(pkg, nullptr);
+    auto info = instance->importManager->GetPackageCapabilityInfo("capturepolicy");
+    EXPECT_EQ(info.level, CheckingLevel::WARN);
+    EXPECT_EQ(info.effectsLevel, CheckingLevel::ERROR);
+    EXPECT_TRUE(info.recordsCapabilities);
+    EXPECT_FALSE(info.modalEnabled);
+    size_t found = 0;
+    Walker(pkg, [&](Ptr<Node> node) {
+        if (auto cls = DynamicCast<ClassDecl*>(node); cls && cls->identifier == "Capturing") {
+            EXPECT_NE(cls->capturesClause, nullptr);
+            if (cls->capturesClause) {
+                EXPECT_TRUE(cls->capturesClause->capTypes.empty());
+            }
+            ++found;
+        }
+        return VisitAction::WALK_CHILDREN;
+    }).Walk();
+    EXPECT_EQ(found, 1);
+}
+
+TEST_F(PackageTest, LegacyEffectFeatureDoesNotAssertCheckedEffects)
+{
+    for (bool recorded : {false, true}) {
+        flatbuffers::FlatBufferBuilder builder;
+        PackageFormat::CompilationOptionsBuilder legacy(builder);
+        legacy.add_effects_enabled(true);
+        legacy.add_records_capabilities(recorded);
+        legacy.add_chexc_level(PackageFormat::ChexcLevel::ChexcLevel_Warn);
+        auto options = legacy.Finish();
+        auto dependencies = builder.CreateString("");
+        PackageFormat::PackageBuilder pkg(builder);
+        pkg.add_options(options);
+        pkg.add_pkgDepInfo(dependencies);
+        auto package = pkg.Finish();
+        PackageFormat::FinishPackageBuffer(builder, package);
+        std::vector<uint8_t> data(builder.GetBufferPointer(), builder.GetBufferPointer() + builder.GetSize());
+        ASTLoader loader(std::move(data), "legacy", *instance->typeManager, *instance->importManager->GetCjoManager(),
+            invocation.globalOptions);
+        loader.LoadPackageDepInfo();
+        auto info = loader.GetCapabilityInfo();
+        EXPECT_TRUE(info.effectsEnabled);
+        EXPECT_EQ(info.recordsCapabilities, recorded);
+        EXPECT_EQ(info.level, recorded ? CheckingLevel::WARN : CheckingLevel::OFF);
+        EXPECT_EQ(info.effectsLevel, CheckingLevel::OFF);
+        EXPECT_FALSE(info.modalEnabled);
+    }
 }
