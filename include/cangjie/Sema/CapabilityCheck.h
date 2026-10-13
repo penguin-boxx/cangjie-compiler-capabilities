@@ -103,6 +103,15 @@ bool IsExportedDecl(const AST::Decl& decl);
 bool IsInferenceEligible(const AST::FuncDecl& fd);
 
 enum class CapabilityKind { UNTRACKED, EXCEPTION, EFFECT };
+enum class CapabilitySupplyKind { CLAUSE_PARAMETER, RECEIVER_CAPTURE, PROTECTED_BODY, INTRINSIC };
+/** Source identities, never indices in normalized capability lists. No runtime representation. */
+struct CapabilityOrigin {
+    CapabilityKind kind{CapabilityKind::UNTRACKED};
+    Ptr<AST::Ty> type{nullptr};
+    Ptr<const AST::Node> owner{nullptr};
+    Ptr<const AST::Node> boundary{nullptr};
+    CapabilitySupplyKind supplyKind{CapabilitySupplyKind::CLAUSE_PARAMETER};
+};
 std::vector<Ptr<AST::Ty>> FilterCapabilityKinds(
     TypeManager& typeManager, const std::vector<Ptr<AST::Ty>>& caps, CheckingLevel exceptions, CheckingLevel effects);
 using EffectiveCapabilityType = std::function<Ptr<AST::Ty>(const AST::Decl&, Ptr<AST::Ty>, bool)>;
@@ -113,6 +122,7 @@ CapabilityKind ClassifyCapability(TypeManager& typeManager, const ImportManager&
 struct CapabilityScope {
     std::vector<Ptr<AST::Ty>> types;
     Ptr<const AST::Node> owner;
+    CapabilitySupplyKind supplyKind{CapabilitySupplyKind::CLAUSE_PARAMETER};
 };
 struct CapabilityContext {
     std::vector<CapabilityScope> scopes;
@@ -124,7 +134,10 @@ struct CapabilityResolution {
     CapabilityDemand demand;
     Ptr<const AST::Node> owner;
     Ptr<AST::Ty> supplyingType{nullptr};
+    CapabilityOrigin origin;
 };
+/// Optional observer of accepted typed bodies, including successful and missing resolutions.
+using CapabilityResolutionObserver = std::function<void(const CapabilityResolution&)>;
 /// Pure resolution: the caller owns accumulation and diagnostic delivery.
 CapabilityResolution ResolveCapability(
     TypeManager& typeManager, const CapabilityContext& context, const CapabilityDemand& demand);
@@ -136,7 +149,8 @@ void CheckCompletedOverrides(TypeManager& typeManager, const ImportManager& impo
     DiagnosticEngine& diag, CheckingLevel exceptions, CheckingLevel effects,
     const EffectiveCapabilityType& effective = {});
 void CheckCapabilities(TypeManager& typeManager, const ImportManager& importManager, AST::Package& pkg,
-    CapabilityMissHandler& missHandler, DiagnosticEngine& diag, const EffectiveCapabilityType& effective = {});
+    CapabilityMissHandler& missHandler, DiagnosticEngine& diag, const EffectiveCapabilityType& effective = {},
+    const CapabilityResolutionObserver& observer = {});
 
 /**
  * The capability list of @p decl's 'captures' clause, with capability list aliases

@@ -35,6 +35,7 @@
 #include "cangjie/Modules/PackageManager.h"
 #include "cangjie/Parse/ASTHasher.h"
 #include "cangjie/Sema/CapabilityCheck.h"
+#include "cangjie/Sema/CapabilityEscape.h"
 #include "cangjie/Sema/GenericInstantiationManager.h"
 #include "cangjie/Sema/TestManager.h"
 #include "cangjie/Sema/TypeChecker.h"
@@ -733,6 +734,8 @@ bool CompilerInstance::PerformCapabilityCheck()
         Sema::CheckCompletedOverrides(*typeManager, *importManager, *srcPkg, diag,
             invocation.globalOptions.exceptionsLevel, invocation.globalOptions.effectsLevel, effective);
         Sema::CheckCapabilities(*typeManager, *importManager, *srcPkg, missHandler, diag, effective);
+        Sema::CheckPackageCapabilityEscapes(*srcPkg, typeChecker->GetModalEscapeFacts(*srcPkg),
+            invocation.globalOptions.exceptionsLevel, invocation.globalOptions.effectsLevel, diag);
     }
     return diag.GetErrorCount() == errorCountBefore;
 }

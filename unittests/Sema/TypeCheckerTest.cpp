@@ -15,6 +15,8 @@
 #include "cangjie/Utils/FileUtil.h"
 #include "gtest/gtest.h"
 #include <cstdlib>
+#include <map>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -874,6 +876,75 @@ TEST(CapabilityResolution, ResidualOwnershipAndIndependentContexts)
     demand.isEffect = false;
     EXPECT_EQ(Cangjie::Sema::ResolveCapability(types, context, demand).kind,
         Cangjie::Sema::CapabilityResolutionKind::MISSING);
+}
+
+TEST(CapabilityResolution, SelectedOriginIsStableAndNeverRetriesOuterSupply)
+{
+    using namespace Cangjie::Sema;
+    TypeManager types;
+    TryExpr outer;
+    TryExpr inner;
+    RefExpr site;
+    auto ty = TypeManager::GetPrimitiveTy(TypeKind::TYPE_INT64);
+    CapabilityContext context;
+    context.scopes = {
+        {{ty}, &outer, CapabilitySupplyKind::PROTECTED_BODY}, {{ty}, &inner, CapabilitySupplyKind::PROTECTED_BODY}};
+    auto result = ResolveCapability(types, context, {ty, &site, "test", false});
+    EXPECT_EQ(result.origin.boundary, &inner);
+    EXPECT_EQ(result.origin.type, ty);
+    EXPECT_EQ(result.origin.kind, CapabilityKind::EXCEPTION);
+    context.scopes.back().supplyKind = CapabilitySupplyKind::CLAUSE_PARAMETER;
+    result = ResolveCapability(types, context, {ty, &site, "test", false});
+    EXPECT_EQ(result.origin.owner, &inner);
+    EXPECT_EQ(result.origin.boundary, nullptr);
+}
+
+TEST_F(TypeCheckerTest, AcceptedBodyObserverDistinguishesSuppliesWithoutChangingTypes)
+{
+    using namespace Cangjie::Sema;
+    instance->cangjieHome = projectPath + "/output";
+    invocation.globalOptions.exceptionsLevel = CheckingLevel::ERROR;
+    instance->code = R"(
+class Checked <: Exception {}
+class Box captures Checked {
+    init() {}
+    func use(): Unit throws () { throw Checked() }
+}
+func test(): Unit throws Checked {
+    try {
+        let box = Box()
+        box.use()
+        let callback = { => throw Checked() }
+        callback()
+    } catch (_: Checked) {}
+    throw Checked()
+}
+main(): Int64 { 0 }
+)";
+    ASSERT_TRUE(instance->Compile(CompileStage::SEMA));
+    ASSERT_EQ(diag.GetErrorCount(), 0);
+    std::map<const Node*, Ptr<Ty>> originalTypes;
+    auto package = instance->GetSourcePackages()[0];
+    Walker(package, [&](Ptr<Node> node) {
+        originalTypes[node] = node->GetTy();
+        return VisitAction::WALK_CHILDREN;
+    }).Walk();
+    std::set<CapabilitySupplyKind> supplies;
+    ReportCapabilityMissHandler misses(diag, CheckingLevel::ERROR, CheckingLevel::OFF);
+    CheckCapabilities(*instance->typeManager, *instance->importManager, *package, misses, diag, {},
+        [&](const CapabilityResolution& resolution) {
+            EXPECT_EQ(resolution.kind, CapabilityResolutionKind::SUPPLIED);
+            supplies.insert(resolution.origin.supplyKind);
+            EXPECT_EQ(resolution.origin.owner, resolution.owner);
+            EXPECT_EQ(resolution.origin.type, resolution.supplyingType);
+        });
+    EXPECT_EQ(supplies.count(CapabilitySupplyKind::PROTECTED_BODY), 1);
+    EXPECT_EQ(supplies.count(CapabilitySupplyKind::RECEIVER_CAPTURE), 1);
+    EXPECT_EQ(supplies.count(CapabilitySupplyKind::CLAUSE_PARAMETER), 1);
+    EXPECT_EQ(diag.GetErrorCount(), 0);
+    for (auto& [node, type] : originalTypes) {
+        EXPECT_EQ(node->GetTy(), type);
+    }
 }
 
 TEST_F(TypeCheckerTest, CapabilityContractsCompleteDuringSema)

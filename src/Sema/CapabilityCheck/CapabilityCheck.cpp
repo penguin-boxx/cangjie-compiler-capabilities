@@ -111,11 +111,13 @@ class CapabilityChecker {
 public:
     CapabilityChecker(TypeManager& typeManager, const ImportManager& importManager,
         Sema::CapabilityMissHandler& missHandler, const Sema::EffectiveCapabilityType& effective,
-        const Sema::EnsureCapabilityContract& ensure = {}, Ptr<DiagnosticEngine> diag = nullptr)
+        const Sema::EnsureCapabilityContract& ensure = {}, Ptr<DiagnosticEngine> diag = nullptr,
+        const Sema::CapabilityResolutionObserver& observer = {})
         : typeManager(typeManager),
           importManager(importManager),
           missHandler(missHandler),
           effective(effective),
+          observer(observer),
           ensure(ensure),
           diag(diag)
     {
@@ -153,8 +155,7 @@ public:
             return;
         }
         CJC_ASSERT(supplies.empty());
-        supplies.emplace_back(TypeCheckUtil::GetFuncBodyCapTys(*ctor->funcBody));
-        supplyOwners.emplace_back(ctor);
+        supplies.push_back({TypeCheckUtil::GetFuncBodyCapTys(*ctor->funcBody), ctor});
         auto captures = OwnerCaptures(*ctor);
         PushCaptures(captures, ctor);
         for (auto& member : owner->GetMemberDecls()) {
@@ -165,7 +166,6 @@ public:
         }
         PopCaptures(captures);
         supplies.pop_back();
-        supplyOwners.pop_back();
     }
 
     void CheckDecl(Decl& decl)
@@ -365,8 +365,10 @@ private:
             .Walk();
         for (size_t i = 0; i < ancestors.size(); ++i) {
             auto node = ancestors[i];
+            Ptr<const Node> sourceOwner = node;
             SupplyScope caps;
             if (auto body = DynamicCast<FuncBody*>(node)) {
+                sourceOwner = body->funcDecl ? Ptr<const Node>(body->funcDecl) : Ptr<const Node>(body);
                 // Pending outer inference is deliberately unavailable to nested ellipsis.
                 caps = TypeCheckUtil::GetFuncBodyCapTys(*body);
                 if (body->funcDecl && !body->funcDecl->TestAttr(Attribute::STATIC) && !body->funcDecl->IsFinalizer()) {
@@ -387,11 +389,11 @@ private:
                 }
             } else if (node->astKind == ASTKind::SPAWN_EXPR) {
                 supplies.clear();
-                supplyOwners.clear();
             }
             if (!caps.empty()) {
-                supplies.emplace_back(std::move(caps));
-                supplyOwners.emplace_back(node);
+                supplies.push_back({std::move(caps), sourceOwner,
+                    node->astKind == ASTKind::TRY_EXPR ? Sema::CapabilitySupplyKind::PROTECTED_BODY
+                                                       : Sema::CapabilitySupplyKind::CLAUSE_PARAMETER});
             }
         }
     }
@@ -406,8 +408,7 @@ private:
         auto fabricated = FabricatedCapabilities(fd);
         bool hasFabricated = !fabricated.empty();
         if (hasFabricated) {
-            supplies.emplace_back(std::move(fabricated));
-            supplyOwners.emplace_back(&fd);
+            supplies.push_back({std::move(fabricated), &fd, Sema::CapabilitySupplyKind::INTRINSIC});
         }
         // The enclosing class's captured capabilities are in scope throughout a member that has
         // a receiver to carry them. A static member, a static initializer and a
@@ -424,10 +425,8 @@ private:
         PopCaptures(captures);
         if (hasFabricated) {
             supplies.pop_back();
-            supplyOwners.pop_back();
         }
         supplies.clear();
-        supplyOwners.clear();
     }
 
     void CheckInitializer(VarDeclAbstract& vd, const Sema::CapabilityScope* constructor)
@@ -437,8 +436,7 @@ private:
         }
         CJC_ASSERT(supplies.empty());
         if (constructor) {
-            supplies.push_back(constructor->types);
-            supplyOwners.push_back(constructor->owner);
+            supplies.push_back(*constructor);
         }
         auto captures = constructor ? OwnerCaptures(vd) : SupplyScope{};
         PushCaptures(captures, &vd);
@@ -446,7 +444,6 @@ private:
         PopCaptures(captures);
         if (constructor) {
             supplies.pop_back();
-            supplyOwners.pop_back();
         }
         CJC_ASSERT(supplies.empty());
     }
@@ -475,8 +472,7 @@ private:
     void PushCaptures(const SupplyScope& captures, Ptr<const Node> captureOwner = nullptr)
     {
         if (!captures.empty()) {
-            supplies.emplace_back(captures);
-            supplyOwners.emplace_back(captureOwner);
+            supplies.push_back({captures, captureOwner, Sema::CapabilitySupplyKind::RECEIVER_CAPTURE});
         }
     }
 
@@ -484,7 +480,6 @@ private:
     {
         if (!captures.empty()) {
             supplies.pop_back();
-            supplyOwners.pop_back();
         }
     }
 
@@ -534,8 +529,8 @@ private:
                 auto ft = DynamicCast<FuncTy*>(fb.GetTy());
                 auto caps =
                     fb.funcDecl.get() == collectingFor.get() || !ft ? TypeCheckUtil::GetFuncBodyCapTys(fb) : ft->capTys;
-                supplies.emplace_back(std::move(caps));
-                supplyOwners.emplace_back(fb.funcDecl ? Ptr<const Node>(fb.funcDecl) : Ptr<const Node>(node));
+                supplies.push_back(
+                    {std::move(caps), fb.funcDecl ? Ptr<const Node>(fb.funcDecl) : Ptr<const Node>(node)});
                 return VisitAction::WALK_CHILDREN;
             }
             case ASTKind::FUNC_DECL: {
@@ -551,8 +546,7 @@ private:
             case ASTKind::LAMBDA_EXPR:
                 // A literal's capability list comes from the expected type only and is stored
                 // on the literal's functional type.
-                supplies.emplace_back(GetLiteralCapTys(StaticCast<LambdaExpr&>(*node)));
-                supplyOwners.emplace_back(node);
+                supplies.push_back({GetLiteralCapTys(StaticCast<LambdaExpr&>(*node)), node});
                 return VisitAction::WALK_CHILDREN;
             case ASTKind::FUNC_PARAM: {
                 // A default parameter value is checked against the callable's own capability
@@ -652,7 +646,6 @@ private:
         // Balanced with VisitPre: these two kinds always push exactly one scope there.
         if (node->astKind == ASTKind::FUNC_BODY || node->astKind == ASTKind::LAMBDA_EXPR) {
             supplies.pop_back();
-            supplyOwners.pop_back();
         }
         return VisitAction::KEEP_DECISION;
     }
@@ -782,8 +775,7 @@ private:
         for (auto handlerCap : CollectHandlerCapTys(te)) {
             caps.emplace_back(handlerCap);
         }
-        supplies.emplace_back(std::move(caps));
-        supplyOwners.emplace_back(&te);
+        supplies.push_back({std::move(caps), &te, Sema::CapabilitySupplyKind::PROTECTED_BODY});
         for (auto& resource : te.resourceSpec) {
             // Resource initializers of try-with-resources are inside the try's scope: their
             // exceptions are caught by the same clauses. So is the implicit closing.
@@ -801,7 +793,6 @@ private:
             WalkScoped(te.tryBlock.get());
         }
         supplies.pop_back();
-        supplyOwners.pop_back();
         // A 'catch' block is not inside its try's capability scope: rethrowing a caught checked
         // exception requires a capability from the enclosing scopes. Same for 'finally' and for
         // a 'handle' body, which runs where the handler was installed.
@@ -812,7 +803,7 @@ private:
         // ordinary 'throw' -- but a 'resume ... throwing' inside it injects at the suspended
         // 'perform', which is inside the try's body. The try's catch capabilities are therefore
         // offered to resume sites alone.
-        resumeSupplies.push_back({CollectCatchCapTys(te), &te});
+        resumeSupplies.push_back({CollectCatchCapTys(te), &te, Sema::CapabilitySupplyKind::PROTECTED_BODY});
         for (auto& handler : te.handlers) {
             if (handler.desugaredLambda) {
                 WalkScoped(handler.desugaredLambda.get());
@@ -879,13 +870,10 @@ private:
         WalkScoped(se.arg.get());
         // A 'spawn' body starts with an EMPTY capability scope stack (author ruling): the
         // enclosing capabilities (including any every-constructor root) are unreachable.
-        std::vector<SupplyScope> savedSupplies;
+        std::vector<Sema::CapabilityScope> savedSupplies;
         savedSupplies.swap(supplies);
-        auto savedOwners = std::move(supplyOwners);
-        supplyOwners.clear();
         WalkScoped(se.task.get());
         supplies = std::move(savedSupplies);
-        supplyOwners = std::move(savedOwners);
     }
 
     /// The escape hatch is a no-op when its type argument is unchecked: an unchecked exception
@@ -1003,13 +991,11 @@ private:
     void DemandInjected(Ptr<Ty> exceptionTy, const Node& site, const std::string& requiredBy)
     {
         if (!resumeSupplies.empty()) {
-            supplies.push_back(resumeSupplies.back().types);
-            supplyOwners.push_back(resumeSupplies.back().owner);
+            supplies.push_back(resumeSupplies.back());
         }
         Demand(exceptionTy, site, requiredBy);
         if (!resumeSupplies.empty()) {
             supplies.pop_back();
-            supplyOwners.pop_back();
         }
     }
 
@@ -1021,11 +1007,12 @@ private:
         }
         Sema::CapabilityContext context;
         context.inferenceOwner = DynamicCast<const FuncDecl*>(collectingFor);
-        for (size_t i = 0; i < supplies.size(); ++i) {
-            context.scopes.push_back({supplies[i], supplyOwners[i]});
-        }
+        context.scopes = supplies;
         Sema::CapabilityDemand demand{exceptionTy, &site, requiredBy, kind == Sema::CapabilityKind::EFFECT};
         auto resolution = Sema::ResolveCapability(typeManager, context, demand);
+        if (observer) {
+            observer(resolution);
+        }
         if (resolution.kind != Sema::CapabilityResolutionKind::SUPPLIED) {
             missHandler.HandleMiss(resolution.demand);
         }
@@ -1036,8 +1023,8 @@ private:
     Sema::CapabilityMissHandler& missHandler;
     /// Sema-owned consumer view, also used for implicit operations.
     Sema::EffectiveCapabilityType effective;
-    std::vector<SupplyScope> supplies;
-    std::vector<Ptr<const Node>> supplyOwners;
+    std::vector<Sema::CapabilityScope> supplies;
+    Sema::CapabilityResolutionObserver observer;
     /// Effects: the capabilities a 'resume ... throwing' may resolve against on top of the
     /// ordinary stack -- the catch clauses of the very 'try' whose handler is running. Kept apart
     /// from 'supplies' because an ordinary 'throw' in a handler body must NOT see them: the
@@ -1333,7 +1320,10 @@ CapabilityResolution ResolveCapability(
     for (auto scope = context.scopes.rbegin(); scope != context.scopes.rend(); ++scope) {
         for (auto supplied : scope->types) {
             if (Ty::IsTyCorrect(supplied) && typeManager.IsSubtype(demand.exceptionTy, supplied)) {
-                return {CapabilityResolutionKind::SUPPLIED, demand, scope->owner, supplied};
+                return {CapabilityResolutionKind::SUPPLIED, demand, scope->owner, supplied,
+                    {demand.isEffect ? CapabilityKind::EFFECT : CapabilityKind::EXCEPTION, supplied, scope->owner,
+                        scope->supplyKind == CapabilitySupplyKind::PROTECTED_BODY ? scope->owner : nullptr,
+                        scope->supplyKind}};
             }
         }
     }
@@ -1353,9 +1343,10 @@ std::vector<Ptr<Ty>> CollectCapabilityRequirements(TypeManager& typeManager, con
 }
 
 void CheckCapabilities(TypeManager& typeManager, const ImportManager& importManager, AST::Package& pkg,
-    CapabilityMissHandler& missHandler, DiagnosticEngine& diag, const EffectiveCapabilityType& effective)
+    CapabilityMissHandler& missHandler, DiagnosticEngine& diag, const EffectiveCapabilityType& effective,
+    const CapabilityResolutionObserver& observer)
 {
-    CapabilityChecker(typeManager, importManager, missHandler, effective, {}, &diag).CheckPackage(pkg);
+    CapabilityChecker(typeManager, importManager, missHandler, effective, {}, &diag, observer).CheckPackage(pkg);
     // A handler that batches its misses reports them now that the package is walked.
     missHandler.Finish();
 }

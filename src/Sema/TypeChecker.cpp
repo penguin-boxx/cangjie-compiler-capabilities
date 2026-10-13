@@ -2600,6 +2600,12 @@ std::vector<Ptr<ASTContext>> TypeChecker::TypeCheckerImpl::PreTypeCheck(const st
     return contexts;
 }
 
+const Sema::ModalEscapeFacts* TypeChecker::GetModalEscapeFacts(const AST::Package&) const
+{
+    // Section 6.5: absent Modal checking is not an opt-in to partial escape enforcement.
+    return nullptr;
+}
+
 void TypeChecker::TypeCheckerImpl::PostTypeCheck(std::vector<Ptr<ASTContext>>& contexts)
 {
     Utils::ProfileRecorder recorder("Semantic", "Post TypeCheck");

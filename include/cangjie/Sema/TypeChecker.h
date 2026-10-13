@@ -18,6 +18,9 @@
 #include "cangjie/Frontend/CompilerInstance.h"
 
 namespace Cangjie {
+namespace Sema {
+class ModalEscapeFacts;
+}
 class InstCtxScope;
 class TypeChecker {
 public:
@@ -30,6 +33,8 @@ public:
      * @see TypeCheck
      */
     void TypeCheckForPackages(const std::vector<Ptr<AST::Package>>& pkgs) const;
+    /// No provider in non-Modal builds. Modal integration publishes generation-owned accepted facts here.
+    const Sema::ModalEscapeFacts* GetModalEscapeFacts(const AST::Package& package) const;
     Ptr<AST::Ty> EffectiveUseType(
         const AST::Decl& decl, Ptr<AST::Ty> ty, bool writing = false, Ptr<const AST::Package> consumer = nullptr) const;
     void SetOverflowStrategy(const std::vector<Ptr<AST::Package>>& pkgs) const;

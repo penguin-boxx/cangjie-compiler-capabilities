@@ -540,3 +540,8 @@ ERROR(sema_assumption_not_on_import, "'@%s' is only allowed on an 'import'", "an
 
 ERROR(sema_effect_missing_capabilities, "Cannot find capabilities for %s (of types %s) in the current scope", "%s")
 ERROR(sema_effect_override_missing_capability, "command type '%s' in 'performs' clause of '%s' is not covered by the overridden or implemented declaration", "no command type in the original declaration's 'performs' clause covers '%s'")
+
+ERROR(sema_capability_escape, "captured capability may escape its protected body: %s", "%s")
+WARNING(sema_capability_escape_warn, CHEXC, "captured capability may escape its protected body: %s", "%s")
+WARNING(sema_effect_escape_warn, CHECKED_EFFECTS, "captured capability may escape its protected body: %s", "%s")
+ERROR(sema_capability_escape_incomplete, "capability escape analysis requires complete Modal and capture facts", "cannot validate this body")
